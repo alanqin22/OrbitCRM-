@@ -1,0 +1,3112 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Notification Center - CRM AI Agent</title>
+    <!-- 
+      NOTIFICATION CENTER v5.0 - DIRECT SP ROUTES (no AI Agent for deterministic ops)
+      
+      CHANGELOG v3.3k:
+      - FIXED: hideFilterPanel() now checks if element exists before accessing .style
+      - FIXED: showFilterPanel() now checks if element exists before accessing .style
+      - ROOT CAUSE: filter-panel-container doesn't exist after notification list renders
+      
+      CHANGELOG v3.3j:
+      - FIXED: sendRequest now calls sendMessage() directly instead of dispatchEvent
+      - FIXED: handleKeyDown calls sendRequest() directly instead of dispatchEvent
+      - FIXED: Removed template literals (backticks) in favor of string concatenation for compatibility
+      - ADDED: Console logging for debugging (check browser F12 console)
+      - ROOT CAUSE: dispatchEvent(new Event('submit')) not triggering in dynamically rendered context
+      
+      CHANGELOG v3.3h:
+      - FIXED: sendRequest now uses form.dispatchEvent(new Event('submit')) - proven working
+      - FIXED: handleKeyDown (Enter key) now dispatches to form directly
+      - FIXED: goHome now uses location.reload() for clean reset
+      - RESTORED: Form dispatch pattern from v3.2e that works reliably
+      
+      CHANGELOG v3.3f:
+      - FIXED: sendRequest now calls sendMessage directly (not via event dispatch)
+      - FIXED: handleKeyDown (Enter key) now properly triggers form submission
+      - FIXED: goBackToList now fetches fresh notification list instead of using cached HTML
+      - FIXED: goHome now properly resets state and shows filter panel
+      - FIXED: All button onclick handlers now work reliably
+      
+      CHANGELOG v3.3e:
+      - FIXED: Status badge font size now matches table cell font (0.9rem)
+      - FIXED: Inspect button onclick handler (removed unnecessary escapeHTML on UUIDs)
+      - FIXED: Action bar buttons now aligned to the right side
+      - FIXED: Read/Unread toggle buttons now have equal width (min-width: 90px)
+      - FIXED: [ACTION:...] links converted to styled buttons matching action-bar style
+      - CHANGED: [Show notifications] → "Back to List" button
+      - CHANGED: [Open Notification Center] → "Back Home" button
+      - ADDED: .status-badge CSS class for consistent status display
+      
+      CHANGELOG v3.3d:
+      - FIXED: markNotificationRead now includes 'message' field for AI Agent
+      - FIXED: markNotificationUnread now includes 'message' field for AI Agent
+      - FIXED: updateNotificationStatusInUI uses correct cell index (Status=3, not 4)
+      - FIXED: handleResponse now handles array response format from n8n
+      - FIXED: markAllRead/markAllUnread now properly display the markdown output
+      - FIXED: All API calls now handle array responses from n8n webhook
+      
+      CHANGELOG v3.3c:
+      - FIXED: Added [TOGGLE:uuid:status:emp_uuid] marker handling in table renderer
+      - FIXED: Added [ACTIONBAR] marker handling in markdown parser
+      - FIXED: Bulk actions now work with both rendered and markdown output
+      - ENHANCED: createToggleButtonFromMarker() for markdown table toggle buttons
+      
+      CHANGELOG v3.3:
+      - ADDED: Read/Unread toggle column with blue/gray dot indicators
+      - ADDED: Toggle buttons to mark individual notifications as read/unread
+      - ADDED: Modern action bar with All Read, All Unread, Back Home buttons
+      - ADDED: renderMarkUnreadResult() and renderMarkAllUnreadResult() handlers
+      - ENHANCED: Table layout with new column before Inspect
+      - ENHANCED: Optimistic UI updates for toggle actions
+      - STYLED: Primary (blue) buttons for read actions, secondary (gray) for unread
+      
+      CHANGELOG v3.2e:
+      - FIXED: Employee button height reduced ~15-20% (smaller initials badge 22px, reduced padding)
+      - FIXED: Inspect button height increased ~15% (matching height with employee buttons)
+      - RESTORED: [BACKTOLIST] handler for Back to List button in Inspector page
+      - RESTORED: [ACTION:...] handler for clickable action links
+      - RESTORED: [INSPECT:uuid] handler for inline inspect buttons
+      - REMOVED: [ACTION:Refresh] link (redundant with Show notifications)
+      - UPDATED: [ACTION:Open Notification Center] now displays home page instead of notification list
+      
+      CHANGELOG v3.2:
+      - ENHANCED: Employee UUIDs converted to clickable Name buttons
+      - ENHANCED: Consistent button widths for uniform appearance
+      - ENHANCED: Elegant, classical color palette (light pastels)
+      - FIXED: Inspect button rendering in markdown tables
+      - ADDED: Time display in header
+      - KEPT: Original filter panel layout from v3.1
+    -->
+    <style>
+        /* === Galaxy Background === */
+        .galaxy-background {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            overflow: hidden;
+            background: radial-gradient(ellipse at center, #1a0933 0%, #0a0118 100%);
+        }
+
+        .galaxy-background::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background:
+                radial-gradient(ellipse at 30% 40%, rgba(255, 20, 147, 0.4) 0%, transparent 40%),
+                radial-gradient(ellipse at 70% 60%, rgba(0, 191, 255, 0.4) 0%, transparent 40%),
+                radial-gradient(ellipse at 50% 50%, rgba(138, 43, 226, 0.3) 0%, transparent 50%);
+            animation: galaxy-rotate 120s linear infinite;
+        }
+
+        .galaxy-background::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image:
+                radial-gradient(2px 2px at 20% 30%, white, transparent),
+                radial-gradient(2px 2px at 60% 70%, white, transparent),
+                radial-gradient(1px 1px at 50% 50%, white, transparent),
+                radial-gradient(1px 1px at 80% 10%, white, transparent),
+                radial-gradient(2px 2px at 90% 60%, white, transparent),
+                radial-gradient(1px 1px at 33% 50%, white, transparent),
+                radial-gradient(1px 1px at 66% 33%, white, transparent);
+            background-size: 200% 200%, 200% 200%, 300% 300%, 250% 250%, 200% 200%, 280% 280%, 220% 220%;
+            animation: stars-twinkle 8s ease-in-out infinite;
+        }
+
+        .nebula-cloud {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(60px);
+            opacity: 0.6;
+            animation: nebula-float 20s ease-in-out infinite;
+        }
+
+        .nebula-cloud:nth-child(1) {
+            top: 10%;
+            left: 20%;
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(255, 20, 147, 0.6) 0%, transparent 70%);
+        }
+
+        .nebula-cloud:nth-child(2) {
+            top: 50%;
+            right: 15%;
+            width: 500px;
+            height: 500px;
+            background: radial-gradient(circle, rgba(0, 191, 255, 0.5) 0%, transparent 70%);
+            animation-delay: -7s;
+        }
+
+        .nebula-cloud:nth-child(3) {
+            bottom: 15%;
+            left: 35%;
+            width: 450px;
+            height: 450px;
+            background: radial-gradient(circle, rgba(138, 43, 226, 0.5) 0%, transparent 70%);
+            animation-delay: -14s;
+        }
+
+        @keyframes galaxy-rotate {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        @keyframes stars-twinkle {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        @keyframes nebula-float {
+
+            0%,
+            100% {
+                transform: translate(0, 0) scale(1);
+            }
+
+            33% {
+                transform: translate(30px, -30px) scale(1.1);
+            }
+
+            66% {
+                transform: translate(-20px, 20px) scale(0.9);
+            }
+        }
+
+        /* === Base Layout === */
+        body {
+            font-family: "Segoe UI", Tahoma, sans-serif;
+            background: transparent;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            position: relative;
+        }
+
+        header {
+            background: linear-gradient(135deg, rgba(0, 120, 215, 0.95) 0%, rgba(88, 86, 214, 0.95) 100%);
+            color: white;
+            padding: 0.5rem 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 20px rgba(138, 43, 226, 0.5);
+            backdrop-filter: blur(10px);
+            position: relative;
+            z-index: 10;
+        }
+
+        header h1 {
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin: 0;
+            text-shadow: 0 0 20px rgba(255, 255, 255, 0.5);
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .polling-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.75rem;
+            padding: 0.25rem 0.75rem;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 20px;
+        }
+
+        .polling-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #28a745;
+            animation: pulse-dot 2s ease-in-out infinite;
+        }
+
+        .polling-dot.polling {
+            background: #ffc107;
+        }
+
+        .polling-dot.error {
+            background: #dc3545;
+            animation: none;
+        }
+
+        @keyframes pulse-dot {
+
+            0%,
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+
+            50% {
+                opacity: 0.5;
+                transform: scale(0.8);
+            }
+        }
+
+        .session-info {
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .session-info button {
+            background: #fff;
+            color: #0078d7;
+            border: none;
+            border-radius: 4px;
+            padding: 0.25rem 0.5rem;
+            cursor: pointer;
+            font-size: 0.7rem;
+            font-weight: bold;
+        }
+
+        .session-info button:hover {
+            background: #cce0ff;
+        }
+
+        .response {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-top: 1px solid rgba(138, 43, 226, 0.3);
+            position: relative;
+            z-index: 5;
+        }
+
+        /* === Input Bar === */
+        .input-bar {
+            display: flex;
+            flex-direction: column;
+            padding: 0.2rem 1rem;
+            background: linear-gradient(180deg, rgba(200, 150, 255, 0.25) 0%, rgba(150, 220, 255, 0.25) 100%);
+            backdrop-filter: blur(10px);
+            border-top: 1px solid rgba(200, 150, 255, 0.4);
+            position: relative;
+            z-index: 10;
+        }
+
+        .input-bar form {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            position: relative;
+            width: 100%;
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 1rem;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 1.5rem;
+            height: 1.5rem;
+            color: #666;
+            pointer-events: none;
+            z-index: 2;
+            transition: color 0.3s ease;
+        }
+
+        .search-icon svg {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .input-wrapper {
+            flex: 1;
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        textarea {
+            flex: 1;
+            width: 100%;
+            padding: 0.5rem 3rem 0.5rem 3.5rem;
+            border: 1px solid rgba(138, 43, 226, 0.4);
+            border-radius: 24px;
+            font-family: monospace;
+            resize: none;
+            background: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(5px);
+            box-shadow: 0 1px 6px rgba(138, 43, 226, 0.2);
+            transition: all 0.3s ease;
+            height: 1.5rem;
+        }
+
+        textarea:hover {
+            height: 2.5rem;
+            box-shadow: 0 2px 8px rgba(138, 43, 226, 0.3);
+        }
+
+        textarea:focus {
+            height: 2.5rem;
+            outline: none;
+            box-shadow: 0 2px 12px rgba(138, 43, 226, 0.5);
+            border-color: rgba(138, 43, 226, 0.6);
+        }
+
+        button.send {
+            display: none;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255, 255, 255, .3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Voice Input Button */
+        .voice-btn-google {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: none;
+            background: #f1f3f4;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+            color: #5f6368;
+        }
+
+        .voice-btn-google:hover {
+            background: #e8eaed;
+            color: #202124;
+        }
+
+        .voice-btn-google.listening {
+            background: #d93025;
+            color: white;
+            animation: pulse-mic 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse-mic {
+
+            0%,
+            100% {
+                transform: translateY(-50%) scale(1);
+                box-shadow: 0 0 0 0 rgba(217, 48, 37, 0.4);
+            }
+
+            50% {
+                transform: translateY(-50%) scale(1.05);
+                box-shadow: 0 0 0 10px rgba(217, 48, 37, 0);
+            }
+        }
+
+        .voice-status {
+            position: absolute;
+            bottom: calc(100% + 8px);
+            right: 8px;
+            background: #d93025;
+            color: white;
+            padding: 6px 12px;
+            border-radius: 16px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            display: none;
+            animation: fadeInDown 0.3s ease-out;
+            box-shadow: 0 2px 8px rgba(217, 48, 37, 0.3);
+        }
+
+        .voice-status.active {
+            display: block;
+        }
+
+        /* ========================================================================
+           COMPACT FILTER FORM STYLES
+           ======================================================================== */
+
+        .filter-panel {
+            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+            border: 2px solid #0078d7;
+            border-radius: 12px;
+            padding: 1rem 1.5rem;
+            max-width: 780px;
+            margin: 0.5rem auto;
+            box-shadow: 0 4px 16px rgba(0, 120, 215, 0.15);
+        }
+
+        .filter-panel-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid #e0e6ed;
+        }
+
+        .filter-panel-icon {
+            font-size: 1.75rem;
+        }
+
+        .filter-panel-title {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: #0078d7;
+            margin: 0;
+        }
+
+        .filter-panel-subtitle {
+            font-size: 0.8rem;
+            color: #666;
+            margin: 0.15rem 0 0 0;
+        }
+
+        .filter-section {
+            margin-bottom: 0.75rem;
+        }
+
+        .filter-section-title {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #555;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .filter-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 0.75rem;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.2rem;
+        }
+
+        .filter-group label {
+            font-weight: 600;
+            font-size: 0.8rem;
+            color: #333;
+        }
+
+        .filter-group select {
+            padding: 0.45rem 0.75rem;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            background: white;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .filter-group select:hover {
+            border-color: #0078d7;
+        }
+
+        .filter-group select:focus {
+            border-color: #0078d7;
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(0, 120, 215, 0.15);
+        }
+
+        .filter-group select.synced {
+            border-color: #28a745;
+            background: linear-gradient(135deg, #f0fff4 0%, #e6ffed 100%);
+        }
+
+        .filter-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.5rem;
+            margin-top: 1rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid #e0e6ed;
+        }
+
+        .btn-inspect {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            border: none;
+            padding: 0.45rem 1rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 8px rgba(40, 167, 69, 0.3);
+        }
+
+        .btn-inspect:hover {
+            background: linear-gradient(135deg, #218838 0%, #1ba67a 100%);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: #f1f3f5;
+            color: #495057;
+            border: 1px solid #ced4da;
+            padding: 0.45rem 1rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-secondary:hover {
+            background: #e9ecef;
+            border-color: #adb5bd;
+        }
+
+        /* Loading & Animations */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #e0e6ed;
+            border-top-color: #0078d7;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .fade-in {
+            animation: fadeIn 0.5s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Records */
+        .audit-record {
+            border: 2px solid #0078d7;
+            background: #f4f9ff;
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+
+        .success-record {
+            border: 2px solid #28a745;
+            background: #f0fff4;
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+
+        .error-record {
+            border: 2px solid #dc3545;
+            background: #fff3f3;
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+
+        /* Status Badge */
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            padding: 0.2rem 0.6rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .status-badge.unread {
+            background: #e3f2fd;
+            color: #1565c0;
+        }
+
+        .status-badge.read {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        /* ========================================================================
+           NOTIFICATION LIST & DETAIL STYLES
+           ======================================================================== */
+
+        .notification-detail {
+            background: #fff;
+            border-radius: 12px;
+            padding: 1.5rem 2rem;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        .notification-detail-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid #0078d7;
+        }
+
+        .notification-detail-title {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #0078d7;
+            margin: 0;
+        }
+
+        .notification-detail-subtitle {
+            font-size: 0.95rem;
+            color: #666;
+            margin: 0.25rem 0 0 0;
+        }
+
+        .notification-detail-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .notification-detail-section {
+            margin-bottom: 1.5rem;
+        }
+
+        .notification-detail-section h4 {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #333;
+            margin: 0 0 0.75rem 0;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid #e0e6ed;
+        }
+
+        .notification-detail-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 0.75rem 1.5rem;
+        }
+
+        .notification-detail-field {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .notification-detail-field .label {
+            font-size: 0.8rem;
+            color: #888;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .notification-detail-field .value {
+            font-size: 1rem;
+            color: #333;
+            font-weight: 600;
+            margin-top: 0.1rem;
+        }
+
+        .notification-detail-field .value.highlight {
+            color: #0078d7;
+        }
+
+        .notification-detail-field .value.muted {
+            color: #888;
+            font-family: monospace;
+            font-size: 0.85rem;
+        }
+
+        /* Markdown Table Container */
+        .md-table-container {
+            overflow-x: auto;
+            margin: 1rem 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+        }
+
+        .md-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            font-size: 0.9rem;
+        }
+
+        .md-table th {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            padding: 0.75rem 1rem;
+            text-align: left;
+            font-weight: 600;
+            color: #333;
+            border-bottom: 2px solid #dee2e6;
+            white-space: nowrap;
+        }
+
+        .md-table td {
+            padding: 0.65rem 1rem;
+            border-bottom: 1px solid #e9ecef;
+            color: #555;
+            vertical-align: middle;
+        }
+
+        .md-table tbody tr:hover {
+            background: #f0f8ff;
+        }
+
+        .md-table tbody tr.unread {
+            background: #f0f8ff;
+        }
+
+        /* ========================================================================
+        EMPLOYEE NAME BUTTON STYLES (v3.3 - 25% Reduced Height)
+        ======================================================================== */
+
+        .employee-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.33rem; /* reduced from 0.4rem */
+            
+            min-width: 125px;
+            max-width: 125px;
+
+            padding: 0.23rem 0.5rem; /* reduced from 0.3rem 0.65rem */
+
+            background: linear-gradient(135deg, #fefefe 0%, #f8f4f0 50%, #f5f0eb 100%);
+            border: 1px solid #d4c4b0;
+            border-radius: 19px; /* reduced from 25px */
+
+            font-size: 0.75rem; /* reduced from 0.8rem */
+            font-weight: 500;
+            color: #5d4e37;
+
+            cursor: pointer;
+            transition: all 150ms ease;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+
+            box-shadow: 0 1px 2px rgba(180, 160, 140, 0.15),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.8);
+        }
+
+        .employee-btn:hover {
+            background: linear-gradient(135deg, #fffef8 0%, #fdf8e8 50%, #f9f0d8 100%);
+            border-color: #c9a96e;
+            color: #4a3f2a;
+            transform: scale(1.02);
+            box-shadow: 0 3px 6px rgba(180, 150, 100, 0.25),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.9);
+        }
+
+        .employee-btn:active {
+            transform: scale(0.98);
+        }
+
+        .employee-btn.active {
+            background: linear-gradient(135deg, #f5e6c8 0%, #e8d4a8 50%, #dcc598 100%);
+            border-color: #b8956a;
+            color: #3d3322;
+            box-shadow: 0 2px 5px rgba(160, 130, 80, 0.3),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.6);
+        }
+
+        /* INITIALS BADGE — 25% smaller */
+        .employee-btn .employee-initials {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+
+            width: 16.5px;   /* reduced from 22px */
+            height: 16.5px;  /* reduced from 22px */
+            min-width: 16.5px;
+
+            background: linear-gradient(135deg, #8b7355 0%, #6d5a45 100%);
+            color: #faf8f5;
+            border-radius: 50%;
+
+            font-size: 0.49rem; /* reduced from 0.65rem */
+            font-weight: 700;
+            letter-spacing: -0.5px;
+
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+        }
+
+        .employee-btn.active .employee-initials {
+            background: linear-gradient(135deg, #7a6548 0%, #5c4a38 100%);
+        }
+
+        .employee-btn .employee-name {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            text-align: left;
+        }
+
+        /* Markdown Table (duplicate removed, keeping enhanced version) */
+        .md-table-container {
+            overflow-x: auto;
+            margin: 1rem 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+        }
+
+        /* Inspect Button — exactly matches .employee-btn footprint */
+        .inspect-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.33rem;
+
+            min-width: 125px;
+            max-width: 125px;
+            min-height: 24px;
+
+            padding: 0.23rem 0.5rem;
+
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            border: none;
+            border-radius: 19px;
+
+            font-size: 0.75rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 150ms ease;
+            white-space: nowrap;
+
+            box-shadow: 0 1px 4px rgba(40, 167, 69, 0.25),
+                        inset 0 1px 0 rgba(255,255,255,0.2);
+        }
+
+        .inspect-btn:hover {
+            background: linear-gradient(135deg, #218838 0%, #1ba67a 100%);
+            transform: scale(1.02);
+            box-shadow: 0 3px 6px rgba(40, 167, 69, 0.35),
+                        inset 0 1px 0 rgba(255,255,255,0.25);
+        }
+
+        .inspect-btn:active {
+            transform: scale(0.98);
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.12);
+        }
+
+        /* Back Button */
+        .back-btn {
+            background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .back-btn:hover {
+            background: linear-gradient(135deg, #5a6268 0%, #343a40 100%);
+            transform: translateY(-1px);
+        }
+
+        .unified-action-btn {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            font-size: 0.85rem;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .unified-action-btn:hover {
+            background: linear-gradient(135deg, #218838 0%, #1ba67a 100%);
+            transform: translateY(-2px);
+        }
+
+        .unified-action-btn.info {
+            background: linear-gradient(135deg, #17a2b8 0%, #6f42c1 100%);
+        }
+
+        /* ========================================================================
+           READ/UNREAD TOGGLE BUTTON STYLES (v3.3 - Enhancement #1)
+           ======================================================================== */
+
+        /* Read/Unread toggle — pixel-perfect match to .employee-btn footprint */
+        .read-toggle-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.33rem;
+
+            min-width: 125px;
+            max-width: 125px;
+            min-height: 24px;          /* 16.5px badge + 2×0.23rem ≈ 24px */
+
+            padding: 0.23rem 0.5rem;
+
+            font-size: 0.75rem;
+            font-weight: 600;
+            border-radius: 19px;
+            cursor: pointer;
+            transition: all 150ms ease;
+            white-space: nowrap;
+            border: none;
+        }
+
+        /* Read button — green, matches .inspect-btn */
+        .read-toggle-btn.btn-mark-read {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            box-shadow: 0 1px 4px rgba(40, 167, 69, 0.25),
+                        inset 0 1px 0 rgba(255,255,255,0.2);
+        }
+
+        .read-toggle-btn.btn-mark-read:hover {
+            background: linear-gradient(135deg, #218838 0%, #1ba67a 100%);
+            transform: scale(1.02);
+            box-shadow: 0 3px 6px rgba(40, 167, 69, 0.35);
+        }
+
+        .read-toggle-btn.btn-mark-read:active {
+            transform: scale(0.98);
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.12);
+        }
+
+        /* Unread button — neutral gray, same shape */
+        .read-toggle-btn.btn-mark-unread {
+            background: linear-gradient(135deg, #e6e6e6 0%, #d4d4d4 100%);
+            color: #444;
+            box-shadow: 0 1px 2px rgba(180,180,180,0.2),
+                        inset 0 1px 0 rgba(255,255,255,0.8);
+        }
+
+        .read-toggle-btn.btn-mark-unread:hover {
+            background: linear-gradient(135deg, #dcdcdc 0%, #c8c8c8 100%);
+            transform: scale(1.02);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.12);
+        }
+
+        .read-toggle-btn.btn-mark-unread:active {
+            transform: scale(0.98);
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.10);
+        }
+
+        .status-dot {
+            font-size: 0.7rem;
+            line-height: 1;
+        }
+
+        /* Status badge styling - consistent with table font */
+        .status-badge {
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+
+        .status-badge.unread {
+            color: #28a745;
+            font-weight: 600;
+        }
+
+        .status-badge.read {
+            color: #666;
+        }
+
+        /* ========================================================================
+           ACTION BAR STYLES (v3.3 - Enhancement #2)
+           ======================================================================== */
+
+        .action-bar {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            /* Move buttons to the right */
+            gap: 0.75rem;
+            padding: 1rem 0;
+            margin-top: 0.5rem;
+            border-top: 1px solid #e0e6ed;
+        }
+
+        .action-bar-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.4rem;
+            padding: 0.5rem 1rem;
+            min-width: 130px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+            border: none;
+        }
+
+        /* All Read - Primary (Blue) */
+        .action-bar-btn.btn-all-read {
+            background: linear-gradient(135deg, #0078ff 0%, #0056b3 100%);
+            color: white;
+        }
+
+        .action-bar-btn.btn-all-read:hover {
+            background: linear-gradient(135deg, #006ae0 0%, #004494 100%);
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0, 120, 255, 0.3);
+        }
+
+        .action-bar-btn.btn-all-read:active {
+            background: linear-gradient(135deg, #005ec7 0%, #003d80 100%);
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15);
+        }
+
+        /* All Unread - Secondary (Gray) */
+        .action-bar-btn.btn-all-unread {
+            background: linear-gradient(135deg, #e6e6e6 0%, #d4d4d4 100%);
+            color: #333;
+        }
+
+        .action-bar-btn.btn-all-unread:hover {
+            background: linear-gradient(135deg, #dcdcdc 0%, #c8c8c8 100%);
+            transform: translateY(-1px);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+        }
+
+        .action-bar-btn.btn-all-unread:active {
+            background: linear-gradient(135deg, #cfcfcf 0%, #b8b8b8 100%);
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15);
+        }
+
+        /* Back Home - Neutral (Light Gray/Outline) */
+        .action-bar-btn.btn-back-home {
+            background: linear-gradient(135deg, #f5f5f5 0%, #e8e8e8 100%);
+            color: #444;
+            border: 1px solid #d0d0d0;
+        }
+
+        .action-bar-btn.btn-back-home:hover {
+            background: linear-gradient(135deg, #ebebeb 0%, #dedede 100%);
+            border-color: #c0c0c0;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .action-bar-btn.btn-back-home:active {
+            background: linear-gradient(135deg, #e0e0e0 0%, #d0d0d0 100%);
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Summary Cards */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            margin: 1rem 0;
+        }
+
+        .summary-card {
+            background: white;
+            border-radius: 10px;
+            padding: 1.25rem;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+            border-left: 4px solid #0078d7;
+        }
+
+        .summary-card .summary-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #0078d7;
+        }
+
+        .summary-card .summary-label {
+            font-size: 0.85rem;
+            color: #666;
+            margin-top: 0.25rem;
+        }
+
+        /* JSON Code Block */
+        .json-block {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 1rem;
+            border-radius: 8px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.85rem;
+            overflow-x: auto;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 3rem 2rem;
+            color: #666;
+        }
+
+        .empty-state-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        .empty-state-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 0.5rem;
+        }
+
+        /* Action buttons container */
+        .action-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid #e0e6ed;
+        }
+
+        /* Markdown styling */
+        .md-h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #0078d7;
+            margin: 1.5rem 0 1rem 0;
+            border-bottom: 2px solid #0078d7;
+            padding-bottom: 0.5rem;
+        }
+
+        .md-h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #0078d7;
+            margin: 1.25rem 0 0.75rem 0;
+        }
+
+        .md-h3 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #333;
+            margin: 1rem 0 0.5rem 0;
+        }
+
+        .md-p {
+            margin: 0.5rem 0;
+            line-height: 1.6;
+            color: #444;
+        }
+
+        .md-code {
+            background: #f4f4f4;
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.9em;
+            color: #0078d7;
+        }
+
+        .md-hr {
+            border: none;
+            border-top: 1px solid #e0e6ed;
+            margin: 1rem 0;
+        }
+
+        .md-spacer {
+            height: 0.5rem;
+        }
+
+        .footer-action {
+            color: #0078d7;
+            text-decoration: none;
+            font-weight: 500;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+        }
+
+        /* Inline filter row - single horizontal line */
+        .filter-row-inline {
+            display: flex;
+            flex-direction: row;
+            align-items: flex-end;
+            gap: 0.75rem;
+            flex-wrap: nowrap;
+        }
+
+        .filter-row-inline .filter-group {
+            flex: 1;
+            min-width: 0;
+        }
+
+        /* (filter-group-narrow removed — all filter fields use equal flex:1) */
+
+        /* ========================================================================
+           UNIFIED GREEN BUTTON STYLE — all major buttons
+           ======================================================================== */
+
+        /* Base shared style for all major action buttons */
+        .btn-inspect,
+        .btn-secondary,
+        .back-btn,
+        .action-bar-btn,
+        .action-bar-btn.btn-back-home,
+        .action-bar-btn.btn-all-read,
+        .action-bar-btn.btn-all-unread,
+        .unified-action-btn {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%) !important;
+            color: white !important;
+            border: none !important;
+            padding: 0.55rem 1.25rem !important;
+            font-size: 0.9rem !important;
+            font-weight: 700 !important;
+            border-radius: 8px !important;
+            cursor: pointer !important;
+            transition: all 0.2s ease !important;
+            box-shadow: 0 2px 8px rgba(40, 167, 69, 0.3) !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 0.4rem !important;
+            white-space: nowrap !important;
+        }
+
+        .btn-inspect:hover,
+        .btn-secondary:hover,
+        .back-btn:hover,
+        .action-bar-btn:hover,
+        .action-bar-btn.btn-back-home:hover,
+        .action-bar-btn.btn-all-read:hover,
+        .action-bar-btn.btn-all-unread:hover,
+        .unified-action-btn:hover {
+            background: linear-gradient(135deg, #218838 0%, #1ba67a 100%) !important;
+            transform: translateY(-1px) !important;
+            box-shadow: 0 4px 12px rgba(40, 167, 69, 0.4) !important;
+        }
+
+        .btn-inspect:active,
+        .btn-secondary:active,
+        .back-btn:active,
+        .action-bar-btn:active,
+        .action-bar-btn.btn-back-home:active,
+        .action-bar-btn.btn-all-read:active,
+        .action-bar-btn.btn-all-unread:active,
+        .unified-action-btn:active {
+            transform: translateY(0) !important;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.15) !important;
+        }
+
+        /* Keep read/unread toggle buttons their own colors (not major action buttons) */
+
+        /* ========================================================================
+           SECTIONED INSPECTOR STYLES
+           ======================================================================== */
+
+        .inspector-wrapper {
+            max-width: 860px;
+            margin: 0 auto;
+        }
+
+        .inspector-header {
+            background: linear-gradient(135deg, #f0f8ff 0%, #e8f4fd 100%);
+            border: 2px solid #0078d7;
+            border-radius: 12px;
+            padding: 1.25rem 1.5rem 1rem;
+            margin-bottom: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.85rem;
+        }
+
+        .inspector-header-left h2 {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: #0078d7;
+            margin: 0 0 0.55rem 0;
+            line-height: 1.3;
+        }
+
+        .inspector-header-meta {
+            display: flex;
+            align-items: center;
+            gap: 0.65rem;
+            flex-wrap: wrap;
+        }
+
+        .inspector-header-meta .inspector-timestamp {
+            font-family: 'Georgia', 'Times New Roman', serif;
+            font-size: 0.85rem;
+            font-style: italic;
+            color: #6b7280;
+            letter-spacing: 0.01em;
+        }
+
+        .inspector-header-actions {
+            display: flex;
+            gap: 0.6rem;
+            align-items: center;
+            flex-wrap: wrap;
+            padding-top: 0.1rem;
+            border-top: 1px solid rgba(0,120,215,0.12);
+        }
+
+        .inspector-section {
+            background: white;
+            border: 1px solid #e0e6ed;
+            border-radius: 10px;
+            margin-bottom: 0.85rem;
+            overflow: hidden;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+        }
+
+        .inspector-section-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #edf0f3 100%);
+            padding: 0.6rem 1rem;
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: #555;
+            text-transform: uppercase;
+            letter-spacing: 0.7px;
+            border-bottom: 1px solid #dee2e6;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .inspector-kv-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .inspector-kv-table tr:last-child td { border-bottom: none; }
+
+        .inspector-kv-table tr:hover td { background: #fafbff; }
+
+        .inspector-kv-table td {
+            padding: 0.55rem 1rem;
+            border-bottom: 1px solid #f2f4f7;
+            vertical-align: top;
+            font-size: 0.875rem;
+            line-height: 1.5;
+        }
+
+        .inspector-kv-table td.kv-label {
+            width: 32%;
+            color: #777;
+            font-weight: 600;
+            white-space: nowrap;
+            font-size: 0.82rem;
+        }
+
+        .inspector-kv-table td.kv-value { color: #222; word-break: break-word; }
+
+        .inspector-kv-table td.kv-uuid {
+            color: #555;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.8rem;
+        }
+
+        .kv-null { color: #bbb; font-style: italic; }
+
+        .template-body-box {
+            padding: 0.9rem 1rem;
+            font-size: 0.9rem;
+            color: #333;
+            line-height: 1.65;
+            border-left: 3px solid #28a745;
+            margin: 0.75rem 1rem;
+            background: #f9fff9;
+            border-radius: 0 6px 6px 0;
+        }
+
+        .diff-subsection-label {
+            font-size: 0.72rem;
+            font-weight: 700;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 0.75rem 1rem 0.35rem;
+        }
+
+        .diff-table-wrapper { overflow-x: auto; padding: 0 1rem 0.85rem; }
+
+        .diff-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+
+        .diff-table thead th {
+            background: linear-gradient(135deg, #edf0f3 0%, #e3e8ed 100%);
+            padding: 0.45rem 0.85rem;
+            text-align: left;
+            font-weight: 700;
+            font-size: 0.72rem;
+            color: #444;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 2px solid #d0d7de;
+            white-space: nowrap;
+        }
+
+        .diff-table tbody td {
+            padding: 0.45rem 0.85rem;
+            border-bottom: 1px solid #f0f0f0;
+            vertical-align: top;
+            word-break: break-word;
+        }
+
+        .diff-table tbody tr:last-child td { border-bottom: none; }
+        .diff-table tbody tr:hover td { background: #fafbff; }
+
+        .diff-table td.diff-field {
+            font-weight: 600;
+            color: #555;
+            white-space: nowrap;
+            background: #fafafa;
+            font-size: 0.82rem;
+            width: 28%;
+        }
+
+        .diff-table tr.row-changed td.diff-field {
+            color: #333;
+            background: #f5f5f5;
+            font-weight: 700;
+        }
+
+        .diff-table td.diff-before  { color: #842029; background: #fff5f5; }
+        .diff-table td.diff-after   { color: #0a5c2e; background: #f0fff4; }
+        .diff-table td.diff-same    { color: #555; }
+
+        .diff-changed-badge {
+            display: inline-block;
+            background: #fff3cd;
+            color: #856404;
+            font-size: 0.65rem;
+            font-weight: 700;
+            padding: 0.1rem 0.35rem;
+            border-radius: 4px;
+            margin-left: 0.4rem;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            vertical-align: middle;
+        }
+
+        .context-kv-wrapper { padding: 0 1rem 0.85rem; }
+
+        .raw-json-details {
+            background: white;
+            border: 1px solid #e0e6ed;
+            border-radius: 10px;
+            margin-bottom: 0.85rem;
+            overflow: hidden;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+        }
+
+        .raw-json-details summary {
+            padding: 0.6rem 1rem;
+            background: linear-gradient(135deg, #f8f9fa 0%, #edf0f3 100%);
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: #777;
+            text-transform: uppercase;
+            letter-spacing: 0.7px;
+            cursor: pointer;
+            user-select: none;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .raw-json-details summary::-webkit-details-marker { display: none; }
+        .raw-json-details[open] summary { border-bottom: 1px solid #dee2e6; color: #555; }
+
+        .raw-json-toggle-arrow {
+            font-size: 0.6rem;
+            color: #aaa;
+            transition: transform 0.2s ease;
+            display: inline-block;
+        }
+
+        .raw-json-details[open] .raw-json-toggle-arrow { transform: rotate(90deg); }
+        .raw-json-details .json-block { border-radius: 0; margin: 0; max-height: 380px; font-size: 0.8rem; }
+
+        /* === Header visibility — shown only on home page === */
+        #mainHeader {
+            transition: opacity 0.25s ease, max-height 0.25s ease;
+        }
+        #mainHeader.header-hidden {
+            display: none;
+        }
+
+        /* === Home-page spacing: +150% gap between header and filter panel === */
+        /* Original gap ≈ 1rem (response padding-top).                         */
+        /* 150% more → total 2.5rem → achieved via filter-panel-container top  */
+        /* margin of 1.5rem on top of the existing 1rem response padding.      */
+        #filter-panel-container {
+            margin-top: 3rem;
+        }
+
+    </style>
+</head>
+
+<body>
+    <div class="galaxy-background">
+        <div class="nebula-cloud"></div>
+        <div class="nebula-cloud"></div>
+        <div class="nebula-cloud"></div>
+    </div>
+
+    <header id="mainHeader">
+        <h1>
+            <span>🔔 Notification Center — CRM AI Agent</span>
+        </h1>
+        <div class="header-right">
+            <div class="polling-indicator">
+                <div class="polling-dot" id="pollingDot"></div>
+                <span id="pollingStatus">Connected</span>
+            </div>
+            <div class="session-info">
+                <span>Time: <span id="currentTime"></span></span>
+                <span style="margin: 0 0.25rem;">|</span>
+                <span>Session: <span id="sessionId">...</span></span>
+                <button onclick="resetSession()">Reset</button>
+            </div>
+        </div>
+    </header>
+
+    <div class="response" id="responseArea">
+        <div id="filter-panel-container">
+            <div class="filter-panel fade-in">
+                <div class="filter-panel-header">
+                    <span class="filter-panel-icon">🔔</span>
+                    <div>
+                        <h2 class="filter-panel-title">Notification Filters</h2>
+                        <p class="filter-panel-subtitle">Select filters and click Inspect to view notifications</p>
+                    </div>
+                </div>
+
+                <div class="filter-section">
+                    <div class="filter-row-inline">
+                        <div class="filter-group">
+                            <label for="filterModule">📋 Event Type</label>
+                            <select id="filterModule">
+                                <option value="">All</option>
+                                <option value="account">Accounts</option>
+                                <option value="contact">Contacts</option>
+                                <option value="contract">Contracts</option>
+                                <option value="invoice">Invoices</option>
+                                <option value="lead">Leads</option>
+                                <option value="opportunity">Opportunities</option>
+                                <option value="order">Orders</option>
+                                <option value="payment">Payments</option>
+                                <option value="product">Products</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="filterEmployeeName">👥 Employee Name</label>
+                            <select id="filterEmployeeName" onchange="syncEmployeeDropdowns('name')">
+                                <option value="">All</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="filterEmployeeRole">Role</label>
+                            <select id="filterEmployeeRole" onchange="syncEmployeeDropdowns('role')">
+                                <option value="">All</option>
+                            </select>
+                        </div>
+                        <select id="filterEmployeeId" onchange="syncEmployeeDropdowns('id')" style="display:none;">
+                            <option value="">All</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="filter-actions">
+                    <button class="btn-inspect" onclick="executeInspect()">🔍 Inspect</button>
+                </div>
+            </div>
+
+            <div
+                style="text-align: center; margin-top: 0.75rem; padding: 0.5rem; background: #f0f8ff; border-radius: 6px; max-width: 780px; margin-left: auto; margin-right: auto; font-size: 0.85rem;">
+                <strong>🎙️ Voice Input:</strong> Use the microphone below to speak your query naturally!
+            </div>
+        </div>
+    </div>
+
+    <div class="input-bar">
+        <form id="chatForm" onsubmit="return sendMessage(event);">
+            <span class="search-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+            </span>
+            <div class="input-wrapper">
+                <textarea id="message" placeholder="Type your request or use voice input..."
+                    onkeydown="handleKeyDown(event)"></textarea>
+                <div id="voiceStatus" class="voice-status">🎤 Listening...</div>
+                <button type="button" id="voiceBtn" class="voice-btn-google" onclick="toggleVoiceInput()">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                        <line x1="12" y1="19" x2="12" y2="23"></line>
+                        <line x1="8" y1="23" x2="16" y2="23"></line>
+                    </svg>
+                </button>
+            </div>
+            <button type="submit" class="send">Send</button>
+        </form>
+    </div>
+
+    <script>
+        // ============================================================================
+        // CONFIGURATION
+        // ============================================================================
+
+        const API_URL = 'http://localhost:8000/notification-chat';  // Local API endpoint for lead management
+    
+        let sessionId = localStorage.getItem('sessionId') || generateSessionId();
+        let currentEmployeeFilter = null;
+        let lastListHTML = null;
+        let cameFromList = false;
+        let activeListEmployeeFilter = null;
+        let currentNotifications = [];
+
+
+        const EMPLOYEES = [
+            { uuid: 'a1451ad6-310c-4bcc-ba17-dd383a881ee8', name: 'Julia Martin', role: 'Sales Representative' },
+            { uuid: 'bc80fb0e-57b9-461a-9490-8aa68bad1901', name: 'Daniel Lee', role: 'Sales Representative' },
+            { uuid: 'ca8eb9a8-f27a-428d-9657-59c9b8a2db16', name: 'Karen Patel', role: 'Account Executive' },
+            { uuid: '76dd79c3-ebd9-4abf-b6e7-9a551365a7d3', name: 'Robert Garcia', role: 'Sales Manager' },
+            { uuid: '02cb6f2d-8e0f-4f50-a710-dbaa24285ed6', name: 'Sophia Nguyen', role: 'Sales Development Rep' },
+            { uuid: '367109f6-5145-495c-b11b-fe090c1f6f39', name: 'Lisa Jones', role: 'Sales Representative' },
+            { uuid: '307cc6ac-eac7-46a2-87ed-bf20e9785862', name: 'Sarah Johnson', role: 'Accounting Clerk' },
+            { uuid: '67f0a5b1-0a31-4f8c-b9e8-df8b583871bf', name: 'Mike Chen', role: 'Finance Manager' },
+            { uuid: '25eaf35e-3f65-4a95-89fe-bcfd06e0c69d', name: 'System Admin', role: 'Administrator' }
+        ];
+
+        // Build UUID to Employee lookup for fast conversion
+        const UUID_TO_EMPLOYEE = {};
+        EMPLOYEES.forEach(emp => {
+            UUID_TO_EMPLOYEE[emp.uuid.toLowerCase()] = emp;
+        });
+
+        // UUID pattern - matches standard UUID format
+        const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+        // ============================================================================
+        // SESSION MANAGEMENT
+        // ============================================================================
+
+        function generateSessionId() {
+            const id = 'sess_' + Math.random().toString(36).substring(2, 15);
+            localStorage.setItem('sessionId', id);
+            return id;
+        }
+
+        function resetSession() {
+            sessionId = generateSessionId();
+            document.getElementById('sessionId').textContent = sessionId.substring(0, 12) + '...';
+            goHome();
+        }
+
+        function updateCurrentTime() {
+            const now = new Date();
+            document.getElementById('currentTime').textContent = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        // Initialize
+        document.getElementById('sessionId').textContent = sessionId.substring(0, 12) + '...';
+        updateCurrentTime();
+        setInterval(updateCurrentTime, 1000);
+
+        // ============================================================================
+        // FILTER PANEL
+        // ============================================================================
+
+        function populateEmployeeDropdowns() {
+            const nameDropdown = document.getElementById('filterEmployeeName');
+            const roleDropdown = document.getElementById('filterEmployeeRole');
+            const idDropdown = document.getElementById('filterEmployeeId');
+
+            EMPLOYEES.forEach(emp => {
+                nameDropdown.innerHTML += `<option value="${emp.uuid}">${emp.name}</option>`;
+                idDropdown.innerHTML += `<option value="${emp.uuid}">${emp.uuid.substring(0, 8)}...</option>`;
+            });
+
+            const uniqueRoles = [...new Set(EMPLOYEES.map(e => e.role))].sort();
+            uniqueRoles.forEach(role => {
+                roleDropdown.innerHTML += `<option value="${role}">${role}</option>`;
+            });
+        }
+
+        function syncEmployeeDropdowns(source) {
+            const nameDropdown = document.getElementById('filterEmployeeName');
+            const roleDropdown = document.getElementById('filterEmployeeRole');
+            const idDropdown = document.getElementById('filterEmployeeId');
+
+            let selectedEmployee = null;
+
+            if (source === 'name' && nameDropdown.value) {
+                selectedEmployee = EMPLOYEES.find(e => e.uuid === nameDropdown.value);
+            } else if (source === 'role' && roleDropdown.value) {
+                selectedEmployee = EMPLOYEES.find(e => e.role === roleDropdown.value);
+            } else if (source === 'id' && idDropdown.value) {
+                selectedEmployee = EMPLOYEES.find(e => e.uuid === idDropdown.value);
+            }
+
+            if (selectedEmployee) {
+                nameDropdown.value = selectedEmployee.uuid;
+                roleDropdown.value = selectedEmployee.role;
+                idDropdown.value = selectedEmployee.uuid;
+
+                [nameDropdown, roleDropdown, idDropdown].forEach(d => d.classList.add('synced'));
+                currentEmployeeFilter = selectedEmployee.uuid;
+            } else {
+                nameDropdown.value = '';
+                roleDropdown.value = '';
+                idDropdown.value = '';
+                [nameDropdown, roleDropdown, idDropdown].forEach(d => d.classList.remove('synced'));
+                currentEmployeeFilter = null;
+            }
+        }
+
+        function resetFilters() {
+            document.getElementById('filterModule').value = '';
+            document.getElementById('filterEmployeeName').value = '';
+            document.getElementById('filterEmployeeRole').value = '';
+            document.getElementById('filterEmployeeId').value = '';
+            ['filterEmployeeName', 'filterEmployeeRole', 'filterEmployeeId'].forEach(id => {
+                document.getElementById(id).classList.remove('synced');
+            });
+            currentEmployeeFilter = null;
+        }
+
+        // executeInspect – filter-panel "Show" button → direct 'list' route
+        function executeInspect() {
+            const mod        = document.getElementById('filterModule').value || undefined;
+            const employeeId = document.getElementById('filterEmployeeName').value || undefined;
+            const params = { message: 'list notifications:' };
+            if (employeeId) params.employeeId = employeeId;
+            if (mod)        params.module     = mod;
+            callDirect(params, 'Loading notifications…');
+        }
+
+        function showFilterPanel() { var el = document.getElementById('filter-panel-container'); if (el) el.style.display = 'block'; }
+        function hideFilterPanel() { var el = document.getElementById('filter-panel-container'); if (el) el.style.display = 'none'; }
+
+        // ============================================================================
+        // EMPLOYEE HELPERS
+        // ============================================================================
+
+        function getEventIcon(eventType) {
+            if (!eventType) return '📋';
+            const iconMap = {
+                'lead': '🎯', 'opportunity': '💼', 'invoice': '📄', 'payment': '💰',
+                'contract': '📝', 'account': '🏢', 'contact': '👤', 'order': '📦', 'product': '📦'
+            };
+            const module = eventType.split('.')[0];
+            return iconMap[module] || '📋';
+        }
+
+        function truncateUuid(uuid) {
+            if (!uuid) return '—';
+            const emp = EMPLOYEES.find(e => e.uuid === uuid);
+            if (emp) {
+                const initials = getEmployeeInitials(emp.name);
+                return `<button class="employee-btn" onclick="filterByEmployee('${emp.uuid}')"><span class="employee-initials">${initials}</span><span class="employee-name">${emp.name}</span></button>`;
+            }
+            return uuid.substring(0, 8) + '...';
+        }
+
+        // setEmployeeListFilter → direct list route
+        function setEmployeeListFilter(employee) {
+            activeListEmployeeFilter = employee.uuid;
+            currentEmployeeFilter    = employee.uuid;
+            callDirect({ message: 'list notifications:', employeeId: employee.uuid }, 'Loading notifications…');
+        }
+
+        // clearEmployeeFilter → direct list route (no employeeId = all employees)
+        function clearEmployeeFilter() {
+            activeListEmployeeFilter = null;
+            currentEmployeeFilter    = null;
+            callDirect({ message: 'list notifications:' }, 'Loading notifications…');
+        }
+
+        function getEmployeeInitials(name) {
+            if (!name) return '??';
+            const parts = name.split(' ').filter(p => p.length > 0);
+            return parts.length >= 2
+                ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+                : name.substring(0, 2).toUpperCase();
+        }
+
+        // ============================================================================
+        // UUID TO EMPLOYEE BUTTON CONVERSION (v3.2 Core Feature)
+        // ============================================================================
+
+        function isUUID(str) {
+            if (!str || typeof str !== 'string') return false;
+            return UUID_REGEX.test(str.trim());
+        }
+
+        function uuidToEmployeeButton(uuid) {
+            if (!uuid) return null;
+
+            const cleanUuid = uuid.trim().toLowerCase();
+            const employee = UUID_TO_EMPLOYEE[cleanUuid];
+
+            if (employee) {
+                const initials = getEmployeeInitials(employee.name);
+                const isActive = (cleanUuid === (currentEmployeeFilter || '').toLowerCase() ||
+                    cleanUuid === (activeListEmployeeFilter || '').toLowerCase());
+                return `<button class="employee-btn${isActive ? ' active' : ''}" onclick="filterByEmployee('${employee.uuid}')" title="${escapeHTML(employee.name)} - Click to filter"><span class="employee-initials">${initials}</span><span class="employee-name">${escapeHTML(employee.name)}</span></button>`;
+            }
+            return null;
+        }
+
+        function createInspectButton(uuid) {
+            // UUID only contains hex chars and dashes, safe to use directly
+            return `<button class="inspect-btn" onclick="inspectNotification('${uuid}')">🔍 Inspect</button>`;
+        }
+
+        // ============================================================================
+        // READ/UNREAD TOGGLE BUTTON (v3.3 Enhancement #1)
+        // ============================================================================
+
+        function createReadToggleButton(notification) {
+            const isUnread = notification.status === 'pending' || notification.status === 'sent' || notification.status === 'unread';
+            const uuid = notification.notification_uuid;
+            const empUuid = notification.employee_uuid || '';
+
+            if (isUnread) {
+                // Unread → Show blue dot + "Read" button (action: mark as read)
+                return `<button class="read-toggle-btn btn-mark-read" onclick="markNotificationRead('${escapeHTML(uuid)}', '${escapeHTML(empUuid)}')" title="Mark as Read">
+            <span class="status-dot">🔵</span> Read
+        </button>`;
+            } else {
+                // Read → Show gray dot + "Unread" button (action: mark as unread)
+                return `<button class="read-toggle-btn btn-mark-unread" onclick="markNotificationUnread('${escapeHTML(uuid)}', '${escapeHTML(empUuid)}')" title="Mark as Unread">
+            <span class="status-dot">⚪</span> Unread
+        </button>`;
+            }
+        }
+
+        // Mark single notification as read → direct mark_read route (no AI Agent)
+        async function markNotificationRead(notificationUuid, employeeUuid) {
+            updateNotificationStatusInUI(notificationUuid, 'read'); // optimistic
+            try {
+                const resp = await fetch(API_URL, {
+                    method : 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body   : JSON.stringify({
+                        sessionId,
+                        chatInput: { message: 'mark read:', notificationId: notificationUuid }
+                    })
+                });
+                const data   = await resp.json();
+                const result = Array.isArray(data) ? data[0] : data;
+                if (result.error) {
+                    console.error('mark_read error:', result.error);
+                    updateNotificationStatusInUI(notificationUuid, 'unread'); // revert
+                }
+            } catch (err) {
+                console.error('mark_read failed:', err);
+                updateNotificationStatusInUI(notificationUuid, 'unread');
+            }
+        }
+
+        // Mark single notification as unread → direct mark_unread route (no AI Agent)
+        async function markNotificationUnread(notificationUuid, employeeUuid) {
+            updateNotificationStatusInUI(notificationUuid, 'unread'); // optimistic
+            try {
+                const resp = await fetch(API_URL, {
+                    method : 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body   : JSON.stringify({
+                        sessionId,
+                        chatInput: { message: 'mark unread:', notificationId: notificationUuid }
+                    })
+                });
+                const data   = await resp.json();
+                const result = Array.isArray(data) ? data[0] : data;
+                if (result.error) {
+                    console.error('mark_unread error:', result.error);
+                    updateNotificationStatusInUI(notificationUuid, 'read'); // revert
+                }
+            } catch (err) {
+                console.error('mark_unread failed:', err);
+                updateNotificationStatusInUI(notificationUuid, 'read');
+            }
+        }
+
+        // Optimistic UI update for notification status
+        function updateNotificationStatusInUI(notificationUuid, newStatus) {
+            // Find and update in currentNotifications array
+            const notification = currentNotifications.find(n => n.notification_uuid === notificationUuid);
+            if (notification) {
+                notification.status = newStatus;
+            }
+
+            // Find the row and update its contents
+            // Table structure: Icon(0), Title(1), Employee(2), Status(3), Created(4), Read/Unread(5), Inspect(6)
+            const rows = document.querySelectorAll('.md-table tbody tr');
+            rows.forEach(row => {
+                // Check if this row contains the notification by looking at inspect button or toggle button
+                const inspectBtn = row.querySelector('.inspect-btn');
+                const toggleBtn = row.querySelector('.read-toggle-btn');
+                const hasNotification = (inspectBtn && inspectBtn.getAttribute('onclick')?.includes(notificationUuid)) ||
+                    (toggleBtn && toggleBtn.getAttribute('onclick')?.includes(notificationUuid));
+
+                if (hasNotification) {
+                    // Update status badge - COLUMN 3 (not 4!)
+                    const statusCell = row.cells[3];
+                    if (statusCell) {
+                        const isUnread = newStatus === 'unread' || newStatus === 'pending' || newStatus === 'sent';
+                        statusCell.innerHTML = isUnread
+                            ? '<span class="status-badge unread">🟢 Unread</span>'
+                            : '<span class="status-badge read">Read</span>';
+                    }
+
+                    // Update toggle button - COLUMN 5
+                    const toggleCell = row.cells[5];
+                    if (toggleCell) {
+                        const empUuid = notification?.employee_uuid || '';
+                        toggleCell.innerHTML = createToggleButtonFromMarker(notificationUuid, newStatus, empUuid);
+                    }
+
+                    // Update row styling
+                    if (newStatus === 'unread' || newStatus === 'pending' || newStatus === 'sent') {
+                        row.classList.add('unread');
+                    } else {
+                        row.classList.remove('unread');
+                    }
+                }
+            });
+        }
+
+        // ============================================================================
+        // BULK ACTIONS (v3.3 Enhancement #2)
+        // ============================================================================
+
+        // Mark all as read → direct mark_all_read route (no AI Agent)
+        async function markAllRead() {
+            const params = { message: 'mark all read:' };
+            if (currentEmployeeFilter) params.employeeId = currentEmployeeFilter;
+            await callDirect(params, 'Marking all as read…');
+        }
+
+        // Mark all as unread → direct mark_all_unread route (no AI Agent)
+        async function markAllUnread() {
+            const params = { message: 'mark all unread:' };
+            if (currentEmployeeFilter) params.employeeId = currentEmployeeFilter;
+            await callDirect(params, 'Marking all as unread…');
+        }
+
+        // Refresh notification list UI from currentNotifications
+        function refreshNotificationListUI() {
+            if (currentNotifications.length === 0) return;
+
+            const data = {
+                notifications: currentNotifications,
+                employee_name: currentEmployeeFilter ?
+                    (EMPLOYEES.find(e => e.uuid === currentEmployeeFilter)?.name || 'Selected Employee') :
+                    'All Employees'
+            };
+            renderNotificationList(data);
+        }
+
+        // ============================================================================
+        // UTILITY FUNCTIONS
+        // ============================================================================
+
+        function escapeHTML(str) {
+            if (!str) return '';
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        function formatDateTime(value) {
+            if (!value) return 'N/A';
+            const d = new Date(value);
+            return isNaN(d.getTime()) ? 'N/A' : d.toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        }
+
+        // goHome → reload resets everything; header always visible on fresh load
+        function goHome() {
+            console.log('goHome called');
+            location.reload();
+        }
+
+        // ── Header visibility helpers ─────────────────────────────────────────
+        // Header is visible only on the home page (filter panel shown).
+        // It hides the moment the user navigates to any result page, and
+        // reappears when goHome() reloads the page back to the home state.
+
+        function showHeader() {
+            const h = document.getElementById('mainHeader');
+            if (h) h.classList.remove('header-hidden');
+        }
+
+        function hideHeader() {
+            const h = document.getElementById('mainHeader');
+            if (h) h.classList.add('header-hidden');
+        }
+
+        // goBackToList → direct list route using current employee filter
+        function goBackToList() {
+            console.log('goBackToList called');
+            const params = { message: 'list notifications:' };
+            if (currentEmployeeFilter) params.employeeId = currentEmployeeFilter;
+            callDirect(params, 'Loading notifications…');
+        }
+
+        // ============================================================================
+        // POLLING
+        // ============================================================================
+
+        function updatePollingIndicator(status, message) {
+            const dot = document.getElementById('pollingDot');
+            const statusText = document.getElementById('pollingStatus');
+            dot.className = 'polling-dot' + (status === 'polling' ? ' polling' : '') + (status === 'error' ? ' error' : '');
+            statusText.textContent = message || 'Connected';
+        }
+
+        // ============================================================================
+        // REQUEST FUNCTIONS
+        // ============================================================================
+
+        // ── Direct-route helper (replaces ad-hoc fetch calls) ──────────────────
+        // All deterministic SP operations funnel through here.
+        // payload = chatInput object; the pre-router reads body.chatInput.message
+        // to decide routerAction (true = skip AI Agent → Build SQL Query).
+        async function callDirect(chatInputParams, loadingMsg) {
+            hideFilterPanel();
+            hideHeader();           // hide header – not on home page any more
+            document.getElementById('responseArea').innerHTML =
+                '<div style="text-align:center;padding:2rem"><div class="loading"></div>' +
+                '<p style="margin-top:1rem;color:#666">' + (loadingMsg || 'Processing…') + '</p></div>';
+            try {
+                const resp = await fetch(API_URL, {
+                    method : 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body   : JSON.stringify({ sessionId, chatInput: chatInputParams })
+                });
+                handleResponse(await resp.json());
+            } catch (err) {
+                document.getElementById('responseArea').innerHTML =
+                    '<div class="error-record"><h3>❌ Connection Error</h3><p>' + escapeHTML(err.message) + '</p></div>';
+            }
+        }
+
+        // sendRequest – kept for backward-compat (keyboard Enter / misc callers)
+        // Routes through callDirect so the pre-router can decide.
+        function sendRequest(text) {
+            console.log('sendRequest (chatInput):', text);
+            callDirect({ message: text });
+        }
+
+        // sendMessage – free-text textarea.
+        // Routes through callDirect; the pre-router will emit routerAction:false
+        // for unrecognised messages so the AI Agent handles them.
+        async function sendMessage(event) {
+            console.log('sendMessage called');
+            if (event && event.preventDefault) event.preventDefault();
+            const messageBox = document.getElementById('message');
+            const message = messageBox.value.trim();
+            if (!message) return false;
+            const chatInputParams = { message };
+            if (currentEmployeeFilter) chatInputParams.employeeId = currentEmployeeFilter;
+            await callDirect(chatInputParams, 'Thinking…');
+            messageBox.value = '';
+            return false;
+        }
+
+        // sendDirectRequest – legacy alias kept so any surviving callers still work
+        async function sendDirectRequest(payload) {
+            await callDirect(payload);
+        }
+
+        // ============================================================================
+        // INSPECTOR OUTPUT PARSER
+        // Detects when data.output is a markdown notification-inspector response,
+        // extracts the embedded JSON, and returns a synthetic structured object
+        // compatible with renderInspectorResult().  Returns null if not inspector.
+        // ============================================================================
+
+        function tryParseInspectorOutput(output) {
+            if (!output || typeof output !== 'string') return null;
+
+            // ── Step 1: find a fenced JSON code block ─────────────────────────────
+            //   ```json\n{...}\n```   OR   ```\n{...}\n```
+            const fenceRe = /```(?:json)?\s*\n([\s\S]*?)\n```/g;
+            let jsonStr = null;
+            let match;
+
+            while ((match = fenceRe.exec(output)) !== null) {
+                const candidate = match[1].trim();
+                if (candidate.startsWith('{') && candidate.includes('notification_uuid')) {
+                    jsonStr = candidate;
+                    break;
+                }
+            }
+
+            // Also try an unfenced JSON blob (entire output or large inline block)
+            if (!jsonStr) {
+                const blobRe = /(\{[\s\S]{200,}\})/g;
+                while ((match = blobRe.exec(output)) !== null) {
+                    const candidate = match[1].trim();
+                    if (candidate.includes('notification_uuid') && candidate.includes('metadata')) {
+                        jsonStr = candidate;
+                        break;
+                    }
+                }
+            }
+
+            if (!jsonStr) return null;
+
+            // ── Step 2: parse the JSON ────────────────────────────────────────────
+            let raw;
+            try {
+                raw = JSON.parse(jsonStr);
+            } catch (e) {
+                return null;          // malformed JSON — fall back to markdown renderer
+            }
+
+            if (!raw.notification_uuid) return null;
+
+            // ── Step 3: extract formatted title & body from the text around the block
+            const titleMatch  = output.match(/Title[:\s]+([^\n]+)/i);
+            const bodySnippet = raw.body || '';
+
+            // Some agents wrap the human-readable summary before the JSON
+            // e.g. "Mike Chen was updated."
+            let humanBody = '';
+            const lines = output.split('\n');
+            for (const line of lines) {
+                const t = line.trim();
+                if (!t) continue;
+                // Skip header lines, section markers, JSON lines, action links
+                if (/^(notification inspector|template preview|full notification json|←|→|📋|🧩|#|`|\{|\[)/i.test(t)) continue;
+                if (t.startsWith('Title') || t.startsWith('Time:')) continue;
+                if (t.includes('Back to List') || t.includes('Back Home')) continue;
+                if (t.length > 10 && t.length < 120) { humanBody = t; break; }
+            }
+
+            const formatted = {
+                title: (titleMatch ? titleMatch[1].trim() : null) || raw.title || '',
+                body:  humanBody || bodySnippet
+            };
+
+            return {
+                raw_notification: raw,
+                formatted:        formatted,
+                template:         true    // satisfies data.template && data.formatted check
+            };
+        }
+
+                function handleResponse(data) {
+            const responseArea = document.getElementById('responseArea');
+
+            // Handle array response format from n8n (webhook returns array)
+            if (Array.isArray(data)) {
+                data = data[0] || {};
+            }
+
+            // ── Inspector intercept ───────────────────────────────────────────────
+            // The n8n agent returns inspector results as data.output (markdown).
+            // Before falling through to the generic markdown renderer, check if the
+            // output embeds a notification JSON block.  If so, parse it out and hand
+            // it to the structured renderInspectorResult() instead.
+            if (data.output) {
+                const inspectorData = tryParseInspectorOutput(data.output);
+                if (inspectorData) {
+                    renderInspectorResult(inspectorData);
+                    return;
+                }
+                responseArea.innerHTML = `<div class="fade-in">${renderMarkdown(data.output)}</div>`;
+                return;
+            }
+
+            if (data.error) {
+                responseArea.innerHTML = `<div class="error-record fade-in"><h3>❌ Error</h3><p>${escapeHTML(data.error)}</p></div>`;
+                return;
+            }
+
+            // Handle structured responses
+            if (data.notifications !== undefined) {
+                renderNotificationList(data);
+            } else if (data.template && data.formatted) {
+                renderInspectorResult(data);
+            } else if (data.updated !== undefined && data.status === undefined) {
+                // mark_all_read or mark_all_unread result
+                if (data.mode === 'mark_all_unread') {
+                    renderMarkAllUnreadResult(data);
+                } else {
+                    renderMarkAllReadResult(data);
+                }
+            } else if (data.status === 'read' && data.notification_uuid) {
+                renderMarkReadResult(data);
+            } else if (data.status === 'unread' && data.notification_uuid) {
+                renderMarkUnreadResult(data);
+            } else {
+                responseArea.innerHTML = `<div class="audit-record fade-in"><pre>${JSON.stringify(data, null, 2)}</pre></div>`;
+            }
+        }
+
+        // ========================================================================
+        // RENDER FUNCTIONS
+        // ========================================================================
+
+        function renderNotificationList(data) {
+            const responseArea = document.getElementById('responseArea');
+            const notifications = data.notifications || [];
+            const employeeName = data.employee_name || 'All Employees';
+
+            currentNotifications = notifications;
+
+            let html = `
+        <div class="fade-in">
+            <div class="notification-detail">
+                <div class="notification-detail-header">
+                    <div style="display: flex; align-items: center; gap: 1rem;">
+                        <span style="font-size: 2.5rem;">🔔</span>
+                        <div>
+                            <h2 class="notification-detail-title">Notification List</h2>
+                            <p class="notification-detail-subtitle">Employee: ${escapeHTML(employeeName)} | Total: ${notifications.length}</p>
+                        </div>
+                    </div>
+                    <div class="notification-detail-actions">
+                        <button class="unified-action-btn info" onclick="executeInspect()">🔄 Refresh</button>
+                    </div>
+                </div>
+    `;
+
+            if (notifications.length === 0) {
+                html += `
+            <div class="empty-state">
+                <div class="empty-state-icon">🎉</div>
+                <div class="empty-state-title">No notifications found!</div>
+            </div>
+        `;
+            } else {
+                html += `
+            <div class="md-table-container">
+                <table class="md-table">
+                    <thead>
+                        <tr>
+                            <th>Icon</th>
+                            <th>Title</th>
+                            <th>Employee</th>
+                            <th>Status</th>
+                            <th>Created</th>
+                            <th>Read / Unread</th>
+                            <th>Inspect</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+
+                notifications.forEach(n => {
+                    const icon = getEventIcon(n.event_type);
+                    const title = n.title || 'Untitled';
+                    const created = formatDateTime(n.created_at);
+                    const isUnread = n.status === 'pending' || n.status === 'sent' || n.status === 'unread';
+                    const statusBadge = isUnread
+                        ? '<span class="status-badge unread">🟢 Unread</span>'
+                        : '<span class="status-badge read">Read</span>';
+                    const empName = n.employee_uuid ? truncateUuid(n.employee_uuid) : '—';
+                    const readToggleBtn = createReadToggleButton(n);
+
+                    html += `
+                <tr class="${isUnread ? 'unread' : ''}">
+                    <td style="font-size: 1.5rem; text-align: center;">${icon}</td>
+                    <td><strong>${escapeHTML(title)}</strong></td>
+                    <td>${empName}</td>
+                    <td>${statusBadge}</td>
+                    <td>${created}</td>
+                    <td>${readToggleBtn}</td>
+                    <td><button class="inspect-btn" onclick="inspectNotification('${n.notification_uuid}')">🔍 Inspect</button></td>
+                </tr>
+            `;
+                });
+
+                html += '</tbody></table></div>';
+            }
+
+            // Action Bar (Enhancement #2)
+            html += `
+        <div class="action-bar">
+            <button class="action-bar-btn btn-all-read" onclick="markAllRead()" title="Mark all visible notifications as read">
+                🔵 All Read
+            </button>
+            <button class="action-bar-btn btn-all-unread" onclick="markAllUnread()" title="Mark all visible notifications as unread">
+                ⚪ All Unread
+            </button>
+            <button class="action-bar-btn btn-back-home" onclick="goHome()" title="Return to Notification Center home">
+                🏠 Back Home
+            </button>
+        </div>
+    `;
+
+            html += '</div></div>';
+
+            responseArea.innerHTML = html;
+            lastListHTML = html;
+            cameFromList = true;
+        }
+
+        function renderInspectorResult(data) {
+            const responseArea = document.getElementById('responseArea');
+            const raw = data.raw_notification || {};
+            const formatted = data.formatted || {};
+            const meta = raw.metadata || {};
+            const payload = meta.payload || {};
+            const before  = payload.before  || null;
+            const after   = payload.after   || null;
+            const context = payload.context || null;
+            const emp = EMPLOYEES.find(e => e.uuid === raw.employee_uuid);
+            const isUnread = raw.status === 'pending' || raw.status === 'sent' || raw.status === 'unread';
+
+            // ── Helpers ───────────────────────────────────────────────────────────
+
+            function fmtVal(val) {
+                if (val === null || val === undefined) return '<span class="kv-null">—</span>';
+                if (typeof val === 'boolean') return val ? '✅ Yes' : '❌ No';
+                if (typeof val === 'object')  return '<em style="color:#aaa;font-size:0.8rem;">[object]</em>';
+                return escapeHTML(String(val));
+            }
+
+            function kvRow(label, val, extraCss) {
+                const css = extraCss ? ' ' + extraCss : '';
+                return '<tr>'
+                     + '<td class="kv-label">' + escapeHTML(label) + '</td>'
+                     + '<td class="kv-value' + css + '">' + fmtVal(val) + '</td>'
+                     + '</tr>';
+            }
+
+            function kvTable(rows) {
+                return '<table class="inspector-kv-table">' + rows.join('') + '</table>';
+            }
+
+            function section(icon, title, bodyHtml) {
+                return '<div class="inspector-section">'
+                     + '<div class="inspector-section-header">' + icon + ' ' + escapeHTML(title) + '</div>'
+                     + bodyHtml
+                     + '</div>';
+            }
+
+            // ── Section 1: Notification Details ──────────────────────────────────
+
+            const detailRows = [
+                kvRow('Status',  isUnread ? '🟢 Unread' : '✅ Read'),
+                kvRow('Channel', raw.channel),
+                kvRow('Body',    raw.body),
+                kvRow('Created At', formatDateTime(raw.created_at)),
+                kvRow('Sent At',    formatDateTime(raw.sent_at)),
+                kvRow('Read At',    formatDateTime(raw.read_at)),
+            ];
+
+            // ── Section 2: Entity & Event ─────────────────────────────────────────
+
+            const entityRows = [
+                kvRow('Event Type',  raw.event_type || meta.event_type),
+                kvRow('Entity Type', raw.entity_type || meta.entity_type),
+                kvRow('Event UUID',         raw.event_uuid,          'kv-uuid'),
+                kvRow('Entity UUID',        meta.entity_uuid || raw.entity_uuid, 'kv-uuid'),
+                kvRow('Notification UUID',  raw.notification_uuid,   'kv-uuid'),
+                kvRow('Subscription UUID',  meta.subscription_uuid,  'kv-uuid'),
+            ];
+
+            // ── Section 3: Template Preview ───────────────────────────────────────
+
+            let templateSection = '';
+            const templateBody = formatted.body || '';
+            if (templateBody) {
+                templateSection = section('📝', 'Template Preview',
+                    '<div class="template-body-box">' + escapeHTML(templateBody) + '</div>');
+            }
+
+            // ── Section 4: Payload ────────────────────────────────────────────────
+
+            let payloadSection = '';
+            if (before || after || context) {
+                let payloadHtml = '';
+
+                // Context sub-table
+                if (context) {
+                    const ctxRows = [
+                        kvRow('Operation',   context.operation),
+                        kvRow('Table Name',  context.table_name),
+                        kvRow('Triggered At', formatDateTime(context.triggered_at)),
+                    ];
+                    payloadHtml += '<div class="diff-subsection-label">⚙️ Context</div>'
+                                 + '<div class="context-kv-wrapper">'
+                                 + kvTable(ctxRows)
+                                 + '</div>';
+                }
+
+                // Before / After diff table
+                if (before || after) {
+                    const src = before || after;
+                    const allKeys = Object.keys(src);
+                    const hasAnyChange = allKeys.some(function(k) {
+                        return JSON.stringify((before || {})[k]) !== JSON.stringify((after || {})[k]);
+                    });
+
+                    let thead = '<thead><tr>'
+                              + '<th>Field</th>'
+                              + '<th>' + (before ? 'Before' : '—') + '</th>'
+                              + '<th>' + (after  ? 'After'  : '—') + '</th>'
+                              + '</tr></thead>';
+                    let tbodyRows = '';
+
+                    allKeys.forEach(function(k) {
+                        const bVal   = before ? before[k]  : undefined;
+                        const aVal   = after  ? after[k]   : undefined;
+                        const changed = JSON.stringify(bVal) !== JSON.stringify(aVal);
+
+                        const bDisplay = (bVal === null || bVal === undefined)
+                            ? '<span class="kv-null">—</span>' : escapeHTML(String(bVal));
+                        const aDisplay = (aVal === null || aVal === undefined)
+                            ? '<span class="kv-null">—</span>' : escapeHTML(String(aVal));
+
+                        const rowCls    = changed ? ' class="row-changed"' : '';
+                        const beforeCls = changed ? 'diff-before' : 'diff-same';
+                        const afterCls  = changed ? 'diff-after'  : 'diff-same';
+                        const badge     = changed ? '<span class="diff-changed-badge">changed</span>' : '';
+
+                        tbodyRows += '<tr' + rowCls + '>'
+                            + '<td class="diff-field">' + escapeHTML(k) + badge + '</td>'
+                            + '<td class="' + beforeCls + '">' + bDisplay + '</td>'
+                            + '<td class="' + afterCls  + '">' + aDisplay + '</td>'
+                            + '</tr>';
+                    });
+
+                    const diffLabel = hasAnyChange ? '📊 Field Changes (Before → After)' : '📋 Payload Fields';
+                    payloadHtml += '<div class="diff-subsection-label">' + diffLabel + '</div>'
+                                 + '<div class="diff-table-wrapper">'
+                                 + '<table class="diff-table">' + thead + '<tbody>' + tbodyRows + '</tbody></table>'
+                                 + '</div>';
+                }
+
+                payloadSection = section('🔄', 'Payload', payloadHtml);
+            }
+
+            // ── Raw JSON collapsible ──────────────────────────────────────────────
+
+            const rawJson = JSON.stringify(raw, null, 2);
+            const rawSection = '<details class="raw-json-details">'
+                + '<summary><span class="raw-json-toggle-arrow">▶</span>🧩 Raw JSON</summary>'
+                + '<div class="json-block">' + escapeHTML(rawJson) + '</div>'
+                + '</details>';
+
+            // ── Action buttons — both use back-btn (large green nav style) ──────────
+
+            const backBtn = cameFromList
+                ? '<button class="back-btn" onclick="goBackToList()">← Back to List</button>'
+                : '<button class="back-btn" onclick="goHome()">🏠 Home</button>';
+
+            const toggleBtn = isUnread
+                ? '<button class="back-btn" onclick="markNotificationRead(\'' + raw.notification_uuid + '\', \'' + (raw.employee_uuid || '') + '\'); goBackToList();">✅ Mark Read</button>'
+                : '<button class="back-btn" onclick="markNotificationUnread(\'' + raw.notification_uuid + '\', \'' + (raw.employee_uuid || '') + '\'); goBackToList();">↩ Mark Unread</button>';
+
+            // ── Employee pill ─────────────────────────────────────────────────────
+
+            const empDisplay = emp
+                ? '<button class="employee-btn" onclick="filterByEmployee(\'' + emp.uuid + '\')">'
+                    + '<span class="employee-initials">' + getEmployeeInitials(emp.name) + '</span>'
+                    + '<span class="employee-name">' + escapeHTML(emp.name) + '</span>'
+                    + '</button>'
+                : (raw.employee_uuid
+                    ? '<span style="font-family:monospace;font-size:0.8rem;color:#888;">' + raw.employee_uuid.substring(0, 8) + '…</span>'
+                    : '');
+
+            const statusBadge = isUnread
+                ? '<span class="status-badge unread">🟢 Unread</span>'
+                : '<span class="status-badge read">✅ Read</span>';
+
+            // ── Clean title: strip markdown **bold** markers ───────────────────────
+            const cleanTitle = (formatted.title || raw.title || 'Notification Inspector')
+                .replace(/\*\*/g, '').trim();
+
+            // ── Formatted timestamp ────────────────────────────────────────────────
+            const timestampDisplay = raw.created_at
+                ? (() => {
+                    const d = new Date(raw.created_at);
+                    const date = d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+                    const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                    return date + ' · ' + time;
+                  })()
+                : '';
+
+            // ── Assemble ──────────────────────────────────────────────────────────
+
+            responseArea.innerHTML = '<div class="fade-in"><div class="inspector-wrapper">'
+
+                // Header card — column layout: title/meta row, then action buttons below
+                + '<div class="inspector-header">'
+                +   '<div class="inspector-header-left">'
+                +     '<h2>🔍 ' + escapeHTML(cleanTitle) + '</h2>'
+                +     '<div class="inspector-header-meta">'
+                +       empDisplay
+                +       statusBadge
+                +       (timestampDisplay ? '<span class="inspector-timestamp">' + timestampDisplay + '</span>' : '')
+                +     '</div>'
+                +   '</div>'
+                +   '<div class="inspector-header-actions">' + backBtn + toggleBtn + '</div>'
+                + '</div>'
+
+                // Sections
+                + section('📋', 'Notification Details', kvTable(detailRows))
+                + section('🔗', 'Entity & Event',       kvTable(entityRows))
+                + templateSection
+                + payloadSection
+                + rawSection
+
+                + '</div></div>';
+        }
+
+                function renderClickResult(data) {
+            const responseArea = document.getElementById('responseArea');
+            const nav = data.navigate || {};
+
+            responseArea.innerHTML = `
+        <div class="success-record fade-in">
+            <h3>📬 Notification Opened</h3>
+            <div class="notification-detail-grid">
+                <div class="notification-detail-field">
+                    <span class="label">Notification ID</span>
+                    <span class="value muted">${escapeHTML(data.notification_uuid)}</span>
+                </div>
+                <div class="notification-detail-field">
+                    <span class="label">Status</span>
+                    <span class="value">${escapeHTML(data.status)}</span>
+                </div>
+                <div class="notification-detail-field">
+                    <span class="label">Entity Type</span>
+                    <span class="value">${escapeHTML(nav.entity_type || 'N/A')}</span>
+                </div>
+            </div>
+            <div class="action-buttons">
+                <button class="back-btn" onclick="goBackToList()">← Back to List</button>
+                <button class="back-btn" onclick="goHome()" style="margin-left: 0.5rem;">🏠 Home</button>
+            </div>
+        </div>
+    `;
+        }
+
+        function renderMarkReadResult(data) {
+            const responseArea = document.getElementById('responseArea');
+            responseArea.innerHTML = `
+        <div class="success-record fade-in">
+            <h3>✅ Notification Marked as Read</h3>
+            <p>Notification ID: <code>${escapeHTML(data.notification_uuid)}</code></p>
+            <div class="action-buttons">
+                <button class="back-btn" onclick="goBackToList()">← Back to List</button>
+                <button class="back-btn" onclick="goHome()" style="margin-left: 0.5rem;">🏠 Home</button>
+            </div>
+        </div>
+    `;
+        }
+
+        function renderMarkUnreadResult(data) {
+            const responseArea = document.getElementById('responseArea');
+            responseArea.innerHTML = `
+        <div class="success-record fade-in">
+            <h3>✅ Notification Marked as Unread</h3>
+            <p>Notification ID: <code>${escapeHTML(data.notification_uuid)}</code></p>
+            <div class="action-buttons">
+                <button class="back-btn" onclick="goBackToList()">← Back to List</button>
+                <button class="back-btn" onclick="goHome()" style="margin-left: 0.5rem;">🏠 Home</button>
+            </div>
+        </div>
+    `;
+        }
+
+        function renderMarkAllReadResult(data) {
+            const responseArea = document.getElementById('responseArea');
+            responseArea.innerHTML = `
+        <div class="success-record fade-in">
+            <h3>✅ All Notifications Marked as Read</h3>
+            <div class="summary-grid">
+                <div class="summary-card">
+                    <div class="summary-value">${data.updated || 0}</div>
+                    <div class="summary-label">Notifications Updated</div>
+                </div>
+            </div>
+            <div class="action-buttons">
+                <button class="unified-action-btn" onclick="executeInspect()">🔔 View Notifications</button>
+                <button class="back-btn" onclick="goHome()" style="margin-left: 0.5rem;">🏠 Home</button>
+            </div>
+        </div>
+    `;
+        }
+
+        function renderMarkAllUnreadResult(data) {
+            const responseArea = document.getElementById('responseArea');
+            responseArea.innerHTML = `
+        <div class="success-record fade-in">
+            <h3>✅ All Notifications Marked as Unread</h3>
+            <div class="summary-grid">
+                <div class="summary-card">
+                    <div class="summary-value">${data.updated || 0}</div>
+                    <div class="summary-label">Notifications Updated</div>
+                </div>
+            </div>
+            <div class="action-buttons">
+                <button class="unified-action-btn" onclick="executeInspect()">🔔 View Notifications</button>
+                <button class="back-btn" onclick="goHome()" style="margin-left: 0.5rem;">🏠 Home</button>
+            </div>
+        </div>
+    `;
+        }
+
+        // inspectNotification → direct inspect_notification route
+        function inspectNotification(uuid) {
+            console.log('inspectNotification (direct):', uuid);
+            cameFromList = true;
+            callDirect({ message: 'inspect notification:', notificationId: uuid }, 'Loading notification…');
+        }
+
+        // openNotification → direct click route
+        function openNotification(uuid) {
+            console.log('openNotification (direct):', uuid);
+            callDirect({ message: 'click notification:', notificationId: uuid }, 'Opening notification…');
+        }
+
+        // markAsRead (legacy alias) → direct mark_read route
+        function markAsRead(uuid) {
+            callDirect({ message: 'mark read:', notificationId: uuid }, 'Marking as read…');
+        }
+
+        // markAllAsRead (legacy alias) → direct mark_all_read route
+        function markAllAsRead() {
+            const params = { message: 'mark all read:' };
+            if (currentEmployeeFilter) params.employeeId = currentEmployeeFilter;
+            callDirect(params, 'Marking all as read…');
+        }
+
+        function handleFooterAction(actionText) {
+            // Handle Open Notification Center - go to home page
+            if (actionText === 'Open Notification Center') {
+                goHome();
+                return;
+            }
+
+            const actionMap = {
+                'Show notifications': 'Show all notifications',
+                'Mark all as read': 'Mark all notifications as read'
+            };
+            sendRequest(actionMap[actionText] || actionText);
+        }
+
+        // showNotificationsForEmployee → direct list route
+        function showNotificationsForEmployee(employeeUuid, employeeName) {
+            currentEmployeeFilter = employeeUuid;
+            callDirect({ message: 'list notifications:', employeeId: employeeUuid }, 'Loading notifications…');
+        }
+
+        // filterByEmployee → direct list route
+        function filterByEmployee(employeeUuid) {
+            currentEmployeeFilter = employeeUuid || null;
+            const params = { message: 'list notifications:' };
+            if (employeeUuid) params.employeeId = employeeUuid;
+            callDirect(params, 'Loading notifications…');
+        }
+
+        // ========================================================================
+        // MARKDOWN PARSER
+        // ========================================================================
+
+        function renderMarkdown(text) {
+            if (!text) return '';
+
+            const lines = text.split('\n');
+            let html = '';
+            let inCodeBlock = false;
+            let codeContent = '';
+            let inTable = false;
+            let tableRows = [];
+
+            for (let i = 0; i < lines.length; i++) {
+                let line = lines[i];
+
+                // Code blocks
+                if (line.startsWith('```')) {
+                    if (inCodeBlock) {
+                        html += `<pre class="md-pre"><code>${escapeHTML(codeContent.trim())}</code></pre>`;
+                        codeContent = '';
+                        inCodeBlock = false;
+                    } else {
+                        inCodeBlock = true;
+                    }
+                    continue;
+                }
+
+                if (inCodeBlock) {
+                    codeContent += line + '\n';
+                    continue;
+                }
+
+                // Tables - collect rows
+                if (line.includes('|') && !line.startsWith('    ')) {
+                    if (!inTable) {
+                        inTable = true;
+                        tableRows = [];
+                    }
+                    tableRows.push(line);
+                    continue;
+                } else if (inTable) {
+                    // End of table, render it
+                    html += renderTable(tableRows);
+                    tableRows = [];
+                    inTable = false;
+                }
+
+                // Headers
+                if (line.startsWith('#### ')) { html += `<h4 class="md-h3">${parseInline(line.substring(5))}</h4>`; continue; }
+                if (line.startsWith('### ')) { html += `<h3 class="md-h3">${parseInline(line.substring(4))}</h3>`; continue; }
+                if (line.startsWith('## ')) { html += `<h2 class="md-h2">${parseInline(line.substring(3))}</h2>`; continue; }
+                if (line.startsWith('# ')) { html += `<h1 class="md-h1">${parseInline(line.substring(2))}</h1>`; continue; }
+
+                // HR
+                if (/^[-*_]{3,}$/.test(line.trim())) { html += '<hr class="md-hr">'; continue; }
+
+                // RESTORED: [BACKTOLIST] handler for Inspector page
+                if (line.trim() === '[BACKTOLIST]') {
+                    html += `<div style="margin-bottom: 1rem;"><button class="back-btn" onclick="goBackToList()">← Back to List</button></div>`;
+                    continue;
+                }
+
+                // NEW v3.3: [ACTIONBAR] handler - renders the modern action bar with buttons
+                if (line.trim() === '[ACTIONBAR]') {
+                    html += `
+                <div class="action-bar">
+                    <button class="action-bar-btn btn-all-read" onclick="markAllRead()" title="Mark all visible notifications as read">
+                        🔵 All Read
+                    </button>
+                    <button class="action-bar-btn btn-all-unread" onclick="markAllUnread()" title="Mark all visible notifications as unread">
+                        ⚪ All Unread
+                    </button>
+                    <button class="action-bar-btn btn-back-home" onclick="goHome()" title="Return to Notification Center home">
+                        🏠 Back Home
+                    </button>
+                </div>
+            `;
+                    continue;
+                }
+
+                // RESTORED: [ACTION:...] handler - NOW RENDERS AS STYLED BUTTONS
+                // Convert [Show notifications] to Back to List, [Open Notification Center] to Back Home
+                if (line.match(/^\[ACTION:(.*?)\]$/)) {
+                    const actionText = line.match(/^\[ACTION:(.*?)\]$/)[1];
+                    if (actionText === 'Refresh') {
+                        continue; // Skip Refresh action
+                    }
+
+                    // Convert to styled buttons matching action-bar style
+                    if (actionText === 'Show notifications') {
+                        html += `<button class="action-bar-btn btn-all-read" onclick="goBackToList()" style="margin: 0.25rem 0.5rem 0.25rem 0;">📋 Back to List</button>`;
+                    } else if (actionText === 'Open Notification Center') {
+                        html += `<button class="action-bar-btn btn-back-home" onclick="goHome()" style="margin: 0.25rem 0.5rem 0.25rem 0;">🏠 Back Home</button>`;
+                    } else if (actionText === 'Mark all as read') {
+                        html += `<button class="action-bar-btn btn-all-read" onclick="markAllRead()" style="margin: 0.25rem 0.5rem 0.25rem 0;">🔵 All Read</button>`;
+                    } else {
+                        // Generic action button
+                        html += `<button class="action-bar-btn btn-back-home" onclick="handleFooterAction('${escapeHTML(actionText)}')" style="margin: 0.25rem 0.5rem 0.25rem 0;">${escapeHTML(actionText)}</button>`;
+                    }
+                    continue;
+                }
+
+                // RESTORED: [INSPECT:uuid] handler for inline inspect buttons
+                if (line.match(/\[INSPECT:(.*?)\]/)) {
+                    line = line.replace(/\[INSPECT:(.*?)\]/g, (match, uuid) => {
+                        return `<button class="inspect-btn" onclick="inspectNotification('${escapeHTML(uuid)}')" style="margin: 0 0.25rem;">🔍 Inspect</button>`;
+                    });
+                }
+
+                // Empty line
+                if (line.trim() === '') { html += '<div class="md-spacer"></div>'; continue; }
+
+                // Regular paragraph
+                html += `<p class="md-p">${parseInline(line)}</p>`;
+            }
+
+            // Handle table at end of content
+            if (inTable) {
+                html += renderTable(tableRows);
+            }
+
+            return html;
+        }
+
+        /**
+         * ENHANCED TABLE RENDERER - Converts Employee UUIDs to Clickable Buttons,
+         * renders Inspect buttons, and handles Read/Unread toggle buttons
+         */
+        function renderTable(rows) {
+            if (rows.length < 2) return '';
+
+            let html = '<div class="md-table-container"><table class="md-table">';
+
+            // Parse header row to identify special columns
+            const headerCells = rows[0].split('|').map(c => c.trim()).filter(c => c);
+            let employeeColumnIndex = -1;
+            let inspectColumnIndex = -1;
+            let toggleColumnIndex = -1;
+
+            // Find special columns by header name
+            headerCells.forEach((cell, idx) => {
+                const lower = cell.toLowerCase();
+                if (lower === 'employee' || lower === 'employee_uuid' || lower.includes('employee')) {
+                    employeeColumnIndex = idx;
+                }
+                if (lower === 'inspect' || lower === 'action' || lower === 'actions') {
+                    inspectColumnIndex = idx;
+                }
+                if (lower === 'read / unread' || lower === 'read/unread' || lower === 'toggle') {
+                    toggleColumnIndex = idx;
+                }
+            });
+
+            // Render header
+            html += '<thead><tr>';
+            headerCells.forEach(cell => {
+                html += `<th>${escapeHTML(cell)}</th>`;
+            });
+            html += '</tr></thead><tbody>';
+
+            // Render data rows (skip separator row at index 1)
+            for (let i = 2; i < rows.length; i++) {
+                const cells = rows[i].split('|').map(c => c.trim()).filter(c => c);
+
+                // Check if this row has an unread status for row styling
+                const hasUnread = cells.some(c => c.includes('Unread') || c.includes('[TOGGLE:') && c.includes(':unread:'));
+                html += `<tr class="${hasUnread ? 'unread' : ''}">`;
+
+                cells.forEach((cell, idx) => {
+                    let content = cell;
+
+                    // *** FIX #1: Check if cell is a UUID and convert to employee button ***
+                    if (isUUID(content)) {
+                        const btn = uuidToEmployeeButton(content);
+                        if (btn) {
+                            html += `<td>${btn}</td>`;
+                            return; // Skip to next cell
+                        }
+                    }
+
+                    // *** FIX #2: Handle [TOGGLE:uuid:status:emp_uuid] markers - convert to toggle buttons ***
+                    const toggleMatch = content.match(/\[TOGGLE:([^:]+):([^:]+):([^\]]*)\]/);
+                    if (toggleMatch) {
+                        const notifUuid = toggleMatch[1];
+                        const status = toggleMatch[2]; // 'unread' or 'read'
+                        const empUuid = toggleMatch[3] || '';
+                        html += `<td>${createToggleButtonFromMarker(notifUuid, status, empUuid)}</td>`;
+                        return;
+                    }
+
+                    // *** FIX #3: Handle [INSPECT:uuid] markers - convert to actual buttons ***
+                    const inspectMatch = content.match(/\[INSPECT:([^\]]+)\]/);
+                    if (inspectMatch) {
+                        const uuid = inspectMatch[1];
+                        html += `<td>${createInspectButton(uuid)}</td>`;
+                        return;
+                    }
+
+                    // *** FIX #4: Handle raw button HTML that might come from AI Agent ***
+                    // Pattern: <button class="inspect-btn" onclick="inspectNotification('uuid')">🔍 Inspect</button>
+                    const rawButtonMatch = content.match(/inspectNotification\(['"]([^'"]+)['"]\)/);
+                    if (rawButtonMatch) {
+                        const uuid = rawButtonMatch[1];
+                        html += `<td>${createInspectButton(uuid)}</td>`;
+                        return;
+                    }
+
+                    // Regular cell content - escape and parse inline formatting
+                    html += `<td>${parseInline(content)}</td>`;
+                });
+
+                html += '</tr>';
+            }
+
+            html += '</tbody></table></div>';
+            return html;
+        }
+
+        /**
+         * Create a toggle button from marker format [TOGGLE:uuid:status:emp_uuid]
+         */
+        function createToggleButtonFromMarker(notifUuid, status, empUuid) {
+            const isUnread = (status === 'unread' || status === 'pending' || status === 'sent');
+
+            if (isUnread) {
+                // Unread → Show blue dot + "Read" button (action: mark as read)
+                return `<button class="read-toggle-btn btn-mark-read" onclick="markNotificationRead('${notifUuid}', '${empUuid}')" title="Mark as Read">
+            <span class="status-dot">🔵</span> Read
+        </button>`;
+            } else {
+                // Read → Show gray dot + "Unread" button (action: mark as unread)
+                return `<button class="read-toggle-btn btn-mark-unread" onclick="markNotificationUnread('${notifUuid}', '${empUuid}')" title="Mark as Unread">
+            <span class="status-dot">⚪</span> Unread
+        </button>`;
+            }
+        }
+
+        function parseInline(text) {
+            let result = escapeHTML(text);
+            result = result.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+            result = result.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+            result = result.replace(/`([^`]+)`/g, '<code class="md-code">$1</code>');
+            return result;
+        }
+
+        // ============================================================================
+        // VOICE INPUT
+        // ============================================================================
+
+        let recognition = null;
+        let isListening = false;
+
+        function toggleVoiceInput() {
+            if (isListening) stopVoiceInput(); else startVoiceInput();
+        }
+
+        function startVoiceInput() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SpeechRecognition) { alert('Speech recognition not supported'); return; }
+
+            if (!recognition) {
+                recognition = new SpeechRecognition();
+                recognition.continuous = true;
+                recognition.interimResults = true;
+                recognition.lang = 'en-US';
+
+                recognition.onresult = (event) => {
+                    let transcript = '';
+                    for (let i = event.resultIndex; i < event.results.length; i++) {
+                        transcript += event.results[i][0].transcript;
+                    }
+                    document.getElementById('message').value = transcript;
+                };
+
+                recognition.onerror = () => stopVoiceInput();
+                recognition.onend = () => { if (isListening) try { recognition.start(); } catch (e) { stopVoiceInput(); } };
+            }
+
+            recognition.start();
+            isListening = true;
+            document.getElementById('voiceBtn').classList.add('listening');
+            document.getElementById('voiceStatus').classList.add('active');
+        }
+
+        function stopVoiceInput() {
+            if (recognition) try { recognition.stop(); } catch (e) { }
+            isListening = false;
+            document.getElementById('voiceBtn').classList.remove('listening');
+            document.getElementById('voiceStatus').classList.remove('active');
+        }
+
+        // ============================================================================
+        // KEYBOARD SHORTCUTS
+        // ============================================================================
+
+        function handleKeyDown(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                console.log('Enter key pressed');
+                var messageBox = document.getElementById('message');
+                var text = messageBox.value.trim();
+                if (text) {
+                    sendRequest(text);
+                }
+            }
+        }
+
+
+        // ============================================================================
+        // INITIALIZATION
+        // ============================================================================
+
+        document.addEventListener('DOMContentLoaded', function () {
+            populateEmployeeDropdowns();
+
+            // Add form submit event listener as backup
+            const chatForm = document.getElementById('chatForm');
+            if (chatForm) {
+                chatForm.addEventListener('submit', function (event) {
+                    event.preventDefault();
+                    sendMessage(event);
+                });
+            }
+        });
+    </script>
+
+</body>
+
+</html>

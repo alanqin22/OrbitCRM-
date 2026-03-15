@@ -1,0 +1,3761 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>Activity Management - CRM AI Agent</title>
+    <!-- 
+      ACTIVITY MANAGEMENT SYSTEM v5.0 - FULL-PAGE WORKFLOW
+      
+      CHANGELOG v5.0:
+      - Removed "Need anything else? Just ask!" footer block from all pages
+      - [ACTION:] and [CREATEFORM:] markers suppressed in renderMarkdown
+      - Added Back Home button (green, matching unified-action-btn style) to all views
+      - Activity List: beautiful Inter font title, smaller meta line (Time/Page/Total), Back Home top & bottom
+      - Activity Detail: Back Home + Back to List side-by-side at page end
+      - Timeline, Overdue, Upcoming, Summary, Create Form, Update Form: Back Home added
+      - Added CSS classes: .activity-title, .mode-title, .activity-meta, .back-home-btn, .back-home-btns
+      
+      CHANGELOG v3.0:
+      - Activity ID column replaced with "Details" button in list/overdue/upcoming tables
+      - Score column moved immediately before Details button
+      - Full activity_id preserved for stored procedure calls
+      - Footer actions now clickable: first 3 call AI Agent, "Log a call or email" opens Create Form
+      - Details button calls AI Agent with full activity_id
+      - [DETAILS:uuid], [ACTION:text], [CREATEFORM:text] markers parsed from Format Response
+      
+      FEATURES:
+      - ✅ Full-page activity details view with related entity info
+      - ✅ List → Details (read-only) → Update Form workflow
+      - ✅ Unified Create Form supports all activity types
+      - ✅ Timeline view with unified events (activities, orders, invoices, payments)
+      - ✅ Overdue and Upcoming activity views
+      - ✅ Activity Summary statistics
+      - ✅ Voice input enabled
+      - ✅ Quick action buttons for common operations
+      - ✅ Details buttons with full activity_id for stored procedure
+      - ✅ Clickable footer actions
+      
+      SUPPORTED MODES (16 - Unified):
+      - list: Paginated activity listing with search/filters
+      - get: Single activity details
+      - create: Create activity (unified)
+      - log_call: Log a call (wrapper for create)
+      - log_email: Log an email (wrapper for create)
+      - schedule_meeting: Schedule a meeting (wrapper for create)
+      - create_task: Create a task (wrapper for create)
+      - add_note: Add a note (wrapper for create)
+      - update: Update activity (PATCH-style)
+      - complete: Mark activity complete (wrapper for update)
+      - reopen: Reopen activity (wrapper for update)
+      - delete: Delete activity
+      - timeline: Unified timeline events
+      - overdue: Overdue activities
+      - upcoming: Upcoming activities
+      - summary: Activity summary statistics
+      
+      BACKEND: n8n Workflow + PostgreSQL 17
+      API ENDPOINT: 'http://localhost:8000/activity-chat';
+    -->
+    <style>
+        /* ========================================================
+           HOMEPAGE ZONES v6.0 — 4-Zone Dashboard Layout
+           ======================================================== */
+
+        /* Zone 1 — Live Status Strip — 128px cards (20% narrower than 160px green buttons) */
+        .stat-strip {
+            display: flex;
+            justify-content: center;
+            gap: 0.65rem;
+            margin: 1rem auto 0;
+            max-width: 580px;
+            flex-wrap: nowrap;
+        }
+        .stat-card {
+            background: rgba(255,255,255,0.10);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            border: 1px solid rgba(255,255,255,0.18);
+            border-radius: 8px;
+            padding: 0.38rem 0.4rem;
+            text-align: center;
+            cursor: pointer;
+            transition: transform 0.18s, box-shadow 0.18s, background 0.18s;
+            width: 128px;
+            flex: none;
+        }
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+            background: rgba(255,255,255,0.16);
+        }
+        .stat-card-value {
+            font-size: 1.05rem;
+            font-weight: 700;
+            line-height: 1;
+            margin-bottom: 0.1rem;
+        }
+        .stat-card-label {
+            font-size: 0.58rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            opacity: 0.82;
+        }
+        .stat-card-icon {
+            font-size: 0.78rem;
+            margin-bottom: 0.1rem;
+            display: block;
+        }
+        .stat-card.overdue  { border-color: rgba(255,90,90,0.45);  }
+        .stat-card.overdue .stat-card-value  { color: #ff6b6b; }
+        .stat-card.pending  { border-color: rgba(255,180,50,0.45); }
+        .stat-card.pending  .stat-card-value  { color: #ffd166; }
+        .stat-card.upcoming { border-color: rgba(80,180,255,0.45); }
+        .stat-card.upcoming .stat-card-value { color: #74c0fc; }
+        .stat-card.done     { border-color: rgba(80,230,160,0.45); }
+        .stat-card.done     .stat-card-value { color: #69db7c; }
+        .stat-card-value.loading-val {
+            opacity: 0.35;
+            animation: pulse-opacity 1.2s ease-in-out infinite;
+        }
+        @keyframes pulse-opacity {
+            0%, 100% { opacity: 0.25; }
+            50%       { opacity: 0.6; }
+        }
+
+        /* Zone 2 — Primary Actions (green, equal-width, matches unified-action-btn) */
+        .primary-actions {
+            display: flex;
+            justify-content: center;
+            gap: 0.65rem;
+            margin: 1rem auto 0;
+            max-width: 860px;
+            flex-wrap: wrap;
+        }
+        .primary-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.4rem;
+            width: 160px;
+            height: 40px;
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.82rem;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(40,167,69,0.4), 0 0 15px rgba(32,201,151,0.3);
+            transition: all 0.3s ease;
+            white-space: nowrap;
+            text-align: center;
+        }
+        .primary-btn:hover {
+            background: linear-gradient(135deg, #218838 0%, #1ba67a 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(40,167,69,0.6), 0 0 25px rgba(32,201,151,0.5);
+        }
+        .primary-btn:active { transform: translateY(0); }
+
+        /* Zone 3 — Quick Create Bar */
+        .quick-create-bar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.55rem;
+            margin: 0.85rem auto 0;
+            max-width: 860px;
+            flex-wrap: wrap;
+        }
+        .qc-label {
+            font-size: 0.78rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            color: rgba(255,255,255,0.5);
+            margin-right: 0.15rem;
+        }
+        .qc-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.42rem 1rem;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 50px;
+            color: rgba(255,255,255,0.9);
+            font-size: 0.88rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s, transform 0.12s;
+            white-space: nowrap;
+        }
+        .qc-chip .chip-icon {
+            font-size: 1.25rem;
+            line-height: 1;
+        }
+        .qc-chip:hover {
+            background: rgba(255,255,255,0.16);
+            border-color: rgba(255,255,255,0.4);
+            transform: translateY(-1px);
+        }
+        .qc-chip.dev-chip {
+            border-color: rgba(100,180,255,0.35);
+            color: rgba(160,210,255,0.85);
+        }
+        .qc-chip.dev-chip:hover {
+            background: rgba(100,180,255,0.12);
+            border-color: rgba(100,180,255,0.55);
+        }
+
+        /* ── Google-Style Activity Search ─────────────────────── */
+        .gs-search-section {
+            margin-bottom: 1.4rem;
+        }
+        .gs-search-section h4 {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #555;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin: 0 0 0.75rem 0;
+        }
+        /* Row 1: keyword + type + search button */
+        .gs-row1 {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+        .gs-keyword-wrap {
+            position: relative;
+            width: 420px;
+            flex-shrink: 1;
+        }
+        .gs-keyword-icon {
+            position: absolute;
+            left: 0.9rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #9aa0a6;
+            font-size: 1rem;
+            pointer-events: none;
+        }
+        .gs-keyword-input {
+            width: 100%;
+            padding: 0.65rem 1rem 0.65rem 2.5rem;
+            border: 1.5px solid #dfe1e5;
+            border-radius: 24px;
+            font-size: 0.9rem;
+            background: #fff;
+            box-sizing: border-box;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            color: #202124;
+        }
+        .gs-keyword-input:focus {
+            outline: none;
+            border-color: #4285f4;
+            box-shadow: 0 1px 6px rgba(32,33,36,0.18);
+        }
+        .gs-type-select {
+            padding: 0.62rem 0.75rem;
+            border: 1.5px solid #dfe1e5;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            background: #fff;
+            color: #202124;
+            cursor: pointer;
+            transition: border-color 0.2s;
+            min-width: 120px;
+        }
+        .gs-type-select:focus { outline: none; border-color: #4285f4; }
+        .gs-search-btn {
+            padding: 0.62rem 1.2rem;
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: bold;
+            cursor: pointer;
+            white-space: nowrap;
+            box-shadow: 0 2px 6px rgba(40,167,69,0.35);
+            transition: all 0.2s;
+        }
+        .gs-search-btn:hover {
+            background: linear-gradient(135deg, #218838 0%, #1ba67a 100%);
+            box-shadow: 0 4px 12px rgba(40,167,69,0.5);
+        }
+        /* Row 2: date filters */
+        .gs-row2 {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            margin-top: 0.55rem;
+            flex-wrap: wrap;
+        }
+        .gs-date-label {
+            font-size: 0.78rem;
+            color: #5f6368;
+            font-weight: 500;
+        }
+        .gs-date-input {
+            padding: 0.42rem 0.65rem;
+            border: 1.5px solid #dfe1e5;
+            border-radius: 6px;
+            font-size: 0.82rem;
+            color: #202124;
+            background: #fff;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+        .gs-date-input:focus { outline: none; border-color: #4285f4; }
+        .gs-date-sep {
+            font-size: 0.78rem;
+            color: #9aa0a6;
+        }
+        .gs-clear-dates {
+            font-size: 0.75rem;
+            color: #1a73e8;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0.2rem 0.4rem;
+            text-decoration: underline;
+            transition: color 0.15s;
+        }
+        .gs-clear-dates:hover { color: #1557b0; }
+        /* Filter summary pill */
+        .gs-filter-summary {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.4rem;
+            margin-top: 0.55rem;
+            flex-wrap: wrap;
+        }
+        .gs-filter-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.2rem 0.65rem;
+            background: #e8f0fe;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            color: #1a73e8;
+            font-weight: 500;
+        }
+        /* Results list */
+        .gs-results {
+            margin-top: 0.75rem;
+            border: 1px solid #e0e0e0;
+            border-radius: 10px;
+            background: #fff;
+            overflow: hidden;
+        }
+        .gs-results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 0.9rem;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e9ecef;
+            font-size: 0.78rem;
+            color: #5f6368;
+            font-weight: 500;
+        }
+        .gs-result-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.7rem;
+            padding: 0.65rem 0.9rem;
+            border-bottom: 1px solid #f1f3f5;
+            cursor: pointer;
+            transition: background 0.12s;
+        }
+        .gs-result-item:last-child { border-bottom: none; }
+        .gs-result-item:hover { background: #f0fff4; }
+        .gs-result-icon { font-size: 1.15rem; padding-top: 1px; flex-shrink: 0; }
+        .gs-result-body { flex: 1; min-width: 0; }
+        .gs-result-subject {
+            font-size: 0.88rem;
+            font-weight: 600;
+            color: #1a73e8;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-bottom: 2px;
+        }
+        .gs-result-meta {
+            font-size: 0.75rem;
+            color: #5f6368;
+        }
+        .gs-result-meta span { margin-right: 0.5rem; }
+        .gs-no-results {
+            padding: 1.2rem;
+            text-align: center;
+            font-size: 0.85rem;
+            color: #9aa0a6;
+        }
+        .gs-searching {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 1rem;
+            font-size: 0.85rem;
+            color: #5f6368;
+        }
+        .gs-spinner {
+            width: 16px; height: 16px;
+            border: 2px solid #ddd;
+            border-top-color: #28a745;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+            display: inline-block;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Owner Typeahead Dropdown */
+        .owner-field-wrap {
+            position: relative;
+        }
+        .owner-search-input {
+            width: 100%;
+            padding: 0.45rem 2rem 0.45rem 0.75rem;
+            border: 1.5px solid #ced4da;
+            border-radius: 6px;
+            font-size: 0.88rem;
+            background: #fff;
+            box-sizing: border-box;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            color: #202124;
+        }
+        .owner-search-input:focus {
+            outline: none;
+            border-color: #20c997;
+            box-shadow: 0 0 0 3px rgba(32,201,151,0.12);
+        }
+        .owner-search-input.has-error {
+            border-color: #dc3545;
+        }
+        .owner-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: #fff;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+            z-index: 300;
+            max-height: 200px;
+            overflow-y: auto;
+            display: none;
+        }
+        .owner-dropdown.open { display: block; }
+        .owner-opt {
+            padding: 0.45rem 0.75rem;
+            font-size: 0.85rem;
+            color: #212529;
+            cursor: pointer;
+            border-bottom: 1px solid #f8f9fa;
+            transition: background 0.1s;
+        }
+        .owner-opt:last-child { border-bottom: none; }
+        .owner-opt:hover, .owner-opt.highlighted { background: #f0fff4; }
+        .owner-opt-role {
+            font-size: 0.72rem;
+            color: #868e96;
+            margin-left: 0.4rem;
+        }
+        .owner-no-match {
+            padding: 0.5rem 0.75rem;
+            font-size: 0.82rem;
+            color: #9aa0a6;
+            font-style: italic;
+        }
+        .owner-hidden { display: none; }
+
+        /* Zone divider */
+        .zone-divider {
+            border: none;
+            border-top: 1px solid rgba(255,255,255,0.07);
+            margin: 1rem auto;
+            max-width: 860px;
+        }
+
+        /* Dev mode toggle */
+        .dev-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            font-size: 0.72rem;
+            color: rgba(255,255,255,0.3);
+            cursor: pointer;
+            border: none;
+            background: transparent;
+            margin-top: 0.6rem;
+            transition: color 0.15s;
+        }
+        .dev-toggle:hover { color: rgba(255,255,255,0.6); }
+        .dev-section {
+            display: none;
+            margin-top: 0.6rem;
+            padding: 0.6rem 1rem;
+            background: rgba(0,0,0,0.25);
+            border: 1px dashed rgba(255,255,255,0.15);
+            border-radius: 8px;
+            max-width: 860px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .dev-section.visible { display: block; }
+
+        /* === Galaxy Background === */
+        .galaxy-background {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            overflow: hidden;
+            background: radial-gradient(ellipse at center, #1a0933 0%, #0a0118 100%);
+        }
+        
+        .galaxy-background::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: 
+                radial-gradient(ellipse at 30% 40%, rgba(255, 20, 147, 0.4) 0%, transparent 40%),
+                radial-gradient(ellipse at 70% 60%, rgba(0, 191, 255, 0.4) 0%, transparent 40%),
+                radial-gradient(ellipse at 50% 50%, rgba(138, 43, 226, 0.3) 0%, transparent 50%);
+            animation: galaxy-rotate 120s linear infinite;
+        }
+        
+        .galaxy-background::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                radial-gradient(2px 2px at 20% 30%, white, transparent),
+                radial-gradient(2px 2px at 60% 70%, white, transparent),
+                radial-gradient(1px 1px at 50% 50%, white, transparent),
+                radial-gradient(1px 1px at 80% 10%, white, transparent),
+                radial-gradient(2px 2px at 90% 60%, white, transparent),
+                radial-gradient(1px 1px at 33% 50%, white, transparent),
+                radial-gradient(1px 1px at 66% 33%, white, transparent);
+            background-size: 200% 200%, 200% 200%, 300% 300%, 250% 250%, 200% 200%, 280% 280%, 220% 220%;
+            background-position: 0% 0%, 100% 100%, 50% 50%, 80% 20%, 10% 90%, 40% 60%, 70% 30%;
+            animation: stars-twinkle 8s ease-in-out infinite;
+        }
+        
+        .nebula-cloud {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(60px);
+            opacity: 0.6;
+            animation: nebula-float 20s ease-in-out infinite;
+        }
+        
+        .nebula-cloud:nth-child(1) {
+            top: 10%;
+            left: 20%;
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(255, 20, 147, 0.6) 0%, transparent 70%);
+            animation-delay: 0s;
+        }
+        
+        .nebula-cloud:nth-child(2) {
+            top: 50%;
+            right: 15%;
+            width: 500px;
+            height: 500px;
+            background: radial-gradient(circle, rgba(0, 191, 255, 0.5) 0%, transparent 70%);
+            animation-delay: -7s;
+        }
+        
+        .nebula-cloud:nth-child(3) {
+            bottom: 15%;
+            left: 35%;
+            width: 450px;
+            height: 450px;
+            background: radial-gradient(circle, rgba(138, 43, 226, 0.5) 0%, transparent 70%);
+            animation-delay: -14s;
+        }
+        
+        @keyframes galaxy-rotate {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        @keyframes stars-twinkle {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        @keyframes nebula-float {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            33% { transform: translate(30px, -30px) scale(1.1); }
+            66% { transform: translate(-20px, 20px) scale(0.9); }
+        }
+        
+        /* === Base Layout === */
+        body {
+            font-family: "Segoe UI", Tahoma, sans-serif;
+            background: transparent;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            position: relative;
+        }
+        
+        header {
+            background: linear-gradient(135deg, rgba(0, 120, 215, 0.95) 0%, rgba(88, 86, 214, 0.95) 100%);
+            color: white;
+            padding: 0.5rem 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 20px rgba(138, 43, 226, 0.5);
+            backdrop-filter: blur(10px);
+            position: relative;
+            z-index: 10;
+        }
+        
+        header h1 { 
+            font-size: 1.2rem; 
+            font-weight: bold; 
+            margin: 0;
+            text-shadow: 0 0 20px rgba(255, 255, 255, 0.5), 0 0 40px rgba(138, 43, 226, 0.5);
+        }
+        
+        .session-info { font-size: 0.8rem; display: flex; align-items: center; gap: 0.5rem; }
+        .session-info button {
+            background: #fff; color: #0078d7; border: none; border-radius: 4px;
+            padding: 0.25rem 0.5rem; cursor: pointer; font-size: 0.7rem; font-weight: bold;
+        }
+        .session-info button:hover { background: #cce0ff; }
+
+        .response {
+            flex: 1; 
+            overflow-y: auto; 
+            padding: 1rem; 
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-top: 1px solid rgba(138, 43, 226, 0.3);
+            position: relative;
+            z-index: 5;
+        }
+
+        /* === Input Bar === */
+        .input-bar {
+            display: flex;
+            flex-direction: column;
+            padding: 0.2rem 1rem;
+            background: linear-gradient(180deg, rgba(200, 150, 255, 0.25) 0%, rgba(150, 220, 255, 0.25) 100%);
+            backdrop-filter: blur(10px);
+            border-top: 1px solid rgba(200, 150, 255, 0.4);
+            position: relative;
+            z-index: 10;
+        }
+        
+        .input-bar form {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            position: relative;
+            width: 100%;
+        }
+        
+        .search-icon {
+            position: absolute;
+            left: 1rem;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 1.5rem;
+            height: 1.5rem;
+            color: #666;
+            pointer-events: none;
+            z-index: 2;
+            transition: color 0.3s ease;
+        }
+        
+        .search-icon svg {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        
+        .input-wrapper {
+            flex: 1;
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+        
+        textarea {
+            flex: 1;
+            width: 100%;
+            padding: 0.5rem 3rem 0.5rem 3.5rem;
+            border: 1px solid rgba(200, 150, 255, 0.4);
+            border-radius: 24px;
+            font-family: monospace;
+            resize: none;
+            background: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(5px);
+            box-shadow: 0 1px 6px rgba(138, 43, 226, 0.2);
+            transition: all 0.3s ease;
+            height: 1.5rem;
+        }
+        
+        textarea:hover {
+            height: 2.5rem;
+            box-shadow: 0 2px 8px rgba(138, 43, 226, 0.3);
+        }
+        
+        textarea:focus {
+            height: 2.5rem;
+            outline: none;
+            box-shadow: 0 2px 12px rgba(138, 43, 226, 0.5);
+            border-color: rgba(138, 43, 226, 0.6);
+        }
+        
+        button.send { display: none; }
+
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Voice Input Button */
+        .voice-btn-google {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: none;
+            background: #f1f3f4;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+            color: #5f6368;
+        }
+        
+        .voice-btn-google:hover {
+            background: #e8eaed;
+            color: #202124;
+        }
+        
+        .voice-btn-google.listening {
+            background: #d93025;
+            color: white;
+            animation: pulse-mic 1.5s ease-in-out infinite;
+        }
+        
+        @keyframes pulse-mic {
+            0%, 100% { transform: translateY(-50%) scale(1); box-shadow: 0 0 0 0 rgba(217, 48, 37, 0.4); }
+            50% { transform: translateY(-50%) scale(1.05); box-shadow: 0 0 0 10px rgba(217, 48, 37, 0); }
+        }
+        
+        .voice-status {
+            position: absolute;
+            bottom: calc(100% + 8px);
+            right: 8px;
+            background: #d93025;
+            color: white;
+            padding: 6px 12px;
+            border-radius: 16px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            display: none;
+            animation: fadeInDown 0.3s ease-out;
+            box-shadow: 0 2px 8px rgba(217, 48, 37, 0.3);
+        }
+        
+        .voice-status.active { display: block; }
+
+        /* === Quick Actions Button Styling === */
+        .unified-action-btn {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            border: none;
+            padding: 0.45rem 1rem;
+            font-size: 0.82rem;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(40, 167, 69, 0.4), 0 0 15px rgba(32, 201, 151, 0.3);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+            width: 160px;
+            height: 40px;
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .unified-action-btn:hover {
+            background: linear-gradient(135deg, #218838 0%, #1ba67a 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.6), 0 0 25px rgba(32, 201, 151, 0.5);
+        }
+
+        .action-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid #e0e6ed;
+        }
+
+        /* Record styling */
+        .audit-record {
+            border: 2px solid #0078d7;
+            background: #f4f9ff;
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+
+        .success-record {
+            border: 2px solid #28a745;
+            background: #f0fff4;
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+
+        .error-record {
+            border: 2px solid #dc3545;
+            background: #fff3f3;
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+
+        .warning-record {
+            border: 2px solid #fd7e14;
+            background: #fff8e6;
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+
+        /* Loading indicator */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #e0e6ed;
+            border-top-color: #0078d7;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        /* Keyboard shortcut styling */
+        kbd {
+            background: #fff;
+            padding: 2px 6px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            font-family: monospace;
+            font-size: 0.85em;
+        }
+
+        /* Create/Update Form Styling */
+        .create-form {
+            background: #f9fbfd;
+            border: 2px solid #0078d7;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+        }
+        
+        .create-form h3 {
+            margin: 0 0 1rem 0;
+            color: #0078d7;
+        }
+        
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+        }
+        
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+        
+        .form-group label {
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: #333;
+        }
+        
+        .form-group input,
+        .form-group select,
+        .form-group textarea.form-textarea {
+            padding: 0.5rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 0.95rem;
+        }
+        
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea.form-textarea:focus {
+            border-color: #0078d7;
+            outline: none;
+            box-shadow: 0 0 3px rgba(0, 120, 215, 0.3);
+        }
+        
+        .form-section {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid #e0e6ed;
+        }
+        
+        .form-section h4 {
+            margin: 0 0 0.75rem 0;
+            color: #555;
+            font-size: 0.95rem;
+        }
+
+        .form-row-wide {
+            grid-column: 1 / -1;
+        }
+        
+        .form-row-wide input,
+        .form-row-wide textarea.form-textarea {
+            width: 100%;
+        }
+
+        /* Fade in animation */
+        .fade-in {
+            animation: fadeIn 0.5s ease;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes fadeInDown {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* === Activity Card Styling === */
+        .activity-card {
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 1rem 1.25rem;
+            padding-bottom: 0.75rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+            font-family: "Segoe UI", system-ui, sans-serif;
+            position: relative;
+        }
+        
+        .activity-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            cursor: pointer;
+        }
+        
+        .activity-card .card-line {
+            margin: 0.5rem 0;
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+        
+        .activity-card .card-line .separator {
+            color: #bbb;
+            margin: 0 0.75rem;
+        }
+        
+        .activity-card .card-line-timestamps {
+            margin-top: 0.75rem;
+            font-size: 0.8rem;
+            color: #666;
+            border-top: 1px dashed #eee;
+            padding-top: 0.6rem;
+        }
+        
+        .activity-card .field-label {
+            color: #666;
+            font-weight: 500;
+            margin-right: 0.5rem;
+        }
+        
+        .activity-card .field-value {
+            font-weight: 600;
+            margin-right: 0.25rem;
+        }
+        
+        .activity-card .field-value.subject { color: #0078d7; }
+        .activity-card .field-value.id { color: #d17b00; font-size: 0.85em; font-family: monospace; }
+        .activity-card .field-value.type { color: #6f42c1; }
+        .activity-card .field-value.related { color: #e83e8c; }
+        .activity-card .field-value.due { color: #17a2b8; }
+        .activity-card .field-value.completed { color: #28a745; }
+        .activity-card .field-value.direction { color: #fd7e14; }
+        
+        .activity-card .card-actions-bottom-right {
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.5rem;
+            margin-top: 0.6rem;
+        }
+        
+        .activity-card .card-actions-bottom-right .unified-action-btn {
+            width: auto;
+            padding: 0.4rem 1rem;
+            font-size: 0.8rem;
+            height: 36px;
+        }
+
+        /* === Full-Page Activity Details View === */
+        .activity-360-fullpage {
+            background: #fff;
+            border-radius: 12px;
+            padding: 1.5rem 2rem;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+            max-width: 950px;
+            margin: 0 auto;
+        }
+        
+        .activity-360-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid #0078d7;
+        }
+        
+        .activity-360-title {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #0078d7;
+            margin: 0;
+        }
+        
+        .activity-360-subtitle {
+            font-size: 0.95rem;
+            color: #666;
+            margin: 0.25rem 0 0 0;
+        }
+        
+        .activity-360-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+        
+        .activity-360-section {
+            margin-bottom: 1.5rem;
+        }
+        
+        .activity-360-section h4 {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #333;
+            margin: 0 0 0.75rem 0;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid #e0e6ed;
+        }
+        
+        .activity-360-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 0.75rem 1.5rem;
+        }
+        
+        .activity-360-field {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .activity-360-field .label {
+            font-size: 0.8rem;
+            color: #888;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .activity-360-field .value {
+            font-size: 1rem;
+            color: #333;
+            font-weight: 600;
+            margin-top: 0.1rem;
+        }
+        
+        .activity-360-field .value.highlight { color: #0078d7; }
+        .activity-360-field .value.type { color: #6f42c1; font-size: 1.1rem; }
+        .activity-360-field .value.completed { color: #28a745; }
+
+        /* Type Badge Styling */
+        .type-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.35rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        
+        .type-badge.call { background: #e3f2fd; color: #1976d2; }
+        .type-badge.email { background: #fff3e0; color: #f57c00; }
+        .type-badge.meeting { background: #e8f5e9; color: #388e3c; }
+        .type-badge.task { background: #fce4ec; color: #c2185b; }
+        .type-badge.note { background: #f3e5f5; color: #7b1fa2; }
+
+        /* Direction Badge */
+        .direction-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+        
+        .direction-badge.inbound { background: #e8f5e9; color: #2e7d32; }
+        .direction-badge.outbound { background: #e3f2fd; color: #1565c0; }
+
+        /* Timeline Styling */
+        .timeline-container {
+            position: relative;
+            padding-left: 2rem;
+            margin-top: 1rem;
+        }
+        
+        .timeline-container::before {
+            content: '';
+            position: absolute;
+            left: 0.5rem;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: linear-gradient(to bottom, #0078d7, #28a745);
+        }
+        
+        .timeline-item {
+            position: relative;
+            margin-bottom: 1.25rem;
+            padding-left: 1.5rem;
+            background: #fff;
+            border: 1px solid #e0e6ed;
+            border-radius: 8px;
+            padding: 1rem;
+            padding-left: 1.5rem;
+        }
+        
+        .timeline-item::before {
+            content: '';
+            position: absolute;
+            left: -2rem;
+            top: 1.2rem;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #0078d7;
+            border: 2px solid white;
+            box-shadow: 0 0 0 2px #0078d7;
+        }
+        
+        .timeline-item.activity::before { background: #6f42c1; box-shadow: 0 0 0 2px #6f42c1; }
+        .timeline-item.order::before { background: #fd7e14; box-shadow: 0 0 0 2px #fd7e14; }
+        .timeline-item.invoice::before { background: #17a2b8; box-shadow: 0 0 0 2px #17a2b8; }
+        .timeline-item.payment::before { background: #28a745; box-shadow: 0 0 0 2px #28a745; }
+        
+        .timeline-item .timeline-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+        
+        .timeline-item .timeline-title {
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .timeline-item .timeline-time {
+            font-size: 0.8rem;
+            color: #888;
+        }
+        
+        .timeline-item .timeline-details {
+            font-size: 0.9rem;
+            color: #555;
+        }
+
+        /* Summary Cards */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            margin: 1rem 0;
+        }
+        
+        .summary-card {
+            background: white;
+            border-radius: 10px;
+            padding: 1.25rem;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            border-left: 4px solid #0078d7;
+        }
+        
+        .summary-card .summary-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #0078d7;
+        }
+        
+        .summary-card .summary-label {
+            font-size: 0.85rem;
+            color: #666;
+            margin-top: 0.25rem;
+        }
+        
+        .summary-card.completed { border-left-color: #28a745; }
+        .summary-card.completed .summary-value { color: #28a745; }
+        
+        .summary-card.pending { border-left-color: #fd7e14; }
+        .summary-card.pending .summary-value { color: #fd7e14; }
+        
+        .summary-card.overdue { border-left-color: #dc3545; }
+        .summary-card.overdue .summary-value { color: #dc3545; }
+
+        /* Type Stats */
+        .type-stats {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            margin: 1rem 0;
+        }
+        
+        .type-stat {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: #f8f9fa;
+            border-radius: 20px;
+            font-size: 0.9rem;
+        }
+        
+        .type-stat .icon {
+            font-size: 1.1rem;
+        }
+        
+        .type-stat .count {
+            font-weight: 700;
+            color: #333;
+        }
+
+        /* Overdue/Upcoming Table */
+        .activities-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 0.75rem;
+        }
+        
+        .activities-table th,
+        .activities-table td {
+            padding: 0.75rem 1rem;
+            text-align: left;
+            border-bottom: 1px solid #e0e6ed;
+        }
+        
+        .activities-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #555;
+            font-size: 0.85rem;
+        }
+        
+        .activities-table td {
+            font-size: 0.9rem;
+        }
+        
+        .activities-table tr:last-child td {
+            border-bottom: none;
+        }
+        
+        .activities-table tr:hover {
+            background: #f8f9ff;
+        }
+        
+        /* ========================================================================
+           MARKDOWN RENDERING STYLES (v2.0)
+           Beautiful styling for markdown tables, lists, and formatted content
+           ======================================================================== */
+        
+        /* Markdown Table Container */
+        .md-table-container {
+            overflow-x: auto;
+            margin: 1rem 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        
+        /* Markdown Table */
+        .md-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            font-size: 0.9rem;
+        }
+        
+        .md-table th {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            padding: 0.75rem 1rem;
+            text-align: left;
+            font-weight: 600;
+            color: #333;
+            border-bottom: 2px solid #dee2e6;
+            white-space: nowrap;
+        }
+        
+        .md-table td {
+            padding: 0.65rem 1rem;
+            border-bottom: 1px solid #e9ecef;
+            color: #555;
+        }
+        
+        .md-table tbody tr:hover {
+            background: #f8f9ff;
+        }
+        
+        .md-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+        
+        /* Markdown Headers */
+        .md-h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #0078d7;
+            margin: 1.5rem 0 1rem 0;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid #0078d7;
+        }
+        
+        .md-h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #0078d7;
+            margin: 1.25rem 0 0.75rem 0;
+        }
+        
+        .md-h3 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #333;
+            margin: 1rem 0 0.5rem 0;
+        }
+        
+        /* Markdown Paragraphs */
+        .md-p {
+            margin: 0.5rem 0;
+            line-height: 1.6;
+            color: #444;
+        }
+        
+        /* Markdown Code */
+        .md-code {
+            background: #f4f4f4;
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.9em;
+            color: #d17b00;
+        }
+        
+        /* Markdown List */
+        .md-list {
+            margin: 0.75rem 0;
+            padding-left: 1.5rem;
+        }
+        
+        .md-list li {
+            margin: 0.35rem 0;
+            line-height: 1.5;
+            color: #555;
+        }
+        
+        .md-list li::marker {
+            color: #0078d7;
+        }
+        
+        /* Markdown Horizontal Rule */
+        .md-hr {
+            border: none;
+            border-top: 1px solid #e0e6ed;
+            margin: 1rem 0;
+        }
+        
+        /* Markdown Spacer */
+        .md-spacer {
+            height: 0.5rem;
+        }
+        
+        /* Quick Action Suggestions in Markdown */
+        .md-list li:hover {
+            color: #0078d7;
+            cursor: pointer;
+        }
+        
+        /* Footer Action Buttons (clickable action items) */
+        .footer-action {
+            transition: all 0.2s ease;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+        }
+        
+        .footer-action:hover {
+            background: #e8f4fd;
+            color: #0056b3 !important;
+            text-decoration: underline;
+        }
+        
+        .days-badge {
+            display: inline-block;
+            padding: 0.2rem 0.5rem;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        
+        .days-badge.overdue { background: #ffebee; color: #c62828; }
+        .days-badge.today { background: #fff3e0; color: #e65100; }
+        .days-badge.tomorrow { background: #e3f2fd; color: #1565c0; }
+        .days-badge.upcoming { background: #e8f5e9; color: #2e7d32; }
+
+        /* Quick Examples Row */
+        .quick-examples {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            justify-content: center;
+            margin: 1rem 0;
+            padding: 0.75rem;
+            background: rgba(0, 120, 215, 0.05);
+            border-radius: 8px;
+        }
+        
+        .quick-example {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 20px;
+            padding: 0.4rem 0.9rem;
+            font-size: 0.8rem;
+            color: #555;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .quick-example:hover {
+            background: #0078d7;
+            color: white;
+            border-color: #0078d7;
+        }
+
+        /* Pagination */
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 1.5rem;
+            padding-top: 1rem;
+            border-top: 1px solid #e0e6ed;
+        }
+        
+        .pagination button {
+            padding: 0.5rem 1rem;
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s ease;
+        }
+        
+        .pagination button:hover:not(:disabled) {
+            background: #0078d7;
+            color: white;
+            border-color: #0078d7;
+        }
+        
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .pagination .page-info {
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        /* Import modern font */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+        /* === Activity List Title & Meta === */
+        .activity-title {
+            font-family: 'Inter', 'Poppins', 'Segoe UI', sans-serif;
+            font-weight: 700;
+            font-size: 28px;
+            color: #0078d7;
+            margin: 0 0 0.25rem 0;
+            letter-spacing: -0.3px;
+        }
+
+        .mode-title {
+            font-family: 'Inter', 'Poppins', 'Segoe UI', sans-serif;
+            font-weight: 600;
+            font-size: 24px;
+            color: #0078d7;
+            margin: 0 0 0.25rem 0;
+        }
+
+        .activity-meta {
+            font-family: 'Inter', 'Poppins', 'Segoe UI', sans-serif;
+            font-size: 12px;
+            color: #888;
+            font-weight: 400;
+            margin: 2px 0 14px 0;
+            line-height: 1.5;
+            letter-spacing: 0.1px;
+        }
+
+        /* === Back Home Button === */
+        .back-home-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            border: none;
+            padding: 0.45rem 1rem;
+            font-size: 0.82rem;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(40, 167, 69, 0.4), 0 0 15px rgba(32, 201, 151, 0.3);
+            transition: all 0.3s ease;
+            text-decoration: none;
+            height: 40px;
+            width: 160px;
+        }
+
+        .back-home-btn:hover {
+            background: linear-gradient(135deg, #218838 0%, #1ba67a 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.6), 0 0 25px rgba(32, 201, 151, 0.5);
+        }
+
+        .back-home-btns {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="galaxy-background">
+        <div class="nebula-cloud"></div>
+        <div class="nebula-cloud"></div>
+        <div class="nebula-cloud"></div>
+    </div>
+    
+    <header>
+        <h1>📋 Activity Management - CRM AI Agent</h1>
+        <div class="session-info">
+            Session: <span id="sessionId">...</span>
+            <button onclick="resetSession()">Reset</button>
+        </div>
+    </header>
+
+    <div class="response" id="responseArea">
+        <div id="quick-ui" style="margin-top: 3.5rem; text-align: center; padding-bottom: 1rem;">
+
+            <!-- ── ZONE 1: Live Status Strip ─────────────────────── -->
+            <div class="stat-strip" id="statStrip">
+                <div class="stat-card overdue" onclick="actions.showOverdue()" title="View overdue activities">
+                    <span class="stat-card-icon">🔴</span>
+                    <div class="stat-card-value loading-val" id="stat-overdue">—</div>
+                    <div class="stat-card-label">Overdue</div>
+                </div>
+                <div class="stat-card pending" onclick="actions.listActivities()" title="View all pending activities">
+                    <span class="stat-card-icon">🟡</span>
+                    <div class="stat-card-value loading-val" id="stat-pending">—</div>
+                    <div class="stat-card-label">Pending</div>
+                </div>
+                <div class="stat-card upcoming" onclick="actions.showUpcoming()" title="View upcoming activities">
+                    <span class="stat-card-icon">🔵</span>
+                    <div class="stat-card-value loading-val" id="stat-upcoming">—</div>
+                    <div class="stat-card-label">This Week</div>
+                </div>
+                <div class="stat-card done" onclick="actions.showSummary()" title="View full summary">
+                    <span class="stat-card-icon">🟢</span>
+                    <div class="stat-card-value loading-val" id="stat-completed">—</div>
+                    <div class="stat-card-label">Completed</div>
+                </div>
+            </div>
+
+            <hr class="zone-divider">
+
+            <!-- ── ZONE 2: Primary View Actions (4 buttons) ──────────── -->
+            <div class="primary-actions">
+                <button class="primary-btn" data-action="listActivities" title="Ctrl+L">
+                    📋 All Activities
+                </button>
+                <button class="primary-btn" data-action="showUpdateForm" title="Update an activity">
+                    🔄 Update
+                </button>
+                <button class="primary-btn" data-action="showUpcoming" title="Ctrl+U">
+                    📅 Upcoming
+                </button>
+                <button class="primary-btn" data-action="showTimeline" title="View timeline">
+                    🕐 Timeline
+                </button>
+            </div>
+
+            <hr class="zone-divider">
+
+            <!-- ── ZONE 3: Quick Create Chips ────────────────────── -->
+            <div class="quick-create-bar">
+                <span class="qc-label">Log:</span>
+                <button class="qc-chip" data-action="logCall"><span class="chip-icon">📞</span> Call</button>
+                <button class="qc-chip" data-action="logEmail"><span class="chip-icon">📧</span> Email</button>
+                <button class="qc-chip" data-action="scheduleMeeting"><span class="chip-icon">🤝</span> Meeting</button>
+                <button class="qc-chip" data-action="createTask"><span class="chip-icon">✅</span> Task</button>
+                <button class="qc-chip" data-action="addNote"><span class="chip-icon">📝</span> Note</button>
+                <button class="qc-chip dev-chip" onclick="toggleDevMode()" title="Developer tools"><span class="chip-icon">⚙️</span> Dev Tools</button>
+            </div>
+
+            <!-- ── Dev Mode Panel (hidden by default) ───────────── -->
+            <div class="dev-section" id="devSection">
+                <div style="color:rgba(255,255,255,0.5); font-size:0.75rem; margin-bottom:0.5rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">Developer Actions</div>
+                <div style="display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap;">
+                    <button class="qc-chip" onclick="showCreateActivityForm()" style="border-color:rgba(23,162,184,0.5);">➕ Demo Create</button>
+                    <button class="qc-chip" onclick="showUpdateActivityFormExample()" style="border-color:rgba(23,162,184,0.5);">✏️ Demo Update</button>
+                </div>
+                <div style="color:rgba(255,255,255,0.35); font-size:0.72rem; margin-top:0.5rem;">
+                    <kbd style="background:rgba(255,255,255,0.1);padding:2px 5px;border-radius:3px;">Ctrl+L</kbd> List &nbsp;
+                    <kbd style="background:rgba(255,255,255,0.1);padding:2px 5px;border-radius:3px;">Ctrl+O</kbd> Overdue &nbsp;
+                    <kbd style="background:rgba(255,255,255,0.1);padding:2px 5px;border-radius:3px;">Ctrl+U</kbd> Upcoming &nbsp;
+                    <kbd style="background:rgba(255,255,255,0.1);padding:2px 5px;border-radius:3px;">Ctrl+S</kbd> Summary
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <div class="input-bar">
+        <form id="chatForm" onsubmit="return sendMessage(event);">
+            <span class="search-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="8" fill="white" stroke="currentColor"/>
+                    <path d="m21 21-4.35-4.35"/>
+                </svg>
+            </span>
+            <div class="input-wrapper">
+                <div class="voice-status" id="voiceStatus">Listening...</div>
+                <textarea id="message" rows="1" placeholder="Ask anything about activities... e.g. 'Show overdue tasks'" onkeydown="handleKeyDown(event)"></textarea>
+                <button type="button" class="voice-btn-google" id="voiceBtn" onclick="toggleVoiceInput()" title="Voice input">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+                        <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+                    </svg>
+                </button>
+            </div>
+            <button type="submit" class="send">Send</button>
+        </form>
+    </div>
+
+<script>
+    // ========================================================================
+    // ACTIVITY MANAGEMENT - CONFIGURATION & CONSTANTS
+    // ========================================================================
+    
+    const API_URL = 'http://localhost:8000/activity-chat';
+    
+    // Sample UUIDs for demo purposes
+    const SAMPLE_DATA = {
+        account: { id: 'd3f30308-773b-43df-b425-73036ccdc6f0', name: 'Bob Brown' },
+        contact: { id: 'b2c3d4e5-f6a7-8901-bcde-f12345678901', name: 'John Smith' },
+        lead: { id: 'c3d4e5f6-a7b8-9012-cdef-123456789012', name: 'Jane Doe' },
+        opportunity: { id: 'd4e5f6a7-b8c9-0123-def0-234567890123', name: 'Q1 Enterprise Deal' },
+        activity: { id: '3b40c9d2-2dc8-438c-80f0-c3ce33331fe0', subject: 'Follow-up Call' }
+    };
+
+    // Related types for dropdown
+    const RELATED_TYPES = [
+        { value: 'lead', label: 'Lead' },
+        { value: 'account', label: 'Account' },
+        { value: 'contact', label: 'Contact' },
+        { value: 'opportunity', label: 'Opportunity' },
+        { value: 'case', label: 'Case' },
+        { value: 'order', label: 'Order' },
+        { value: 'invoice', label: 'Invoice' },
+        { value: 'payment', label: 'Payment' }
+    ];
+
+    // Activity types for dropdown
+    const ACTIVITY_TYPES = [
+        { value: 'call', label: '📞 Call', icon: '📞' },
+        { value: 'email', label: '📧 Email', icon: '📧' },
+        { value: 'meeting', label: '🤝 Meeting', icon: '🤝' },
+        { value: 'task', label: '✅ Task', icon: '✅' },
+        { value: 'note', label: '📝 Note', icon: '📝' }
+    ];
+
+    // Direction options
+    const DIRECTIONS = [
+        { value: '', label: 'N/A' },
+        { value: 'inbound', label: '← Inbound' },
+        { value: 'outbound', label: '→ Outbound' }
+    ];
+
+    // Channel options
+    const CHANNELS = [
+        { value: '', label: 'N/A' },
+        { value: 'phone', label: 'Phone' },
+        { value: 'email', label: 'Email' },
+        { value: 'sms', label: 'SMS' },
+        { value: 'voip', label: 'VoIP' },
+        { value: 'system', label: 'System' },
+        { value: 'video', label: 'Video' }
+    ];
+
+    // ========================================================================
+    // OWNERS DATA  — seeded from crm_get_owners() / owners_dataset.csv
+    // Sorted by last_name ASC, first_name ASC. is_active = true only.
+    // UUID is stored internally; only "{first_name} {last_name}" is shown to user.
+    // At runtime this list should be refreshed via loadOwners() which calls
+    // the pre-router "get owners:" → sp_activities or a dedicated SP.
+    // The fallback below ensures the form is always functional even offline.
+    // ========================================================================
+    const OWNERS_FALLBACK = [
+        // Sorted by last_name ASC, first_name ASC — synced with live DB (get_owners response 2026-03-07)
+        { owner_id: "e789b9bb-a262-4e30-847e-96b455572498", first_name: "Steven",    last_name: "Brahms",                    role: "VP Marketing"         },
+        { owner_id: "1e484158-33f5-4407-9fba-d37a98092cdb", first_name: "Bob",       last_name: "Brown",                     role: "Purchasing"           },
+        { owner_id: "df7f8483-7d06-4868-9038-3886efc1a68b", first_name: "Emily",     last_name: "Brown",                     role: "Support Contact"      },
+        { owner_id: "4a06e722-1396-409f-81a8-a34d0b15a633", first_name: "Alan",      last_name: "Chang",                     role: "Support Contact"      },
+        { owner_id: "19d44ee0-ad21-48a7-a7c9-6aba9edb5e4e", first_name: "David",     last_name: "Chen",                      role: "CEO"                  },
+        { owner_id: "9242d500-8e10-4f8f-8cc9-dcb7efcc1c49", first_name: "Marcus",    last_name: "Chen",                      role: "Billing Contact"      },
+        { owner_id: "61eceb22-90ce-457d-bfb9-df60da364cf8", first_name: "Mike",      last_name: "Chen",                      role: "Purchasing"           },
+        { owner_id: "2b0afe6a-a766-4c69-a85f-9d2b081c3b2f", first_name: "Samantha",  last_name: "Chen",                      role: "Technical Contact"    },
+        { owner_id: "ee787ee1-3df7-46c1-b853-bc07b31e41f4", first_name: "Sue",       last_name: "Chen",                      role: "Support Contact"      },
+        { owner_id: "3b4a6acf-4ea3-45e6-8691-d9977a081b94", first_name: "Charlie",   last_name: "Davis",                     role: "Operations"           },
+        { owner_id: "2bea372b-2b52-44a6-82d2-6af92b9c06bf", first_name: "John",      last_name: "Doe",                       role: "Billing Contact"      },
+        { owner_id: "2967dfbe-e99f-40ba-b71b-d03a5e9cda29", first_name: "John",      last_name: "Doe",                       role: "Executive"            },
+        { owner_id: "bfc79f4f-fafe-4aa3-8e06-002291dd65de", first_name: "Allen",     last_name: "Ho",                        role: "Billing Contact"      },
+        { owner_id: "5d28e3d5-cc36-460e-9be4-7f7174b3deeb", first_name: "Li",        last_name: "Hong",                      role: "Operations"           },
+        { owner_id: "7989062e-77ca-4993-9e84-3b5b16b67210", first_name: "Mark",      last_name: "Johnson",                   role: "Support Contact"      },
+        { owner_id: "bbdc07b4-7596-4496-a666-79f0af143b94", first_name: "Alice",     last_name: "Johnson-Smith",             role: "Billing Contact"      },
+        { owner_id: "9836683f-3e2c-42f1-854b-3f14a369a750", first_name: "Sarah",     last_name: "Lee",                       role: "Decision Maker"       },
+        { owner_id: "940e4818-a418-4bc4-880d-538bcdd2ed46", first_name: "Diana",     last_name: "Lopez",                     role: "Billing Contact"      },
+        { owner_id: "7d81aee0-884f-4e54-8667-5c2926713546", first_name: "Maria",     last_name: "Lopez",                     role: "Technical Contact"    },
+        { owner_id: "c16adce5-e7c0-4d21-910f-84bc3bb66df1", first_name: "Carlos",    last_name: "Martinez",                  role: "Executive"            },
+        { owner_id: "8d570f86-f518-43fc-9ea5-ef2378a5028d", first_name: "Frank",     last_name: "Miller",                    role: "Billing Contact"      },
+        { owner_id: "2e4724ae-d107-48a7-b34a-bca57b8120b9", first_name: "Emily",     last_name: "Morrison",                  role: "Operations"           },
+        { owner_id: "f803a797-b5b7-4938-96a7-4ec84d4b0c9b", first_name: "Charlie",   last_name: "Nguyen",                    role: "Technical Contact"    },
+        { owner_id: "ea5a34cb-34ee-4108-ab44-4267e7a87f0d", first_name: "John Doe",  last_name: "O'Connor-Mcdonald Jr",      role: "Technical Contact"    },
+        { owner_id: "ee08702e-b417-433b-bbd0-5ca15ea0eff3", first_name: "Liam",      last_name: "O'Connor",                  role: "Operations"           },
+        { owner_id: "948c8551-cc8d-4060-9861-16da45be34fb", first_name: "Sophia",    last_name: "Pat",                       role: "Support Contact"      },
+        { owner_id: "171afa59-dc05-4095-83a1-fb3edd9e578f", first_name: "Priya",     last_name: "Patel",                     role: "Decision Maker"       },
+        { owner_id: "8408c71a-2c75-4668-8088-90875aacc673", first_name: "Bob",       last_name: "Smith",                     role: "IT Director"          },
+        { owner_id: "a6c097bb-2326-4e2c-a74f-b6d0fad2468a", first_name: "Jane",      last_name: "Smith",                     role: "Support Contact"      },
+        { owner_id: "97732fd4-e68a-43f7-aebf-712064b5d901", first_name: "Jane",      last_name: "Smith",                     role: "Billing Contact"      },
+        { owner_id: "a1451ad6-310c-4bcc-ba17-dd383a881ee8", first_name: "John",      last_name: "Smith",                     role: "Sales Representative" },
+        { owner_id: "43866f3b-78c3-4bb8-ac73-fa170bebdcb1", first_name: "John",      last_name: "Smith",                     role: "Decision Maker"       },
+        { owner_id: "9f85b319-5241-45b6-9aeb-60e451a01056", first_name: "Tom",       last_name: "Sun",                       role: "Executive"            },
+        { owner_id: "234786a7-3421-4e4a-a1cb-b23f20b67d13", first_name: "Completely",last_name: "Unique",                    role: "Billing Contact"      },
+        { owner_id: "5297f5fc-68cc-4a84-93c6-55fc965889b9", first_name: "Original",  last_name: "User",                      role: "Technical Contact"    },
+        { owner_id: "74287146-146c-4a39-8a7f-28407da21fa4", first_name: "Noah",      last_name: "Williams",                  role: "Operations"           },
+        { owner_id: "a5a419cd-d9fc-4e0d-a67c-0e3d647a5c9b", first_name: "Ethan",     last_name: "Wong",                      role: "VP Marketing"         },
+        { owner_id: "e3239a6b-5db7-4249-b9e2-500e94603536", first_name: "Grace",     last_name: "Wong",                      role: "VP Sales"             },
+        { owner_id: "c5112e26-4f0f-4d02-abb0-0f4fbb597339", first_name: "Alex",      last_name: "Xue",                       role: "Sales Manager"        },
+        { owner_id: "aaa58eec-1062-4d13-8c96-a5258a7f69fe", first_name: "Alan",      last_name: "Zhang",                     role: "Billing Contact"      }
+    ];
+
+    // Live owners list — populated by loadOwners() on form open; falls back to OWNERS_FALLBACK
+    let _owners = [];
+
+    /**
+     * loadOwners — fetches live owner list via "get owners:" → pre-router → sp_activities(get_owners).
+     *
+     * ROOT CAUSE NOTE (fixed v10):
+     *   The n8n webhook Format Response node returns an ARRAY envelope:
+     *     [{output, owners, success, mode, reportMode}]
+     *   Previous code read `data.owners` treating `data` as the object — always undefined.
+     *   Fix: unwrap `Array.isArray(data) ? data[0] : data` before reading `.owners`.
+     *
+     * @param {Function} callback — called with the final owner array when ready
+     */
+    function loadOwners(callback) {
+        fetch(API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chatInput: { message: 'get owners:' }, sessionId })
+        })
+        .then(r => r.json())
+        .then(data => {
+            // ── Unwrap n8n array envelope ──────────────────────────────────────
+            // Format Response returns: [{output, owners[], success, mode, reportMode}]
+            // Normalise to the inner object regardless of whether it's wrapped or not.
+            const envelope = Array.isArray(data) ? data[0] : data;
+
+            // owners[] is emitted directly by Format Response v3.3 get_owners block
+            const raw = (envelope && envelope.owners) || [];
+
+            if (Array.isArray(raw) && raw.length > 0) {
+                // SP already sorts by last_name/first_name; re-sort here as defensive measure
+                _owners = raw
+                    .filter(o => o.is_active !== false)
+                    .sort((a, b) => {
+                        const la = (a.last_name  || '').toLowerCase();
+                        const lb = (b.last_name  || '').toLowerCase();
+                        const fa = (a.first_name || '').toLowerCase();
+                        const fb = (b.first_name || '').toLowerCase();
+                        return la !== lb ? la.localeCompare(lb) : fa.localeCompare(fb);
+                    });
+                console.log('[loadOwners] Live owners loaded from DB:', _owners.length);
+            } else {
+                console.warn('[loadOwners] Empty/unexpected response — using fallback dataset');
+                _owners = OWNERS_FALLBACK;
+            }
+            callback(_owners);
+        })
+        .catch(err => {
+            // n8n offline or network error — silently use fallback, no UI disruption
+            console.warn('[loadOwners] Fetch failed (n8n offline?) — using fallback dataset');
+            _owners = OWNERS_FALLBACK;
+            callback(_owners);
+        });
+    }
+
+    /**
+     * buildOwnerWidget — renders the owner typeahead input + hidden UUID field into the
+     * given container element. Pre-selects owner by UUID if preselectedId is provided.
+     *
+     * @param {string} containerId   — id of the wrapper div
+     * @param {string} inputId       — id for the visible text input
+     * @param {string} hiddenId      — id for the hidden UUID field
+     * @param {string} [preselectedId] — UUID to pre-select (update form)
+     */
+    function buildOwnerWidget(containerId, inputId, hiddenId, preselectedId) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+
+        // Pre-select display name
+        let preselectedName = '';
+        if (preselectedId && _owners.length > 0) {
+            const match = _owners.find(o => o.owner_id === preselectedId);
+            if (match) preselectedName = match.first_name + ' ' + match.last_name;
+        }
+
+        container.innerHTML = `
+            <div class="owner-field-wrap">
+                <input type="text"
+                       id="${inputId}"
+                       class="owner-search-input"
+                       placeholder="Search owner name…"
+                       value="${escapeHTML(preselectedName)}"
+                       autocomplete="off"
+                       oninput="filterOwnerDropdown('${inputId}','${hiddenId}')"
+                       onfocus="openOwnerDropdown('${inputId}')"
+                       onblur="setTimeout(()=>closeOwnerDropdown('${inputId}'),160)"
+                       onkeydown="ownerKeyNav(event,'${inputId}','${hiddenId}')">
+                <input type="hidden" id="${hiddenId}" value="${escapeHTML(preselectedId || '')}">
+                <div class="owner-dropdown" id="${inputId}-dd"></div>
+            </div>`;
+    }
+
+    /** Populate dropdown with filtered owner list */
+    function openOwnerDropdown(inputId) {
+        const input = document.getElementById(inputId);
+        if (!input) return;
+        filterOwnerDropdown(inputId, inputId.replace('-name', '-id'));
+    }
+
+    function filterOwnerDropdown(inputId, hiddenId) {
+        const input  = document.getElementById(inputId);
+        const dd     = document.getElementById(inputId + '-dd');
+        if (!input || !dd) return;
+        const q = input.value.toLowerCase().trim();
+
+        const filtered = q
+            ? _owners.filter(o =>
+                (o.first_name + ' ' + o.last_name).toLowerCase().includes(q) ||
+                (o.role || '').toLowerCase().includes(q))
+            : _owners;
+
+        if (filtered.length === 0) {
+            dd.innerHTML = `<div class="owner-no-match">No owners match "${escapeHTML(q)}"</div>`;
+        } else {
+            dd.innerHTML = filtered.map((o, i) => `
+                <div class="owner-opt" data-uuid="${escapeHTML(o.owner_id)}"
+                     onmousedown="selectOwner('${inputId}','${hiddenId}','${escapeHTML(o.owner_id)}','${escapeHTML(o.first_name + ' ' + o.last_name)}')">
+                    ${escapeHTML(o.first_name)} ${escapeHTML(o.last_name)}
+                    <span class="owner-opt-role">${escapeHTML(o.role || '')}</span>
+                </div>`).join('');
+        }
+        dd.classList.add('open');
+    }
+
+    function selectOwner(inputId, hiddenId, uuid, displayName) {
+        const input  = document.getElementById(inputId);
+        const hidden = document.getElementById(hiddenId);
+        if (input)  input.value  = displayName;
+        if (hidden) hidden.value = uuid;
+        closeOwnerDropdown(inputId);
+        // Remove any error styling
+        if (input) input.classList.remove('has-error');
+    }
+
+    function closeOwnerDropdown(inputId) {
+        const dd = document.getElementById(inputId + '-dd');
+        if (dd) dd.classList.remove('open');
+    }
+
+    /** Arrow-key + Enter navigation */
+    function ownerKeyNav(e, inputId, hiddenId) {
+        const dd = document.getElementById(inputId + '-dd');
+        if (!dd) return;
+        const opts = dd.querySelectorAll('.owner-opt');
+        const cur  = dd.querySelector('.owner-opt.highlighted');
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            const next = cur ? (cur.nextElementSibling || opts[0]) : opts[0];
+            if (cur) cur.classList.remove('highlighted');
+            if (next) next.classList.add('highlighted');
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            const prev = cur ? (cur.previousElementSibling || opts[opts.length - 1]) : opts[opts.length - 1];
+            if (cur) cur.classList.remove('highlighted');
+            if (prev) prev.classList.add('highlighted');
+        } else if (e.key === 'Enter' && cur) {
+            e.preventDefault();
+            selectOwner(inputId, hiddenId, cur.dataset.uuid, cur.textContent.split('\n')[0].trim());
+        } else if (e.key === 'Escape') {
+            closeOwnerDropdown(inputId);
+        }
+    }
+
+    /** Validate that owner has been selected (hidden field has a UUID) */
+    function validateOwner(inputId, hiddenId) {
+        const hidden = document.getElementById(hiddenId);
+        const input  = document.getElementById(inputId);
+        if (!hidden || !hidden.value.trim()) {
+            if (input) input.classList.add('has-error');
+            return false;
+        }
+        if (input) input.classList.remove('has-error');
+        return true;
+    }
+
+
+    // ========================================================================
+    // SESSION MANAGEMENT
+    // ========================================================================
+    
+    let sessionId = localStorage.getItem('activitySessionId') || generateSessionId();
+    localStorage.setItem('activitySessionId', sessionId);
+    document.getElementById('sessionId').textContent = sessionId.substring(0, 8) + '...';
+    
+    // State Management
+    let lastListHTML = '';
+    let cameFromList = false;
+    let currentEditingActivity = null;
+    let currentPagination = { page: 1, pageSize: 50, totalPages: 1 };
+    
+    function generateSessionId() {
+        return 'sess_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    }
+    
+    // Save home HTML once at startup so Back Home can always restore it
+    let homeHTML = '';
+
+    function hideQuickUI() {
+        const quickUI = document.getElementById('quick-ui');
+        if (quickUI) quickUI.style.display = 'none';
+        // Hide header banner — only visible on the home page
+        const hdr = document.querySelector('header');
+        if (hdr) hdr.style.display = 'none';
+    }
+    
+    function showQuickUI() {
+        const responseArea = document.getElementById('responseArea');
+        if (homeHTML) {
+            responseArea.innerHTML = homeHTML;
+            // Re-load live stats into the restored home screen
+            fetchStatsSilent();
+        } else {
+            location.reload();
+        }
+        // Restore header banner — home page only
+        const hdr = document.querySelector('header');
+        if (hdr) hdr.style.display = '';
+    }
+    
+    function resetSession() {
+        sessionId = generateSessionId();
+        localStorage.setItem('activitySessionId', sessionId);
+        document.getElementById('sessionId').textContent = sessionId.substring(0, 8) + '...';
+        location.reload();
+    }
+
+    // ========================================================================
+    // UTILITY FUNCTIONS
+    // ========================================================================
+    
+    function escapeHTML(str) {
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    function formatDateTime(value) {
+        if (!value) return 'N/A';
+        const d = new Date(value);
+        if (isNaN(d.getTime())) return 'N/A';
+        return d.toLocaleString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+
+    function formatDate(value) {
+        if (!value) return 'N/A';
+        const d = new Date(value);
+        if (isNaN(d.getTime())) return 'N/A';
+        return d.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric'
+        });
+    }
+
+    function truncateUuid(uuid) {
+        if (!uuid) return 'N/A';
+        const str = uuid.toString();
+        return str.length > 8 ? `${str.substring(0, 8)}...` : str;
+    }
+
+    function getTypeBadge(type) {
+        const badges = {
+            call: '<span class="type-badge call">📞 Call</span>',
+            email: '<span class="type-badge email">📧 Email</span>',
+            meeting: '<span class="type-badge meeting">🤝 Meeting</span>',
+            task: '<span class="type-badge task">✅ Task</span>',
+            note: '<span class="type-badge note">📝 Note</span>'
+        };
+        return badges[type] || `<span class="type-badge">${escapeHTML(type)}</span>`;
+    }
+
+    function getTypeIcon(type) {
+        const icons = { call: '📞', email: '📧', meeting: '🤝', task: '✅', note: '📝' };
+        return icons[type] || '•';
+    }
+
+    function getDirectionBadge(direction) {
+        if (!direction) return '';
+        if (direction === 'inbound') {
+            return '<span class="direction-badge inbound">← Inbound</span>';
+        } else if (direction === 'outbound') {
+            return '<span class="direction-badge outbound">→ Outbound</span>';
+        }
+        return `<span class="direction-badge">${escapeHTML(direction)}</span>`;
+    }
+
+    function getDaysBadge(days, type) {
+        if (type === 'overdue') {
+            return `<span class="days-badge overdue">${days} days overdue</span>`;
+        } else {
+            if (days === 0) return '<span class="days-badge today">TODAY</span>';
+            if (days === 1) return '<span class="days-badge tomorrow">TOMORROW</span>';
+            return `<span class="days-badge upcoming">${days} days</span>`;
+        }
+    }
+
+    function fillInput(text) {
+        document.getElementById('message').value = text;
+        document.getElementById('message').focus();
+    }
+
+    // ========================================================================
+    // REQUEST FUNCTIONS
+    // ========================================================================
+    
+    function sendRequest(text) {
+        const messageBox = document.getElementById('message');
+        messageBox.value = text;
+        document.getElementById('chatForm').dispatchEvent(new Event('submit'));
+    }
+
+    /**
+     * sendStructured — Direct SP path (bypasses AI Agent via pre-router)
+     * Sends a structured chatInput object with a trigger-prefix message.
+     * The pre-router detects the prefix and routes straight to Build SQL Query.
+     *
+     * @param {Object} chatInputObj  — must include `message` (the trigger prefix)
+     *                                 plus any SP params as additional properties
+     * @param {Function} [callback] — optional; if supplied, response goes here
+     *                                 instead of the responseArea (silent mode)
+     */
+    async function sendStructured(chatInputObj, callback = null) {
+        if (!callback) {
+            hideQuickUI();
+            const responseArea = document.getElementById('responseArea');
+            responseArea.innerHTML = '<div style="text-align:center;padding:2rem;"><div class="loading"></div><p style="margin-top:1rem;color:#666;">Processing…</p></div>';
+        }
+        try {
+            const response = await fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chatInput: chatInputObj, sessionId })
+            });
+            const data = await response.json();
+            if (callback) {
+                callback(data);
+            } else {
+                handleResponse(data);
+            }
+        } catch (error) {
+            if (callback) {
+                // Silent path (fetchStatsSilent) — n8n offline, stats unavailable, no console noise
+                callback(null);
+            } else {
+                console.error('[sendStructured] Error:', error);
+                document.getElementById('responseArea').innerHTML = `
+                    <div class="error-record">
+                        <h3>❌ Connection Error</h3>
+                        <p>Failed to connect to the Activity API.</p>
+                        <p><strong>Error:</strong> ${escapeHTML(error.message)}</p>
+                        <p>Please ensure the n8n workflow is running at: <code>${API_URL}</code></p>
+                    </div>`;
+            }
+        }
+    }
+
+    /**
+     * fetchStatsSilent — loads activity summary on page load to populate Zone 1 stat cards.
+     * Never touches responseArea — purely updates the 4 stat card values.
+     */
+    function fetchStatsSilent() {
+        sendStructured({ message: 'activity summary:' }, function(data) {
+            // data is null when n8n is offline — silently show dash, no ? marks
+            if (!data) {
+                ['stat-overdue','stat-pending','stat-upcoming','stat-completed'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) { el.textContent = '—'; el.classList.remove('loading-val'); }
+                });
+                return;
+            }
+            let summary = null;
+            if (data.summary) summary = data.summary;
+            else if (data.output) {
+                try { const m = data.output.match(/\{[\s\S]*\}/); if (m) summary = JSON.parse(m[0]).summary; } catch(e) {}
+            }
+            if (!summary) {
+                ['stat-overdue','stat-pending','stat-upcoming','stat-completed'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) { el.textContent = '—'; el.classList.remove('loading-val'); }
+                });
+                return;
+            }
+            const counts = summary.counts || {};
+            const setVal = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) { el.textContent = (val != null && val !== '') ? val : '0'; el.classList.remove('loading-val'); }
+            };
+            setVal('stat-overdue',   counts.overdue    ?? 0);
+            setVal('stat-pending',   counts.pending    ?? 0);
+            setVal('stat-upcoming',  summary.this_week ?? 0);
+            setVal('stat-completed', counts.completed  ?? 0);
+        });
+    }
+
+    async function sendMessage(event) {
+        event.preventDefault();
+        const messageBox = document.getElementById('message');
+        const message = messageBox.value.trim();
+        
+        if (!message) return false;
+        
+        hideQuickUI();
+        const responseArea = document.getElementById('responseArea');
+        responseArea.innerHTML = '<div style="text-align: center; padding: 2rem;"><div class="loading"></div><p style="margin-top: 1rem; color: #666;">Processing your request...</p></div>';
+        
+        try {
+            // Send via chatInput envelope so pre-router v2.0 can inspect structured props
+            const response = await fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chatInput: { message },
+                    sessionId
+                })
+            });
+            
+            const data = await response.json();
+            handleResponse(data);
+        } catch (error) {
+            console.error('Error:', error);
+            responseArea.innerHTML = `
+                <div class="error-record">
+                    <h3>❌ Connection Error</h3>
+                    <p>Failed to connect to the Activity API.</p>
+                    <p><strong>Error:</strong> ${escapeHTML(error.message)}</p>
+                    <p>Please ensure the n8n workflow is running at: <code>${API_URL}</code></p>
+                </div>
+            `;
+        }
+        
+        messageBox.value = '';
+        return false;
+    }
+
+    function handleResponse(data) {
+        const responseArea = document.getElementById('responseArea');
+        
+        // Check if we have formatted output from the n8n workflow
+        if (data.output) {
+            // Render markdown-style output
+            responseArea.innerHTML = `<div class="fade-in">${renderMarkdown(data.output)}</div>`;
+            return;
+        }
+        
+        // Handle raw JSON responses
+        if (data.metadata) {
+            if (data.metadata.status === 'error') {
+                responseArea.innerHTML = `
+                    <div class="error-record fade-in">
+                        <h3>❌ Error</h3>
+                        <p><strong>Code:</strong> ${data.metadata.code}</p>
+                        <p><strong>Message:</strong> ${escapeHTML(data.metadata.message)}</p>
+                    </div>
+                `;
+                return;
+            }
+        }
+        
+        // Handle different response types
+        if (data.activities) {
+            renderActivityList(data);
+        } else if (data.activity) {
+            renderActivityDetail(data.activity);
+        } else if (data.timeline) {
+            renderTimeline(data.timeline);
+        } else if (data.overdue) {
+            renderOverdue(data.overdue);
+        } else if (data.upcoming) {
+            renderUpcoming(data.upcoming);
+        } else if (data.summary) {
+            renderSummary(data.summary);
+        } else {
+            // Generic JSON display
+            responseArea.innerHTML = `
+                <div class="audit-record fade-in">
+                    <h3>📄 Response</h3>
+                    <pre style="white-space: pre-wrap; word-break: break-word;">${JSON.stringify(data, null, 2)}</pre>
+                </div>
+            `;
+        }
+    }
+
+    // ========================================================================
+    // ENHANCED MARKDOWN RENDERING (v2.0)
+    // Properly handles tables, headers, lists, and formatted content
+    // ========================================================================
+    
+    function renderMarkdown(text) {
+        const lines = text.split('\n');
+        let html = '';
+        let inTable = false;
+        let tableHeaders = [];
+        let tableRows = [];
+        let inList = false;
+        let listItems = [];
+        
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const trimmed = line.trim();
+            
+            // [ACTION:text] and [CREATEFORM:text] markers are suppressed — replaced by Back Home buttons
+            if (trimmed.match(/^\[ACTION:[^\]]+\]$/) || trimmed.match(/^\[CREATEFORM:[^\]]+\]$/)) {
+                continue;
+            }
+            
+            // Suppress "Need anything else" footer prompts
+            if (trimmed.toLowerCase().includes('need anything else') || trimmed.toLowerCase().includes('just ask')) {
+                continue;
+            }
+            
+            // Handle table separator line (skip it but mark we're in table body)
+            if (trimmed.match(/^\|[\s-:|]+\|$/)) {
+                inTable = true;
+                continue;
+            }
+            
+            // Handle table header row (first pipe-delimited row before separator)
+            if (trimmed.startsWith('|') && trimmed.endsWith('|') && !inTable) {
+                tableHeaders = trimmed.split('|').filter(c => c.trim()).map(c => c.trim());
+                inTable = 'header';
+                continue;
+            }
+            
+            // Handle table data rows
+            if (trimmed.startsWith('|') && trimmed.endsWith('|') && inTable) {
+                tableRows.push(trimmed.split('|').filter(c => c.trim()).map(c => c.trim()));
+                continue;
+            }
+            
+            // End of table - render it
+            if (inTable && !trimmed.startsWith('|') && (tableHeaders.length > 0 || tableRows.length > 0)) {
+                html += renderMarkdownTable(tableHeaders, tableRows);
+                tableHeaders = [];
+                tableRows = [];
+                inTable = false;
+            }
+            
+            // Handle bullet list items
+            if (trimmed.startsWith('• ') || trimmed.startsWith('* ') || trimmed.startsWith('- ')) {
+                if (!inList) {
+                    inList = true;
+                    listItems = [];
+                }
+                const itemText = trimmed.replace(/^[•*-]\s*/, '');
+                listItems.push(parseMarkdownInline(itemText));
+                continue;
+            }
+            
+            // End of list - render it
+            if (inList && !trimmed.startsWith('• ') && !trimmed.startsWith('* ') && !trimmed.startsWith('- ')) {
+                html += '<ul class="md-list">' + listItems.map(item => `<li>${item}</li>`).join('') + '</ul>';
+                listItems = [];
+                inList = false;
+            }
+            
+            // Headers
+            if (trimmed.startsWith('### ')) {
+                html += `<h3 class="md-h3">${parseMarkdownInline(trimmed.replace(/^###\s*/, ''))}</h3>`;
+                continue;
+            }
+            if (trimmed.startsWith('## ')) {
+                html += `<h2 class="md-h2">${parseMarkdownInline(trimmed.replace(/^##\s*/, ''))}</h2>`;
+                continue;
+            }
+            if (trimmed.startsWith('# ')) {
+                html += `<h1 class="md-h1">${parseMarkdownInline(trimmed.replace(/^#\s*/, ''))}</h1>`;
+                continue;
+            }
+            
+            // Horizontal rule
+            if (trimmed === '---' || trimmed === '***' || trimmed === '___') {
+                html += '<hr class="md-hr">';
+                continue;
+            }
+            
+            // Empty line
+            if (!trimmed) {
+                html += '<div class="md-spacer"></div>';
+                continue;
+            }
+            
+            // Regular paragraph
+            html += `<p class="md-p">${parseMarkdownInline(trimmed)}</p>`;
+        }
+        
+        // Handle remaining table at end of text
+        if (tableHeaders.length > 0 || tableRows.length > 0) {
+            html += renderMarkdownTable(tableHeaders, tableRows);
+        }
+        
+        // Handle remaining list at end of text
+        if (listItems.length > 0) {
+            html += '<ul class="md-list">' + listItems.map(item => `<li>${item}</li>`).join('') + '</ul>';
+        }
+        
+        return html + `<div class="back-home-btns"><button class="back-home-btn" onclick="showQuickUI()">🏠 Back Home</button></div>`;
+    }
+    
+    function parseMarkdownInline(text) {
+        if (!text) return '';
+        return text
+            .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+            .replace(/_([^_]+)_/g, '<em>$1</em>')
+            .replace(/`([^`]+)`/g, '<code class="md-code">$1</code>');
+    }
+    
+    function renderMarkdownTable(headers, rows) {
+        if (headers.length === 0 && rows.length === 0) return '';
+        
+        let html = '<div class="md-table-container"><table class="md-table">';
+        
+        // Render headers
+        if (headers.length > 0) {
+            html += '<thead><tr>';
+            headers.forEach(h => {
+                html += `<th>${parseMarkdownInline(h)}</th>`;
+            });
+            html += '</tr></thead>';
+        }
+        
+        // Render body
+        if (rows.length > 0) {
+            html += '<tbody>';
+            rows.forEach(row => {
+                html += '<tr>';
+                row.forEach(cell => {
+                    // Check for Details button marker [DETAILS:uuid]
+                    const detailsMatch = cell.match(/^\[DETAILS:([^\]]+)\]$/);
+                    if (detailsMatch) {
+                        const activityId = detailsMatch[1];
+                        if (activityId && activityId !== '') {
+                            html += `<td><button class="unified-action-btn" style="width: auto; min-width: 85px; height: 30px; font-size: 0.75rem; padding: 0.25rem 0.75rem; white-space: nowrap;" onclick="viewActivityDetail('${escapeHTML(activityId)}')" title="View details (ID: ${escapeHTML(activityId)})">📄 Details</button></td>`;
+                        } else {
+                            html += '<td>N/A</td>';
+                        }
+                    } else {
+                        html += `<td>${parseMarkdownInline(cell)}</td>`;
+                    }
+                });
+                html += '</tr>';
+            });
+            html += '</tbody>';
+        }
+        
+        html += '</table></div>';
+        return html;
+    }
+
+    // ========================================================================
+    // RENDER FUNCTIONS
+    // ========================================================================
+    
+    function renderActivityList(data) {
+        const activities = data.activities || [];
+        const metadata = data.metadata || {};
+        const responseArea = document.getElementById('responseArea');
+        
+        if (activities.length === 0) {
+            responseArea.innerHTML = `
+                <div class="audit-record fade-in">
+                    <h3>📋 Activity List</h3>
+                    <p>No activities found.</p>
+                    <div class="action-buttons">
+                        <button class="unified-action-btn" onclick="showCreateActivityForm()">➕ Create Activity</button>
+                    </div>
+                </div>
+            `;
+            return;
+        }
+        
+        currentPagination = {
+            page: metadata.page || 1,
+            pageSize: metadata.page_size || 50,
+            totalPages: metadata.total_pages || 1,
+            totalRecords: metadata.total_records || activities.length
+        };
+        
+        let html = `
+            <div class="fade-in">
+                <h2 class="activity-title">📋 Activity List</h2>
+                <p class="activity-meta">
+                    Time: ${new Date().toLocaleString()} &nbsp;|&nbsp;
+                    Page ${currentPagination.page} of ${currentPagination.totalPages} &nbsp;|&nbsp;
+                    Total: ${currentPagination.totalRecords} activities
+                </p>
+                <div style="margin-bottom: 1rem;">
+                    <button class="back-home-btn" onclick="showQuickUI()">🏠 Back Home</button>
+                </div>
+        `;
+        
+        activities.forEach((act, index) => {
+            const typeBadge = getTypeBadge(act.type);
+            const completedIcon = act.completed_at ? ' ✔️' : '';
+            const relatedName = act.related?.name || 'N/A';
+            const relatedType = act.related?.type || '';
+            
+            html += `
+                <div class="activity-card" onclick="viewActivityDetail('${escapeHTML(act.activity_id)}')">
+                    <div class="card-line">
+                        ${typeBadge}${completedIcon}
+                        <span class="separator">|</span>
+                        <span class="field-value subject">${escapeHTML(act.subject || 'No subject')}</span>
+                    </div>
+                    <div class="card-line">
+                        <span class="field-label">ID:</span>
+                        <span class="field-value id">${truncateUuid(act.activity_id)}</span>
+                        <span class="separator">|</span>
+                        <span class="field-label">Related:</span>
+                        <span class="field-value related">${escapeHTML(relatedType)} - ${escapeHTML(relatedName)}</span>
+                    </div>
+                    <div class="card-line">
+                        ${act.direction ? `<span class="field-label">Direction:</span><span class="field-value direction">${getDirectionBadge(act.direction)}</span><span class="separator">|</span>` : ''}
+                        ${act.due_date ? `<span class="field-label">Due:</span><span class="field-value due">${formatDate(act.due_date)}</span><span class="separator">|</span>` : ''}
+                        <span class="field-label">Created:</span>
+                        <span class="field-value">${formatDateTime(act.audit?.created_at)}</span>
+                    </div>
+                    ${act.completed_at ? `
+                        <div class="card-line">
+                            <span class="field-label">Completed:</span>
+                            <span class="field-value completed">${formatDateTime(act.completed_at)}</span>
+                        </div>
+                    ` : ''}
+                    <div class="card-actions-bottom-right">
+                        <button class="unified-action-btn" onclick="event.stopPropagation(); viewActivityDetail('${escapeHTML(act.activity_id)}')">📄 Details</button>
+                        <button class="unified-action-btn" onclick="event.stopPropagation(); showUpdateActivityForm({activity_id: '${escapeHTML(act.activity_id)}', subject: '${escapeHTML(act.subject)}', description: '', type: '${escapeHTML(act.type)}'})">✏️ Update</button>
+                    </div>
+                </div>
+            `;
+        });
+        
+        // Pagination
+        html += `
+            <div class="pagination">
+                <button onclick="loadPage(${currentPagination.page - 1})" ${currentPagination.page <= 1 ? 'disabled' : ''}>← Previous</button>
+                <span class="page-info">Page ${currentPagination.page} of ${currentPagination.totalPages}</span>
+                <button onclick="loadPage(${currentPagination.page + 1})" ${currentPagination.page >= currentPagination.totalPages ? 'disabled' : ''}>Next →</button>
+            </div>
+            <div class="back-home-btns" style="margin-top: 1.25rem;">
+                <button class="back-home-btn" onclick="showQuickUI()">🏠 Back Home</button>
+            </div>
+        `;
+        
+        html += '</div>';
+        responseArea.innerHTML = html;
+        lastListHTML = html;
+        cameFromList = true;
+    }
+
+    function renderActivityDetail(activity) {
+        const responseArea = document.getElementById('responseArea');
+        currentEditingActivity = activity;
+        
+        const typeBadge = getTypeBadge(activity.type);
+        const directionBadge = getDirectionBadge(activity.direction);
+        
+        let html = `
+            <div class="activity-360-fullpage fade-in">
+                <div class="activity-360-header">
+                    <div>
+                        <h2 class="activity-360-title">${escapeHTML(activity.subject || 'Activity Details')}</h2>
+                        <p class="activity-360-subtitle">${typeBadge} ${directionBadge}</p>
+                    </div>
+                    <div class="activity-360-actions">
+                        ${cameFromList ? `<button class="unified-action-btn" onclick="goBackToActivityList()">← Back to List</button>` : ''}
+                        <button class="unified-action-btn" onclick="showUpdateActivityForm(currentEditingActivity)">✏️ Edit</button>
+                        ${!activity.completed_at ? `<button class="unified-action-btn" onclick="completeActivity('${escapeHTML(activity.activity_id)}')" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%);">✔️ Complete</button>` : ''}
+                        ${activity.completed_at ? `<button class="unified-action-btn" onclick="reopenActivity('${escapeHTML(activity.activity_id)}')" style="background: linear-gradient(135deg, #fd7e14 0%, #ffc107 100%);">🔄 Reopen</button>` : ''}
+                    </div>
+                </div>
+                
+                <div class="activity-360-section">
+                    <h4>📋 Activity Information</h4>
+                    <div class="activity-360-grid">
+                        <div class="activity-360-field">
+                            <span class="label">Activity ID</span>
+                            <span class="value" style="font-family: monospace; font-size: 0.85rem;">${escapeHTML(activity.activity_id)}</span>
+                        </div>
+                        <div class="activity-360-field">
+                            <span class="label">Type</span>
+                            <span class="value type">${getTypeIcon(activity.type)} ${escapeHTML(activity.type)}</span>
+                        </div>
+                        <div class="activity-360-field">
+                            <span class="label">Subject</span>
+                            <span class="value highlight">${escapeHTML(activity.subject || 'N/A')}</span>
+                        </div>
+                        <div class="activity-360-field">
+                            <span class="label">Status</span>
+                            <span class="value ${activity.completed_at ? 'completed' : ''}">${activity.completed_at ? '✔️ Completed' : '⏳ Pending'}</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="activity-360-section">
+                    <h4>🔗 Related Entity</h4>
+                    <div class="activity-360-grid">
+                        <div class="activity-360-field">
+                            <span class="label">Related Type</span>
+                            <span class="value">${escapeHTML(activity.related?.type || 'N/A')}</span>
+                        </div>
+                        <div class="activity-360-field">
+                            <span class="label">Related Name</span>
+                            <span class="value highlight">${escapeHTML(activity.related?.name || 'N/A')}</span>
+                        </div>
+                        <div class="activity-360-field">
+                            <span class="label">Related ID</span>
+                            <span class="value" style="font-family: monospace; font-size: 0.85rem;">${escapeHTML(activity.related?.id || 'N/A')}</span>
+                        </div>
+                    </div>
+                </div>
+                
+                ${activity.direction || activity.channel ? `
+                <div class="activity-360-section">
+                    <h4>📡 Communication Details</h4>
+                    <div class="activity-360-grid">
+                        ${activity.direction ? `
+                        <div class="activity-360-field">
+                            <span class="label">Direction</span>
+                            <span class="value">${directionBadge}</span>
+                        </div>
+                        ` : ''}
+                        ${activity.channel ? `
+                        <div class="activity-360-field">
+                            <span class="label">Channel</span>
+                            <span class="value">${escapeHTML(activity.channel)}</span>
+                        </div>
+                        ` : ''}
+                    </div>
+                </div>
+                ` : ''}
+                
+                <div class="activity-360-section">
+                    <h4>📅 Dates</h4>
+                    <div class="activity-360-grid">
+                        ${activity.due_date ? `
+                        <div class="activity-360-field">
+                            <span class="label">Due Date</span>
+                            <span class="value">${formatDate(activity.due_date)}</span>
+                        </div>
+                        ` : ''}
+                        ${activity.completed_at ? `
+                        <div class="activity-360-field">
+                            <span class="label">Completed At</span>
+                            <span class="value completed">${formatDateTime(activity.completed_at)}</span>
+                        </div>
+                        ` : ''}
+                        <div class="activity-360-field">
+                            <span class="label">Created At</span>
+                            <span class="value">${formatDateTime(activity.audit?.created_at)}</span>
+                        </div>
+                        <div class="activity-360-field">
+                            <span class="label">Updated At</span>
+                            <span class="value">${formatDateTime(activity.audit?.updated_at)}</span>
+                        </div>
+                    </div>
+                </div>
+                
+                ${activity.description ? `
+                <div class="activity-360-section">
+                    <h4>📝 Description</h4>
+                    <div style="background: #f8f9fa; padding: 1rem; border-radius: 6px; line-height: 1.6;">
+                        ${escapeHTML(activity.description)}
+                    </div>
+                </div>
+                ` : ''}
+                
+                <div class="activity-360-section">
+                    <h4>⚙️ Actions</h4>
+                    <div class="action-buttons">
+                        <button class="unified-action-btn" onclick="showUpdateActivityForm(currentEditingActivity)">✏️ Edit Activity</button>
+                        ${!activity.completed_at ? `<button class="unified-action-btn" onclick="completeActivity('${escapeHTML(activity.activity_id)}')" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%);">✔️ Mark Complete</button>` : ''}
+                        ${activity.completed_at ? `<button class="unified-action-btn" onclick="reopenActivity('${escapeHTML(activity.activity_id)}')" style="background: linear-gradient(135deg, #fd7e14 0%, #ffc107 100%);">🔄 Reopen</button>` : ''}
+                        <button class="unified-action-btn" onclick="deleteActivity('${escapeHTML(activity.activity_id)}')" style="background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);">🗑️ Delete</button>
+                    </div>
+                </div>
+                <div class="back-home-btns">
+                    <button class="back-home-btn" onclick="showQuickUI()">🏠 Back Home</button>
+                    <button class="back-home-btn" onclick="goBackToActivityList()">← Back to List</button>
+                </div>
+            </div>
+        `;
+        
+        responseArea.innerHTML = html;
+    }
+
+    function renderTimeline(events) {
+        const responseArea = document.getElementById('responseArea');
+        
+        if (!events || events.length === 0) {
+            responseArea.innerHTML = `
+                <div class="audit-record fade-in">
+                    <h3>🕐 Timeline</h3>
+                    <p>No timeline events found for this entity.</p>
+                </div>
+            `;
+            return;
+        }
+        
+        let html = `
+            <div class="fade-in">
+                <h3 style="color: #0078d7; margin-bottom: 1rem;">🕐 Timeline (${events.length} events)</h3>
+                <div class="timeline-container">
+        `;
+        
+        events.forEach(evt => {
+            const icon = { activity: '📝', order: '📦', invoice: '🧾', payment: '💰' }[evt.event_type] || '•';
+            
+            html += `
+                <div class="timeline-item ${evt.event_type}">
+                    <div class="timeline-header">
+                        <span class="timeline-title">${icon} ${escapeHTML(evt.summary)}</span>
+                        <span class="timeline-time">${formatDateTime(evt.timestamp)}</span>
+                    </div>
+                    <div class="timeline-details">
+                        <strong>Type:</strong> ${escapeHTML(evt.event_type)}
+                        ${evt.details ? renderTimelineDetails(evt.event_type, evt.details) : ''}
+                    </div>
+                </div>
+            `;
+        });
+        
+        html += `</div><div class="back-home-btns"><button class="back-home-btn" onclick="showQuickUI()">🏠 Back Home</button></div></div>`;
+        responseArea.innerHTML = html;
+    }
+
+    function renderTimelineDetails(type, details) {
+        if (type === 'activity') {
+            return `
+                <br><strong>Subject:</strong> ${escapeHTML(details.subject || 'N/A')}
+                ${details.description ? `<br><em>${escapeHTML(details.description)}</em>` : ''}
+            `;
+        } else if (type === 'order') {
+            return `
+                <br><strong>Order #:</strong> ${escapeHTML(details.order_number)}
+                <br><strong>Amount:</strong> $${escapeHTML(details.amount)}
+            `;
+        } else if (type === 'invoice') {
+            return `
+                <br><strong>Invoice #:</strong> ${escapeHTML(details.invoice_number)}
+                <br><strong>Amount:</strong> $${escapeHTML(details.amount)}
+            `;
+        } else if (type === 'payment') {
+            return `
+                <br><strong>Amount:</strong> $${escapeHTML(details.amount)}
+                <br><strong>Method:</strong> ${escapeHTML(details.method)}
+            `;
+        }
+        return '';
+    }
+
+    function renderOverdue(activities) {
+        const responseArea = document.getElementById('responseArea');
+        
+        if (!activities || activities.length === 0) {
+            responseArea.innerHTML = `
+                <div class="success-record fade-in">
+                    <h3>🎉 No Overdue Activities!</h3>
+                    <p>Great job! You have no overdue tasks or meetings.</p>
+                </div>
+            `;
+            return;
+        }
+        
+        let html = `
+            <div class="fade-in">
+                <h3 style="color: #dc3545; margin-bottom: 1rem;">⚠️ Overdue Activities (${activities.length})</h3>
+                <table class="activities-table">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Subject</th>
+                            <th>Due Date</th>
+                            <th>Days Overdue</th>
+                            <th>Related To</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+        
+        activities.forEach(act => {
+            html += `
+                <tr>
+                    <td>${getTypeIcon(act.type)} ${escapeHTML(act.type)}</td>
+                    <td><strong>${escapeHTML(act.subject)}</strong></td>
+                    <td>${formatDate(act.due_date)}</td>
+                    <td>${getDaysBadge(act.days_overdue, 'overdue')}</td>
+                    <td>${escapeHTML(act.related?.type || 'N/A')}</td>
+                    <td>
+                        <button class="unified-action-btn" style="width: auto; height: 30px; font-size: 0.75rem; padding: 0.25rem 0.75rem;" onclick="viewActivityDetail('${escapeHTML(act.activity_id)}')">View</button>
+                        <button class="unified-action-btn" style="width: auto; height: 30px; font-size: 0.75rem; padding: 0.25rem 0.75rem; background: linear-gradient(135deg, #28a745 0%, #20c997 100%);" onclick="completeActivity('${escapeHTML(act.activity_id)}')">Complete</button>
+                    </td>
+                </tr>
+            `;
+        });
+        
+        html += `</tbody></table><div class="back-home-btns"><button class="back-home-btn" onclick="showQuickUI()">🏠 Back Home</button></div></div>`;
+        responseArea.innerHTML = html;
+    }
+
+    function renderUpcoming(activities) {
+        const responseArea = document.getElementById('responseArea');
+        
+        if (!activities || activities.length === 0) {
+            responseArea.innerHTML = `
+                <div class="audit-record fade-in">
+                    <h3>📅 Upcoming Activities</h3>
+                    <p>No upcoming activities in the next 14 days.</p>
+                </div>
+            `;
+            return;
+        }
+        
+        let html = `
+            <div class="fade-in">
+                <h3 style="color: #17a2b8; margin-bottom: 1rem;">📅 Upcoming Activities (${activities.length})</h3>
+                <table class="activities-table">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Subject</th>
+                            <th>Due Date</th>
+                            <th>Days Until</th>
+                            <th>Related To</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+        
+        activities.forEach(act => {
+            html += `
+                <tr>
+                    <td>${getTypeIcon(act.type)} ${escapeHTML(act.type)}</td>
+                    <td><strong>${escapeHTML(act.subject)}</strong></td>
+                    <td>${formatDate(act.due_date)}</td>
+                    <td>${getDaysBadge(act.days_until, 'upcoming')}</td>
+                    <td>${escapeHTML(act.related?.type || 'N/A')}</td>
+                    <td>
+                        <button class="unified-action-btn" style="width: auto; height: 30px; font-size: 0.75rem; padding: 0.25rem 0.75rem;" onclick="viewActivityDetail('${escapeHTML(act.activity_id)}')">View</button>
+                    </td>
+                </tr>
+            `;
+        });
+        
+        html += `</tbody></table><div class="back-home-btns"><button class="back-home-btn" onclick="showQuickUI()">🏠 Back Home</button></div></div>`;
+        responseArea.innerHTML = html;
+    }
+
+    function renderSummary(summary) {
+        const responseArea = document.getElementById('responseArea');
+        const counts = summary.counts || {};
+        const byType = summary.by_type || {};
+        const byRelatedType = summary.by_related_type || {};
+        
+        let html = `
+            <div class="fade-in">
+                <h3 style="color: #0078d7; margin-bottom: 1rem;">📊 Activity Summary</h3>
+                
+                <div class="summary-grid">
+                    <div class="summary-card">
+                        <div class="summary-value">${counts.total || 0}</div>
+                        <div class="summary-label">Total Activities</div>
+                    </div>
+                    <div class="summary-card completed">
+                        <div class="summary-value">${counts.completed || 0}</div>
+                        <div class="summary-label">Completed</div>
+                    </div>
+                    <div class="summary-card pending">
+                        <div class="summary-value">${counts.pending || 0}</div>
+                        <div class="summary-label">Pending</div>
+                    </div>
+                    <div class="summary-card overdue">
+                        <div class="summary-value">${counts.overdue || 0}</div>
+                        <div class="summary-label">Overdue</div>
+                    </div>
+                </div>
+                
+                <div class="activity-360-section">
+                    <h4>📋 By Type</h4>
+                    <div class="type-stats">
+        `;
+        
+        Object.entries(byType).forEach(([type, count]) => {
+            html += `
+                <div class="type-stat">
+                    <span class="icon">${getTypeIcon(type)}</span>
+                    <span>${escapeHTML(type)}</span>
+                    <span class="count">${count}</span>
+                </div>
+            `;
+        });
+        
+        html += `
+                    </div>
+                </div>
+                
+                <div class="activity-360-section">
+                    <h4>🔗 By Related Entity</h4>
+                    <div class="type-stats">
+        `;
+        
+        Object.entries(byRelatedType).forEach(([type, count]) => {
+            html += `
+                <div class="type-stat">
+                    <span>${escapeHTML(type)}</span>
+                    <span class="count">${count}</span>
+                </div>
+            `;
+        });
+        
+        html += `
+                    </div>
+                </div>
+                
+                <div class="activity-360-section">
+                    <h4>📅 Time-Based Statistics</h4>
+                    <div class="summary-grid" style="grid-template-columns: repeat(2, 1fr);">
+                        <div class="summary-card">
+                            <div class="summary-value">${summary.this_week || 0}</div>
+                            <div class="summary-label">This Week</div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="summary-value">${summary.this_month || 0}</div>
+                            <div class="summary-label">This Month</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="back-home-btns">
+                    <button class="back-home-btn" onclick="showQuickUI()">🏠 Back Home</button>
+                </div>
+            </div>
+        `;
+        
+        responseArea.innerHTML = html;
+    }
+
+    // ========================================================================
+    // FORM FUNCTIONS
+    // ========================================================================
+    
+    function showCreateActivityForm(prefill = {}) {
+        hideQuickUI();
+        const responseArea = document.getElementById('responseArea');
+        // Show loading state while owners load
+        responseArea.innerHTML = '<div style="text-align:center;padding:2rem;"><div class="loading"></div><p style="margin-top:1rem;color:#666;">Loading form…</p></div>';
+
+        loadOwners(() => _renderCreateActivityForm(prefill));
+    }
+
+    function _renderCreateActivityForm(prefill = {}) {
+        const responseArea = document.getElementById('responseArea');
+
+        const relatedTypeOptions = RELATED_TYPES.map(t =>
+            `<option value="${t.value}" ${prefill.relatedType === t.value ? 'selected' : ''}>${t.label}</option>`
+        ).join('');
+
+        const typeOptions = ACTIVITY_TYPES.map(t =>
+            `<option value="${t.value}" ${prefill.type === t.value ? 'selected' : ''}>${t.label}</option>`
+        ).join('');
+
+        const directionOptions = DIRECTIONS.map(d =>
+            `<option value="${d.value}" ${prefill.direction === d.value ? 'selected' : ''}>${d.label}</option>`
+        ).join('');
+
+        const channelOptions = CHANNELS.map(c =>
+            `<option value="${c.value}" ${prefill.channel === c.value ? 'selected' : ''}>${c.label}</option>`
+        ).join('');
+
+        responseArea.innerHTML = `
+            <div class="create-form fade-in">
+                <h3>➕ Create New Activity</h3>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Related Type *</label>
+                        <select id="create-relatedType" onchange="updateRelatedIdPlaceholder()">
+                            ${relatedTypeOptions}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Related ID *</label>
+                        <input type="text" id="create-relatedId" placeholder="UUID of related entity" value="${escapeHTML(prefill.relatedId || '')}">
+                    </div>
+                    <div class="form-group">
+                        <label>Activity Type *</label>
+                        <select id="create-type">
+                            ${typeOptions}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Subject *</label>
+                        <input type="text" id="create-subject" placeholder="Activity subject" value="${escapeHTML(prefill.subject || '')}">
+                    </div>
+                    <div class="form-group">
+                        <label>Due Date</label>
+                        <input type="date" id="create-dueDate" value="${prefill.dueDate || ''}">
+                    </div>
+                    <div class="form-group">
+                        <label>Direction</label>
+                        <select id="create-direction">
+                            ${directionOptions}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Channel</label>
+                        <select id="create-channel">
+                            ${channelOptions}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Owner *</label>
+                        <div id="create-owner-widget"></div>
+                    </div>
+                    <div class="form-group form-row-wide">
+                        <label>Description</label>
+                        <textarea class="form-textarea" id="create-description" rows="3" placeholder="Activity description...">${escapeHTML(prefill.description || '')}</textarea>
+                    </div>
+                </div>
+                <div class="action-buttons">
+                    <button class="unified-action-btn" onclick="submitCreateActivity()">✅ Create Activity</button>
+                    <button class="back-home-btn" onclick="showQuickUI()">🏠 Back Home</button>
+                </div>
+                <div style="margin-top: 1rem; padding: 0.75rem; background: #fff8e6; border-radius: 6px; font-size: 0.85rem;">
+                    <strong>💡 Demo IDs:</strong><br>
+                    Account: ${SAMPLE_DATA.account.id}<br>
+                    Contact: ${SAMPLE_DATA.contact.id}<br>
+                    Lead: ${SAMPLE_DATA.lead.id}<br>
+                    Opportunity: ${SAMPLE_DATA.opportunity.id}
+                </div>
+            </div>
+        `;
+
+        // Mount owner typeahead widget (no pre-selection on create)
+        buildOwnerWidget('create-owner-widget', 'create-owner-name', 'create-owner-uuid', prefill.ownerId || '');
+    }
+
+    function showUpdateActivityForm(activity) {
+        hideQuickUI();
+        const responseArea = document.getElementById('responseArea');
+        currentEditingActivity = activity || {};
+        // Show loading while owners load
+        responseArea.innerHTML = '<div style="text-align:center;padding:2rem;"><div class="loading"></div><p style="margin-top:1rem;color:#666;">Loading form…</p></div>';
+        loadOwners(() => _renderUpdateActivityForm(currentEditingActivity));
+    }
+
+    function _renderUpdateActivityForm(act) {
+        act = act || {};
+        const responseArea = document.getElementById('responseArea');
+
+        const directionOptions = DIRECTIONS.map(d =>
+            `<option value="${d.value}" ${act.direction === d.value ? 'selected' : ''}>${d.label}</option>`
+        ).join('');
+        const channelOptions = CHANNELS.map(c =>
+            `<option value="${c.value}" ${act.channel === c.value ? 'selected' : ''}>${c.label}</option>`
+        ).join('');
+
+        const hasActivity = !!act.activity_id;
+
+        // Default date range: today-30 → today
+        const today  = new Date();
+        const d30ago = new Date(today); d30ago.setDate(today.getDate() - 30);
+        const fmt = d => d.toISOString().split('T')[0];
+        const defaultStart = fmt(d30ago);
+        const defaultEnd   = fmt(today);
+
+        const typeOptions = [
+            '<option value="">All Types</option>',
+            ...ACTIVITY_TYPES.map(t => `<option value="${t.value}">${t.label}</option>`)
+        ].join('');
+
+        responseArea.innerHTML = `
+            <div class="create-form fade-in">
+                <h3>🔄 Update Activity</h3>
+
+                <!-- ── Google-Style Search Panel ─────────────────── -->
+                <div class="gs-search-section">
+                    <h4>🔍 Find Activity to Update</h4>
+                    <div class="gs-row1">
+                        <div class="gs-keyword-wrap">
+                            <span class="gs-keyword-icon">🔍</span>
+                            <input type="text" id="gs-keyword" class="gs-keyword-input"
+                                   placeholder="Search by subject, description…"
+                                   autocomplete="off"
+                                   onkeydown="if(event.key==='Enter') runGsSearch()">
+                        </div>
+                        <select id="gs-type" class="gs-type-select">${typeOptions}</select>
+                        <button class="gs-search-btn" onclick="runGsSearch()">🔎 Search</button>
+                    </div>
+                    <div class="gs-row2">
+                        <span class="gs-date-label">From:</span>
+                        <input type="date" id="gs-start" class="gs-date-input" value="${defaultStart}">
+                        <span class="gs-date-sep">→</span>
+                        <span class="gs-date-label">To:</span>
+                        <input type="date" id="gs-end" class="gs-date-input" value="${defaultEnd}">
+                        <button class="gs-clear-dates" onclick="clearGsDates()" title="Remove date filters">✕ Clear dates</button>
+                    </div>
+                    <div class="gs-filter-summary" id="gs-filter-summary"></div>
+                    <div id="gs-results-panel"></div>
+                </div>
+
+                <!-- ── Form Fields ──────────────────────────────── -->
+                <div class="form-grid" id="update-form-fields" style="${hasActivity ? '' : 'opacity:0.38;pointer-events:none;'}">
+                    <div class="form-group">
+                        <label>Activity ID</label>
+                        <input type="text" id="update-id" value="${escapeHTML(act.activity_id || '')}" readonly
+                               style="background:#f0f0f0;font-family:monospace;font-size:0.78rem;">
+                    </div>
+                    <div class="form-group">
+                        <label>Type</label>
+                        <input type="text" id="update-type" value="${escapeHTML(act.type || '')}" readonly style="background:#f0f0f0;">
+                    </div>
+                    <div class="form-group form-row-wide">
+                        <label>Subject</label>
+                        <input type="text" id="update-subject" value="${escapeHTML(act.subject || '')}">
+                    </div>
+                    <div class="form-group">
+                        <label>Due Date</label>
+                        <input type="date" id="update-dueDate" value="${act.due_date ? act.due_date.split('T')[0] : ''}">
+                    </div>
+                    <div class="form-group">
+                        <label>Direction</label>
+                        <select id="update-direction">${directionOptions}</select>
+                    </div>
+                    <div class="form-group">
+                        <label>Channel</label>
+                        <select id="update-channel">${channelOptions}</select>
+                    </div>
+                    <div class="form-group">
+                        <label>Owner *</label>
+                        <div id="update-owner-widget"></div>
+                    </div>
+                    <div class="form-group">
+                        <label>Mark Complete</label>
+                        <input type="checkbox" id="update-completed" ${act.completed_at ? 'checked' : ''}
+                               style="width:20px;height:20px;">
+                    </div>
+                    <div class="form-group form-row-wide">
+                        <label>Description</label>
+                        <textarea class="form-textarea" id="update-description" rows="3">${escapeHTML(act.description || '')}</textarea>
+                    </div>
+                </div>
+                <div class="action-buttons">
+                    <button class="unified-action-btn" onclick="submitUpdateActivity()" id="update-save-btn"
+                            ${hasActivity ? '' : 'disabled style="opacity:0.38;cursor:not-allowed;"'}>💾 Save Changes</button>
+                    ${cameFromList ? `<button class="unified-action-btn" onclick="goBackToActivityList()"
+                        style="background:linear-gradient(135deg,#6c757d 0%,#495057 100%);">← Back to List</button>` : ''}
+                    <button class="back-home-btn" onclick="showQuickUI()">🏠 Back Home</button>
+                </div>
+            </div>
+        `;
+
+        // Mount owner widget — pre-select by owner_id from activity if available
+        buildOwnerWidget('update-owner-widget', 'update-owner-name', 'update-owner-uuid', act.owner_id || '');
+        buildGsFilterSummary();
+    }
+
+    // ── Google-Style Search helpers ──────────────────────────────────────────
+
+    let _gsResults = [];
+
+    /** Build and display the filter summary pills */
+    function buildGsFilterSummary() {
+        const summaryEl = document.getElementById('gs-filter-summary');
+        if (!summaryEl) return;
+        const keyword  = (document.getElementById('gs-keyword')?.value || '').trim();
+        const type     = document.getElementById('gs-type')?.value || '';
+        const start    = document.getElementById('gs-start')?.value || '';
+        const end      = document.getElementById('gs-end')?.value   || '';
+
+        const pills = [];
+        if (keyword)        pills.push(`🔍 "${escapeHTML(keyword)}"`);
+        if (type)           pills.push(`Type: ${escapeHTML(type)}`);
+        if (start && end)   pills.push(`📅 ${start} → ${end}`);
+        else if (start)     pills.push(`📅 From ${start}`);
+        else if (end)       pills.push(`📅 To ${end}`);
+        else                pills.push(`📅 All dates`);
+
+        summaryEl.innerHTML = pills.map(p =>
+            `<span class="gs-filter-pill">${p}</span>`
+        ).join('');
+    }
+
+    function clearGsDates() {
+        const s = document.getElementById('gs-start');
+        const e = document.getElementById('gs-end');
+        if (s) s.value = '';
+        if (e) e.value = '';
+        buildGsFilterSummary();
+    }
+
+    /**
+     * Parse the markdown table from the format-response `output` string.
+     * Columns (from format response): Type | Subject | Owner | Due Date | Created | Related | Related Type | Score | Details
+     * Returns array of activity objects compatible with selectGsResult().
+     */
+    function parseMarkdownActivities(outputStr) {
+        if (!outputStr || typeof outputStr !== 'string') return [];
+        const results = [];
+        const lines = outputStr.split('\n');
+        let inTable = false;
+        let headers = [];
+
+        for (const raw of lines) {
+            const line = raw.trim();
+            // Detect header row
+            if (!inTable && line.startsWith('|') && line.includes('Subject') && line.includes('Type')) {
+                headers = line.split('|').map(h => h.trim().toLowerCase()).filter(Boolean);
+                inTable = true;
+                continue;
+            }
+            // Skip separator row
+            if (inTable && line.match(/^\|[\s\-:|]+\|$/)) continue;
+            // Parse data rows
+            if (inTable && line.startsWith('|') && line.endsWith('|')) {
+                const cells = line.split('|').map(c => c.trim()).filter((c, i, a) => i > 0 && i < a.length - 1);
+                if (cells.length < 4) continue;
+
+                const get = (key) => {
+                    const idx = headers.indexOf(key);
+                    return idx >= 0 && idx < cells.length ? cells[idx] : '';
+                };
+
+                // Strip emoji + bold markdown from type and subject
+                const rawType    = get('type').replace(/\*\*/g, '').replace(/✅|📞|📧|🤝|📝/g, '').trim().toLowerCase();
+                const rawSubject = get('subject').replace(/\*\*/g, '').trim();
+
+                // Extract activity_id from [DETAILS:uuid]
+                const detailsCell = get('details');
+                const uuidMatch   = detailsCell.match(/\[DETAILS:([0-9a-f\-]{36})\]/i);
+                const activityId  = uuidMatch ? uuidMatch[1] : '';
+
+                if (!activityId) continue; // skip rows without valid UUID
+
+                results.push({
+                    activity_id:  activityId,
+                    type:         rawType,
+                    subject:      rawSubject,
+                    owner:        get('owner'),
+                    due_date:     get('due date'),
+                    related_name: get('related'),
+                    related_type: get('related type'),
+                    score:        get('score')
+                });
+            } else if (inTable && !line.startsWith('|')) {
+                inTable = false; // table ended
+            }
+        }
+        return results;
+    }
+
+    async function runGsSearch() {
+        const keyword = (document.getElementById('gs-keyword')?.value || '').trim();
+        const type    = document.getElementById('gs-type')?.value    || '';
+        const start   = document.getElementById('gs-start')?.value   || '';
+        const end     = document.getElementById('gs-end')?.value     || '';
+
+        buildGsFilterSummary();
+
+        const panel = document.getElementById('gs-results-panel');
+        if (!panel) return;
+        panel.innerHTML = `<div class="gs-searching"><span class="gs-spinner"></span> Searching…</div>`;
+
+        // Build params — AND logic: all filters applied together
+        const params = { message: 'list activities:', pageSize: 20, includeCompleted: true };
+        if (keyword) params.search   = keyword;
+        if (type)    params.type     = type;     // pre-router passes to SP p_type filter
+        if (start)   params.dateFrom = start;
+        if (end)     params.dateTo   = end;
+
+        try {
+            const response = await fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chatInput: params, sessionId })
+            });
+            const data = await response.json();
+
+            // ── Resolve activities from all possible response shapes ──────────
+            // Shape 1: direct JSON  → data.activities[]
+            // Shape 2: format-resp  → data.output (markdown table string)
+            let activities = [];
+            if (Array.isArray(data.activities) && data.activities.length > 0) {
+                activities = data.activities;
+            } else if (data.output && typeof data.output === 'string') {
+                activities = parseMarkdownActivities(data.output);
+            }
+
+            _gsResults = activities;
+            renderGsResults(activities, keyword, type, start, end);
+
+        } catch (e) {
+            panel.innerHTML = `<div class="gs-no-results">⚠️ Could not reach the API. Please ensure n8n is running.</div>`;
+        }
+    }
+
+    function renderGsResults(activities, keyword, type, start, end) {
+        const panel = document.getElementById('gs-results-panel');
+        if (!panel) return;
+
+        if (activities.length === 0) {
+            panel.innerHTML = `<div class="gs-results"><div class="gs-no-results">No activities found for the current filters.</div></div>`;
+            return;
+        }
+
+        const countLabel = `${activities.length} result${activities.length !== 1 ? 's' : ''}`;
+        const rows = activities.map((a, i) => `
+            <div class="gs-result-item" onclick="selectGsResult(${i})">
+                <span class="gs-result-icon">${getTypeIcon(a.type)}</span>
+                <div class="gs-result-body">
+                    <div class="gs-result-subject">${escapeHTML(a.subject || '(no subject)')}</div>
+                    <div class="gs-result-meta">
+                        <span>${escapeHTML(a.type || '')}</span>
+                        ${a.related_name ? `<span>· ${escapeHTML(a.related_name)}</span>` : ''}
+                        ${a.related_type ? `<span>(${escapeHTML(a.related_type)})</span>` : ''}
+                        ${a.due_date     ? `<span>· Due ${escapeHTML(a.due_date)}</span>` : ''}
+                        ${a.owner        ? `<span>· ${escapeHTML(a.owner)}</span>` : ''}
+                    </div>
+                </div>
+            </div>`).join('');
+
+        panel.innerHTML = `
+            <div class="gs-results">
+                <div class="gs-results-header">
+                    <span>${countLabel}</span>
+                    <span style="color:#9aa0a6;font-size:0.72rem;">Click a result to load it into the form below</span>
+                </div>
+                ${rows}
+            </div>`;
+    }
+
+    function selectGsResult(index) {
+        const activity = _gsResults[index];
+        if (!activity) return;
+
+        currentEditingActivity = activity;
+
+        // Unlock form
+        const fields = document.getElementById('update-form-fields');
+        if (fields) { fields.style.opacity = '1'; fields.style.pointerEvents = 'auto'; }
+
+        // Populate scalar fields
+        const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+        set('update-id',          activity.activity_id || '');
+        set('update-type',        activity.type        || '');
+        set('update-subject',     activity.subject     || '');
+        set('update-description', activity.description || '');
+
+        // due_date: may come as "Feb 25, 2026" (formatted) or ISO — normalize to YYYY-MM-DD
+        let dueDateVal = '';
+        if (activity.due_date) {
+            const parsed = new Date(activity.due_date);
+            if (!isNaN(parsed.getTime())) dueDateVal = parsed.toISOString().split('T')[0];
+            else dueDateVal = activity.due_date;
+        }
+        set('update-dueDate', dueDateVal);
+
+        const dirEl  = document.getElementById('update-direction');
+        if (dirEl)  dirEl.value = activity.direction || '';
+        const chanEl = document.getElementById('update-channel');
+        if (chanEl) chanEl.value = activity.channel || '';
+        const compEl = document.getElementById('update-completed');
+        if (compEl) compEl.checked = !!activity.completed_at;
+
+        // Re-mount owner widget — pre-select by owner_id from the selected activity.
+        // The activity.owner from the search result is a display name (e.g. "Steven Brahms")
+        // but activity.owner_id may be absent in list rows. Try to resolve UUID from display name
+        // via _owners fallback if needed.
+        let resolvedOwnerId = activity.owner_id || '';
+        if (!resolvedOwnerId && activity.owner && _owners.length > 0) {
+            const match = _owners.find(o =>
+                (o.first_name + ' ' + o.last_name).toLowerCase() === activity.owner.toLowerCase()
+            );
+            if (match) resolvedOwnerId = match.owner_id;
+        }
+        buildOwnerWidget('update-owner-widget', 'update-owner-name', 'update-owner-uuid', resolvedOwnerId);
+
+        // Enable Save
+        const saveBtn = document.getElementById('update-save-btn');
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.style.opacity = '1'; saveBtn.style.cursor = 'pointer'; }
+
+        // Scroll to the form
+        if (fields) fields.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        // Highlight selected row
+        document.querySelectorAll('.gs-result-item').forEach((el, i) => {
+            el.style.background  = i === index ? '#f0fff4' : '';
+            el.style.borderLeft  = i === index ? '3px solid #28a745' : '';
+            el.style.paddingLeft = i === index ? 'calc(0.9rem - 3px)' : '';
+        });
+    }
+
+    function showUpdateActivityFormExample() {
+        showUpdateActivityForm({
+            activity_id: SAMPLE_DATA.activity.id,
+            type: 'call',
+            subject: 'Follow-up Call with Client',
+            description: 'Discussed Q1 targets and next steps.',
+            direction: 'outbound',
+            channel: 'phone',
+            due_date: new Date().toISOString().split('T')[0]
+        });
+    }
+
+    // ========================================================================
+    // SUBMIT FUNCTIONS
+    // ========================================================================
+    
+    function submitCreateActivity() {
+        const relatedType = document.getElementById('create-relatedType').value;
+        const relatedId   = document.getElementById('create-relatedId').value.trim();
+        const type        = document.getElementById('create-type').value;
+        const subject     = document.getElementById('create-subject').value.trim();
+        const description = document.getElementById('create-description').value.trim();
+        const dueDate     = document.getElementById('create-dueDate').value;
+        const direction   = document.getElementById('create-direction').value;
+        const channel     = document.getElementById('create-channel').value;
+        // Owner: read from hidden UUID field populated by owner typeahead widget
+        const ownerId     = (document.getElementById('create-owner-uuid')?.value || '').trim();
+
+        // Validation
+        if (!relatedType) { alert('Related Type is required!'); return; }
+        if (!relatedId)   { alert('Related ID is required!'); return; }
+        if (!type)        { alert('Activity Type is required!'); return; }
+        if (type !== 'note' && !subject)  { alert('Subject is required for this activity type!'); return; }
+        if (type === 'note' && !description) { alert('Description is required for notes!'); return; }
+        if (!validateOwner('create-owner-name', 'create-owner-uuid')) {
+            alert('Owner is required. Please select an owner from the dropdown.');
+            return;
+        }
+
+        // ── DIRECT SP PATH — no AI Agent involved ──────────────────
+        const chatInputObj = { message: 'create activity:' };
+        chatInputObj.relatedType = relatedType;
+        chatInputObj.relatedId   = relatedId;
+        chatInputObj.type        = type;
+        if (subject)     chatInputObj.subject     = subject;
+        if (description) chatInputObj.description = description;
+        if (dueDate)     chatInputObj.dueDate      = dueDate;
+        if (direction)   chatInputObj.direction    = direction;
+        if (channel)     chatInputObj.channel      = channel;
+        chatInputObj.ownerId = ownerId; // always include (required)
+
+        sendStructured(chatInputObj);
+    }
+
+    function submitUpdateActivity() {
+        const activityId  = document.getElementById('update-id').value.trim();
+        const subject     = document.getElementById('update-subject').value.trim();
+        const description = document.getElementById('update-description').value.trim();
+        const dueDate     = document.getElementById('update-dueDate').value;
+        const direction   = document.getElementById('update-direction').value;
+        const channel     = document.getElementById('update-channel').value;
+        // Owner: read from hidden UUID field populated by owner typeahead widget
+        const ownerId     = (document.getElementById('update-owner-uuid')?.value || '').trim();
+        const completed   = document.getElementById('update-completed').checked;
+
+        if (!activityId) { alert('Please select an activity to update using the search above.'); return; }
+        if (!validateOwner('update-owner-name', 'update-owner-uuid')) {
+            alert('Owner is required. Please select an owner from the dropdown.');
+            return;
+        }
+
+        // ── DIRECT SP PATH — no AI Agent involved ──────────────────
+        const chatInputObj = { message: 'update activity:', activityId };
+        if (subject)     chatInputObj.subject     = subject;
+        if (description) chatInputObj.description = description;
+        if (dueDate)     chatInputObj.dueDate      = dueDate;
+        if (direction)   chatInputObj.direction    = direction;
+        if (channel)     chatInputObj.channel      = channel;
+        chatInputObj.ownerId     = ownerId; // always include (required)
+        chatInputObj.completedAt = completed ? new Date().toISOString() : null;
+
+        sendStructured(chatInputObj);
+    }
+
+    // ========================================================================
+    // ACTION FUNCTIONS
+    // ========================================================================
+    
+    function viewActivityDetail(activityId) {
+        sendStructured({ message: 'get activity:', activityId });
+    }
+
+    // ========================================================================
+    // FOOTER ACTION HANDLERS (v3.0)
+    // ========================================================================
+    
+    function handleFooterAction(actionText) {
+        const messageInput = document.getElementById('message');
+        if (messageInput) messageInput.value = actionText;
+        sendRequest(actionText);
+    }
+    
+    function handleLogCallOrEmail() {
+        showCreateActivityForm({ type: 'call', direction: 'outbound', channel: 'phone' });
+    }
+
+    function completeActivity(activityId) {
+        if (confirm('Mark this activity as complete?')) {
+            sendStructured({ message: 'complete activity:', activityId });
+        }
+    }
+
+    function reopenActivity(activityId) {
+        if (confirm('Reopen this activity?')) {
+            sendStructured({ message: 'reopen activity:', activityId });
+        }
+    }
+
+    function deleteActivity(activityId) {
+        if (confirm('Are you sure you want to delete this activity? This cannot be undone.')) {
+            sendStructured({ message: 'delete activity:', activityId });
+        }
+    }
+
+    function loadPage(page) {
+        sendStructured({ message: 'list activities:', pageNumber: page, pageSize: currentPagination.pageSize });
+    }
+
+    function goBackToActivityList() {
+        if (lastListHTML) {
+            document.getElementById('responseArea').innerHTML = lastListHTML;
+            cameFromList = false;
+        } else {
+            sendStructured({ message: 'list activities:' });
+        }
+    }
+
+    // ========================================================================
+    // ACTIONS NAMESPACE
+    // ========================================================================
+    
+    const actions = {
+        listActivities()    { sendStructured({ message: 'list activities:' }); },
+        showOverdue()       { sendStructured({ message: 'overdue activities:' }); },
+        showUpcoming()      { sendStructured({ message: 'upcoming activities:' }); },
+        showSummary()       { sendStructured({ message: 'activity summary:' }); },
+        showUpdateForm()    { showUpdateActivityForm({}); },
+        showTimeline()      {
+            sendStructured({
+                message: 'activity timeline:',
+                relatedType: 'account',
+                relatedId: SAMPLE_DATA.account.id
+            });
+        },
+        createActivity()    { showCreateActivityForm(); },
+        logCall()           { showCreateActivityForm({ type: 'call',    direction: 'outbound', channel: 'phone'  }); },
+        logEmail()          { showCreateActivityForm({ type: 'email',   direction: 'outbound', channel: 'email'  }); },
+        scheduleMeeting()   { showCreateActivityForm({ type: 'meeting', dueDate: new Date().toISOString().split('T')[0] }); },
+        createTask()        { showCreateActivityForm({ type: 'task',    dueDate: new Date().toISOString().split('T')[0] }); },
+        addNote()           { showCreateActivityForm({ type: 'note' }); }
+    };
+
+    function toggleDevMode() {
+        const devSection = document.getElementById('devSection');
+        if (devSection) devSection.classList.toggle('visible');
+    }
+
+    // Single delegated listener — survives any innerHTML replacement, never needs re-attaching
+    function attachQuickActionHandlers() { /* no-op: delegation is set up once at init below */ }
+
+    document.addEventListener('click', function(e) {
+        const btn = e.target.closest('[data-action]');
+        if (!btn) return;
+        const fnName = btn.dataset.action;
+        if (fnName && actions[fnName]) {
+            hideQuickUI();
+            actions[fnName]();
+        }
+    });
+
+    // ========================================================================
+    // KEYBOARD SHORTCUTS
+    // ========================================================================
+    
+    function handleKeyDown(event) {
+        // Enter to submit (without Shift)
+        if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            document.getElementById('chatForm').dispatchEvent(new Event('submit'));
+        }
+    }
+
+    document.addEventListener('keydown', function(event) {
+        // Ctrl+L: List activities
+        if (event.ctrlKey && event.key === 'l') {
+            event.preventDefault();
+            actions.listActivities();
+        }
+        // Ctrl+O: Overdue
+        if (event.ctrlKey && event.key === 'o') {
+            event.preventDefault();
+            actions.showOverdue();
+        }
+        // Ctrl+U: Upcoming
+        if (event.ctrlKey && event.key === 'u') {
+            event.preventDefault();
+            actions.showUpcoming();
+        }
+        // Ctrl+S: Summary (only when not in input)
+        if (event.ctrlKey && event.key === 's' && document.activeElement.id !== 'message') {
+            event.preventDefault();
+            actions.showSummary();
+        }
+    });
+
+    // ========================================================================
+    // VOICE INPUT
+    // ========================================================================
+    
+    let recognition = null;
+    let isListening = false;
+    let voiceInputBaseline = '';
+    let voiceFinalTranscript = '';
+    
+    function toggleVoiceInput() {
+        if (isListening) {
+            stopVoiceInput();
+        } else {
+            startVoiceInput();
+        }
+    }
+    
+    function startVoiceInput() {
+        if (!recognition) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            
+            if (!SpeechRecognition) {
+                alert('Speech recognition is not supported in your browser. Please use Chrome, Edge, or Safari.');
+                return;
+            }
+            
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'en-US';
+            
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                let newFinalTranscript = '';
+                
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        newFinalTranscript += transcript + ' ';
+                    } else {
+                        interimTranscript += transcript;
+                    }
+                }
+                
+                if (newFinalTranscript) {
+                    voiceFinalTranscript += newFinalTranscript;
+                }
+                
+                const input = document.getElementById('message');
+                input.value = voiceInputBaseline + voiceFinalTranscript + interimTranscript;
+            };
+            
+            recognition.onerror = (event) => {
+                console.error('Speech recognition error:', event.error);
+                if (event.error === 'not-allowed' || event.error === 'permission-denied') {
+                    alert('Microphone permission denied. Please allow microphone access.');
+                }
+                stopVoiceInput();
+            };
+            
+            recognition.onend = () => {
+                if (isListening) {
+                    try {
+                        recognition.start();
+                    } catch (e) {
+                        stopVoiceInput();
+                    }
+                }
+            };
+        }
+        
+        const input = document.getElementById('message');
+        voiceInputBaseline = input.value;
+        voiceFinalTranscript = '';
+        
+        try {
+            recognition.start();
+            isListening = true;
+            
+            document.getElementById('voiceBtn').classList.add('listening');
+            document.getElementById('voiceStatus').classList.add('active');
+            
+            const handleStop = () => { if (isListening) stopVoiceInput(); };
+            input.addEventListener('click', handleStop, { once: true });
+            input.addEventListener('input', handleStop, { once: true });
+            input.addEventListener('keydown', handleStop, { once: true });
+            
+        } catch (error) {
+            console.error('Error starting voice input:', error);
+        }
+    }
+    
+    function stopVoiceInput() {
+        if (recognition) {
+            try { recognition.stop(); } catch (e) {}
+        }
+        
+        isListening = false;
+        document.getElementById('voiceBtn').classList.remove('listening');
+        document.getElementById('voiceStatus').classList.remove('active');
+        voiceInputBaseline = '';
+        voiceFinalTranscript = '';
+    }
+
+    // ========================================================================
+    // INITIALIZATION
+    // ========================================================================
+    
+    document.addEventListener('DOMContentLoaded', function() {
+        // Snapshot the home screen HTML so Back Home can restore it at any time
+        homeHTML = document.getElementById('responseArea').innerHTML;
+        // Zone 1: silently fetch summary to populate live stat cards
+        fetchStatsSilent();
+    });
+
+</script>
+
+</body>
+</html>

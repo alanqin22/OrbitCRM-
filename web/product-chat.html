@@ -1,0 +1,4450 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>Product Management - Direct SP Routing v16</title>
+    <!-- 
+      PRODUCT MANAGEMENT SYSTEM v16
+
+      NEW IN v16 — Maximum Direct SP Routing (bypasses AI Agent for all
+      deterministic operations):
+      - _directQuery(context, params, label): unified async helper that posts
+        product_direct_operation with any extended context, rendering the
+        result via buildProductResponseHTML(). Used by every quick-action
+        button that previously called fillAndSend() with natural language.
+      - _showBulkStockDialog(): inline prompt-driven dialog for the Bulk
+        Update button — collects adjustment amount + optional category number
+        before routing directly to mode:bulk_adjust_stock.
+      - _showPriceHistoryDialog(): prompt for product number before routing
+        directly to mode:price_history.
+      - showProductDetailFromList(): now calls _directQuery with context
+        get_product_details instead of fillAndSend() → AI Agent.
+      - Product-list search bar: wired to _homeSearchDirect() (same direct
+        path as the home-page bar) instead of fillAndSend() natural language.
+      - AI Agent invoked ONLY for: free-form typed/voice queries entered in
+        the bottom textarea, and delete-product (no SP delete mode).
+
+      NEW IN v15b — Home page transition + Header visibility rules:
+      - Extracted home panel to getHomeHTML() — single source of truth for
+        goBackHome(), resetSession(), and initial page load.
+      - Form submit handler: hideHeader() called immediately on any submit,
+        so buttons + header vanish the instant the AI Agent is triggered.
+      - createNewProductForm(): hideHeader() + responseBox.innerHTML='' called
+        before rendering the form — home buttons never co-exist with the form.
+      - resetSession(): now restores showHeader() + full home panel (was only
+        showing a plain success message with no buttons).
+      - State logic: Home = header + buttons visible │
+                     AI Agent / form = header hidden, buttons gone │
+                     Back Home = header + buttons restored.
+
+      NEW IN v11.0:
+      - 🚀 DIRECT FORM SUBMIT: Add/Update now POSTs structured JSON payload directly
+        to the pre-router as 'product_direct_operation' — bypasses AI Agent entirely.
+        Mirrors order_v5 batch pattern (order_direct_operation / context flag).
+      - 🚀 _pfDirectOperation(): unified async handler for create & update form submits.
+        Shows inline loading overlay, posts productData JSON, renders confirmation.
+      - 🚀 saveNewProductFromForm(): collects form → productData{context:'create_product'}
+      - 🚀 updateProductFromForm(): collects form → productData{context:'update_product', product_id}
+      - Pre-router v1.0 (product_pre_router_v1.js) routes by context field — no AI Agent.
+      - Stored procedure sp_products handles create & update modes with JSONB response.
+
+      FROM v10.2:
+      - 🔧 FIX: Product Name now correctly extracted and displayed after add/update operations
+      - 🔧 FIX: Description label properly aligned with Status label
+      - 🔧 FIX: Enhanced parsing to handle [MODE:add/update] confirmation formats
+      
+      FROM v10.1:
+      - 🔧 FIX: Quick action buttons now auto-trigger AI Agent immediately
+      - 🔧 FIX: Full UUIDs displayed everywhere (never truncated)
+      - 🔧 FIX: Explicit field labels (Product ID:, Category ID:, etc.)
+      - 🔧 FIX: Color separation between field titles and values
+      - 🔧 FIX: Status field placed next to Description (not right corner)
+      - 🔧 FIX: Description textbox 50% longer in edit modes
+      - 🔧 FIX: Created/Updated timestamps display correctly
+      
+      FROM v10.0:
+      - 5-line product layout with Product#, Category#, Category ID
+      - Linked category dropdowns
+      - Price Matrix, Low Stock, Bulk Stock parsers updated
+      
+      SUPPORTED MODES (9):
+      - list, get_details, add, update, bulk_adjust_stock
+      - inventory_summary, low_stock, price_history, price_matrix
+      
+      BACKEND: n8n Workflow + PostgreSQL 17
+      const WEBHOOK_URL = 'http://localhost:8000/prod-chat';
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        /* ============================================================
+           DESIGN SYSTEM — COSMIC DARK THEME
+           ============================================================ */
+        :root {
+            --bg-void:       #060612;
+            --bg-surface:    rgba(16, 16, 42, 0.96);
+            --bg-elevated:   rgba(24, 24, 58, 0.95);
+            --bg-input:      rgba(255, 255, 255, 0.05);
+            --bg-input-hover: rgba(255, 255, 255, 0.08);
+            --bg-input-focus: rgba(129, 140, 248, 0.08);
+
+            --border-subtle:  rgba(255, 255, 255, 0.07);
+            --border-default: rgba(255, 255, 255, 0.12);
+            --border-focus:   rgba(129, 140, 248, 0.6);
+            --border-accent:  rgba(248, 113, 113, 0.5);
+
+            --text-primary:   #F1F5F9;
+            --text-secondary: #94A3B8;
+            --text-muted:     #475569;
+            --text-accent:    #818CF8;
+
+            --accent-indigo:  #818CF8;
+            --accent-pink:    #F472B6;
+            --accent-cyan:    #22D3EE;
+            --accent-emerald: #34D399;
+            --accent-amber:   #FBBF24;
+            --accent-rose:    #FB7185;
+
+            --gradient-cta: linear-gradient(135deg, #4F46E5 0%, #7C3AED 50%, #A855F7 100%);
+            --gradient-danger: linear-gradient(135deg, #DC2626 0%, #F97316 100%);
+            --gradient-success: linear-gradient(135deg, #059669 0%, #10B981 100%);
+            --gradient-secondary: linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.04) 100%);
+
+            --shadow-card:  0 8px 40px rgba(0,0,0,0.5), 0 2px 12px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.06);
+            --shadow-input: 0 0 0 0px var(--border-focus);
+            --shadow-input-focus: 0 0 0 3px rgba(129,140,248,0.25), 0 1px 4px rgba(0,0,0,0.3);
+            --shadow-btn:   0 4px 24px rgba(79,70,229,0.4), 0 2px 8px rgba(0,0,0,0.3);
+            --shadow-glow:  0 0 30px rgba(129,140,248,0.15);
+
+            --radius-sm:  6px;
+            --radius-md:  10px;
+            --radius-lg:  16px;
+            --radius-xl:  20px;
+            --radius-pill: 999px;
+
+            --font-ui:   'Outfit', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+
+            --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+            --transition-base: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            --transition-slow: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* === Galaxy Background === */
+        .galaxy-background {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            overflow: hidden;
+            background: radial-gradient(ellipse at center, #1a0933 0%, #0a0118 100%);
+        }
+        
+        .galaxy-background::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: 
+                radial-gradient(ellipse at 30% 40%, rgba(255, 20, 147, 0.4) 0%, transparent 40%),
+                radial-gradient(ellipse at 70% 60%, rgba(0, 191, 255, 0.4) 0%, transparent 40%),
+                radial-gradient(ellipse at 50% 50%, rgba(138, 43, 226, 0.3) 0%, transparent 50%);
+            animation: galaxy-rotate 120s linear infinite;
+        }
+        
+        .galaxy-background::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                radial-gradient(2px 2px at 20% 30%, white, transparent),
+                radial-gradient(2px 2px at 60% 70%, white, transparent),
+                radial-gradient(1px 1px at 50% 50%, white, transparent),
+                radial-gradient(1px 1px at 80% 10%, white, transparent),
+                radial-gradient(2px 2px at 90% 60%, white, transparent),
+                radial-gradient(1px 1px at 33% 50%, white, transparent),
+                radial-gradient(1px 1px at 66% 33%, white, transparent);
+            background-size: 200% 200%, 200% 200%, 300% 300%, 250% 250%, 200% 200%, 280% 280%, 220% 220%;
+            background-position: 0% 0%, 100% 100%, 50% 50%, 80% 20%, 10% 90%, 40% 60%, 70% 30%;
+            animation: stars-twinkle 8s ease-in-out infinite;
+        }
+        
+        .nebula-cloud {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(60px);
+            opacity: 0.6;
+            animation: nebula-float 20s ease-in-out infinite;
+        }
+        
+        .nebula-cloud:nth-child(1) {
+            top: 10%;
+            left: 20%;
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(255, 20, 147, 0.6) 0%, transparent 70%);
+            animation-delay: 0s;
+        }
+        
+        .nebula-cloud:nth-child(2) {
+            top: 50%;
+            right: 15%;
+            width: 500px;
+            height: 500px;
+            background: radial-gradient(circle, rgba(0, 191, 255, 0.5) 0%, transparent 70%);
+            animation-delay: -7s;
+        }
+        
+        .nebula-cloud:nth-child(3) {
+            bottom: 15%;
+            left: 35%;
+            width: 450px;
+            height: 450px;
+            background: radial-gradient(circle, rgba(138, 43, 226, 0.5) 0%, transparent 70%);
+            animation-delay: -14s;
+        }
+        
+        @keyframes galaxy-rotate {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        @keyframes stars-twinkle {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        @keyframes nebula-float {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            33% { transform: translate(30px, -30px) scale(1.1); }
+            66% { transform: translate(-20px, 20px) scale(0.9); }
+        }
+        
+        /* ============================================================
+           BASE LAYOUT
+           ============================================================ */
+        *, *::before, *::after { box-sizing: border-box; }
+
+        body {
+            font-family: var(--font-ui);
+            background: transparent;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            position: relative;
+            color: var(--text-primary);
+        }
+
+        /* ---- Header ---- */
+        header {
+            background: linear-gradient(135deg, rgba(0, 120, 215, 0.95) 0%, rgba(88, 86, 214, 0.95) 100%);
+            color: white;
+            padding: 0.5rem 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 20px rgba(138, 43, 226, 0.5);
+            backdrop-filter: blur(10px);
+            position: relative;
+            z-index: 10;
+        }
+
+        header h1 {
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin: 0;
+            color: white;
+            text-shadow: 0 0 20px rgba(255, 255, 255, 0.5), 0 0 40px rgba(138, 43, 226, 0.5);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+
+        .session-info {
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: white;
+        }
+
+        #sessionDisplay {
+            font-family: var(--font-ui);
+            font-size: 0.8rem;
+            color: white;
+        }
+
+        .session-info button {
+            background: #fff;
+            color: #0078d7;
+            border: none;
+            border-radius: 4px;
+            padding: 0.25rem 0.5rem;
+            cursor: pointer;
+            font-size: 0.7rem;
+            font-weight: bold;
+            font-family: var(--font-ui);
+            transition: all var(--transition-fast);
+        }
+
+        .session-info button:hover {
+            background: #cce0ff;
+        }
+
+        /* ---- Response Panel ---- */
+        .response {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1.5rem;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-top: 1px solid rgba(138, 43, 226, 0.3);
+            position: relative;
+            z-index: 5;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(138, 43, 226, 0.3) transparent;
+        }
+
+        .response::-webkit-scrollbar { width: 6px; }
+        .response::-webkit-scrollbar-track { background: transparent; }
+        .response::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+
+        .response .footer {
+            color: var(--accent-indigo);
+            font-weight: 600;
+            margin-top: 1rem;
+            display: block;
+        }
+
+        /* ---- Record Cards (list items) ---- */
+        .response .record {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 0.9rem 1rem;
+            margin: 0.6rem 0;
+            transition: all var(--transition-base);
+            font-family: var(--font-ui);
+            cursor: pointer;
+        }
+
+        .response .record:hover {
+            background: rgba(30, 30, 68, 0.98);
+            border-color: rgba(129,140,248,0.3);
+            box-shadow: 0 4px 24px rgba(0,0,0,0.35), 0 0 20px rgba(129,140,248,0.08);
+            transform: translateY(-1px);
+        }
+
+        /* ============================================================
+           FIELD LABELS & VALUES
+           ============================================================ */
+        .field-title {
+            color: var(--text-muted);
+            font-weight: 500;
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+        }
+
+        .field-value { font-weight: 500; color: var(--text-secondary); }
+        .field-value.product-id   { color: #FCD34D; font-family: var(--font-mono); font-size: 0.75rem; word-break: break-all; }
+        .field-value.product-num  { color: var(--accent-amber); font-weight: 600; }
+        .field-value.product-name { color: var(--text-primary); font-weight: 600; font-size: 1rem; }
+        .field-value.sku          { color: var(--accent-indigo); font-weight: 600; font-family: var(--font-mono); }
+        .field-value.category-id  { color: var(--accent-cyan); font-family: var(--font-mono); font-size: 0.75rem; word-break: break-all; }
+        .field-value.category-num { color: var(--accent-cyan); font-weight: 600; }
+        .field-value.category-name{ color: var(--accent-emerald); font-weight: 600; }
+        .field-value.price        { color: var(--accent-rose); font-weight: 700; }
+        .field-value.price.promo  { color: var(--accent-pink); }
+        .field-value.price.wholesale{ color: var(--accent-amber); }
+        .field-value.stock        { color: var(--accent-cyan); font-weight: 700; }
+        .field-value.description  { color: var(--text-secondary); }
+        .field-value.status       { font-weight: 600; }
+        .field-value.timestamp    { color: var(--text-muted); font-size: 0.8rem; font-family: var(--font-mono); }
+
+        /* ---- Badges ---- */
+        .stock-ok  { color: var(--accent-emerald); background: rgba(52,211,153,0.12); padding: 2px 8px; border-radius: var(--radius-pill); border: 1px solid rgba(52,211,153,0.25); font-size: 0.78rem; font-weight: 600; }
+        .stock-low { color: var(--accent-amber);   background: rgba(251,191,36,0.12);  padding: 2px 8px; border-radius: var(--radius-pill); border: 1px solid rgba(251,191,36,0.25);  font-size: 0.78rem; font-weight: 600; }
+        .stock-out { color: var(--accent-rose);    background: rgba(251,113,133,0.12); padding: 2px 8px; border-radius: var(--radius-pill); border: 1px solid rgba(251,113,133,0.25); font-size: 0.78rem; font-weight: 600; }
+
+        .status-active   { color: var(--accent-emerald); background: rgba(52,211,153,0.12); padding: 3px 10px; border-radius: var(--radius-pill); border: 1px solid rgba(52,211,153,0.25); font-size: 0.78rem; font-weight: 600; }
+        .status-inactive { color: var(--text-muted);     background: rgba(71,85,105,0.3);    padding: 3px 10px; border-radius: var(--radius-pill); border: 1px solid var(--border-subtle);  font-size: 0.78rem; font-weight: 600; }
+
+        /* ============================================================
+           PREMIUM FORM INPUTS
+           ============================================================ */
+        .pf-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .pf-label {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .pf-label .req {
+            color: var(--accent-rose);
+            font-size: 0.65rem;
+        }
+
+        input[type="text"].pf-input,
+        input[type="number"].pf-input,
+        select.pf-select,
+        textarea.pf-textarea {
+            background: var(--bg-input);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-md);
+            padding: 10px 14px;
+            font-family: var(--font-ui);
+            font-size: 0.875rem;
+            color: var(--text-primary);
+            width: 100%;
+            transition: all var(--transition-base);
+            outline: none;
+            appearance: none;
+            -webkit-appearance: none;
+        }
+
+        input[type="text"].pf-input::placeholder,
+        input[type="number"].pf-input::placeholder,
+        textarea.pf-textarea::placeholder {
+            color: var(--text-muted);
+        }
+
+        input[type="text"].pf-input:hover,
+        input[type="number"].pf-input:hover,
+        select.pf-select:hover,
+        textarea.pf-textarea:hover {
+            border-color: rgba(255,255,255,0.18);
+            background: var(--bg-input-hover);
+        }
+
+        input[type="text"].pf-input:focus,
+        input[type="number"].pf-input:focus,
+        select.pf-select:focus,
+        textarea.pf-textarea:focus {
+            border-color: var(--border-focus);
+            background: var(--bg-input-focus);
+            box-shadow: var(--shadow-input-focus);
+        }
+
+        select.pf-select {
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2394A3B8' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            background-size: 14px 14px;
+            padding-right: 36px;
+            cursor: pointer;
+        }
+
+        select.pf-select option {
+            background: #1a1a3e;
+            color: var(--text-primary);
+        }
+
+        textarea.pf-textarea {
+            resize: vertical;
+            min-height: 80px;
+            line-height: 1.6;
+        }
+
+        /* Monospace variant for UUIDs */
+        .pf-mono {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            letter-spacing: 0.02em;
+        }
+
+        /* When pf-mono is applied to a select, preserve the 42px height */
+        select.pf-select.pf-mono {
+            font-size: 0.72rem !important;
+            height: 42px !important;
+            line-height: 42px !important;
+        }
+
+        /* Legacy inputs (non-form areas, tables etc) */
+        /* .pf-typeahead-input wins via !important on structural props — see its own ruleset */
+        input[type="text"]:not(.pf-input),
+        input[type="number"]:not(.pf-input),
+        select:not(.pf-select),
+        textarea:not(.pf-textarea):not(#message) {
+            background: var(--bg-input);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-sm);
+            padding: 5px 9px;
+            font-family: var(--font-ui);
+            font-size: 0.875rem;
+            color: var(--text-primary);
+            transition: all var(--transition-base);
+            outline: none;
+        }
+
+        input[type="text"]:not(.pf-input):focus,
+        input[type="number"]:not(.pf-input):focus,
+        select:not(.pf-select):focus,
+        textarea:not(.pf-textarea):not(#message):focus {
+            border-color: var(--border-focus);
+            box-shadow: 0 0 0 3px rgba(129,140,248,0.2);
+        }
+
+        .input-extra-wide { width: 100%; }
+        .input-wide       { width: 100%; }
+        .input-medium     { width: 160px; }
+        .input-narrow     { width: 90px; }
+        .input-dropdown   { width: 180px; }
+        .input-uuid       { width: 100%; font-family: var(--font-mono); font-size: 0.75rem; }
+        .input-description { width: 100%; min-height: 80px; resize: vertical; }
+
+        /* ============================================================
+           INPUT BAR (Bottom chat area)
+           ============================================================ */
+        .input-bar {
+            display: flex;
+            flex-direction: column;
+            padding: 0.2rem 1rem;
+            background: linear-gradient(180deg, rgba(200, 150, 255, 0.25) 0%, rgba(150, 220, 255, 0.25) 100%);
+            backdrop-filter: blur(10px);
+            border-top: 1px solid rgba(200, 150, 255, 0.4);
+            position: relative;
+            z-index: 10;
+        }
+
+        .input-bar form {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            position: relative;
+            width: 100%;
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 1rem;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 1.5rem;
+            height: 1.5rem;
+            color: #666;
+            pointer-events: none;
+            z-index: 2;
+            transition: color 0.3s ease;
+        }
+
+        .search-icon svg { width: 100%; height: 100%; display: block; }
+
+        .input-bar form:hover .search-icon,
+        .input-bar form:focus-within .search-icon { color: #000; }
+
+        textarea#message {
+            flex: 1;
+            width: 100%;
+            padding: 0.5rem 0.5rem 0.5rem 3.5rem;
+            border: 1px solid rgba(200, 150, 255, 0.4);
+            border-radius: 24px;
+            font-family: var(--font-ui);
+            font-size: 0.875rem;
+            resize: none;
+            background: rgba(255, 255, 255, 0.98);
+            color: #333;
+            backdrop-filter: blur(5px);
+            box-shadow: 0 1px 6px rgba(138, 43, 226, 0.2);
+            transition: height 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+            height: 2.5rem;      /* default = old focused height so it's always usable */
+            line-height: 1.5;
+            outline: none;
+        }
+
+        textarea#message::placeholder { color: #999; }
+
+        textarea#message:hover {
+            /* height stays at default — border/shadow only */
+            box-shadow: 0 2px 8px rgba(138, 43, 226, 0.3);
+            border-color: rgba(138, 43, 226, 0.45);
+        }
+
+        textarea#message:focus {
+            height: 5rem;        /* expands to a comfortable editing height on focus */
+            border-color: rgba(138, 43, 226, 0.6);
+            box-shadow: 0 2px 12px rgba(138, 43, 226, 0.5);
+        }
+
+        button.send { display: none; }
+
+        /* ============================================================
+           RESPONSE CONTAINER TYPES
+           ============================================================ */
+        .response .details-record {
+            border: 1px solid rgba(52,211,153,0.2);
+            background: var(--bg-surface);
+            border-radius: var(--radius-lg);
+            padding: 1.5rem;
+            margin: 0.5rem 0;
+            box-shadow: var(--shadow-card);
+        }
+
+        /* ============================================================
+           SUMMARY TABLES
+           ============================================================ */
+        .summary-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 0.75rem;
+            font-family: var(--font-ui);
+            font-size: 0.82rem;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+        }
+
+        .summary-table th {
+            background: rgba(79,70,229,0.3);
+            color: var(--text-secondary);
+            padding: 10px 14px;
+            text-align: left;
+            white-space: nowrap;
+            font-size: 0.72rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border-bottom: 1px solid rgba(129,140,248,0.2);
+            position: sticky;
+            top: 0;
+            z-index: 2;
+        }
+
+        .summary-table td {
+            border-bottom: 1px solid var(--border-subtle);
+            padding: 9px 14px;
+            vertical-align: top;
+            line-height: 1.5;
+            color: var(--text-secondary);
+        }
+
+        .summary-table tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+        .summary-table tr:hover td { background: rgba(129,140,248,0.07); color: var(--text-primary); }
+        .summary-table td:first-child { color: var(--accent-indigo); font-weight: 600; }
+
+        /* ============================================================
+           PREMIUM BUTTONS
+           ============================================================ */
+        .unified-action-btn {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            border: none;
+            padding: 0 1rem;
+            font-size: 0.78rem;
+            font-weight: 600;
+            font-family: var(--font-ui);
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(40, 167, 69, 0.4), 0 0 15px rgba(32, 201, 151, 0.3);
+            transition: all var(--transition-base);
+            position: relative;
+            overflow: hidden;
+            width: 168px;
+            min-width: 168px;
+            max-width: 168px;
+            height: 38px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            letter-spacing: 0.02em;
+            white-space: nowrap;
+        }
+
+        .unified-action-btn:hover {
+            background: linear-gradient(135deg, #218838 0%, #1ba67a 100%);
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.6), 0 0 25px rgba(32, 201, 151, 0.5);
+        }
+
+        .unified-action-btn:active { transform: translateY(0); }
+
+        /* Primary CTA buttons — keep green too */
+        .unified-action-btn.create,
+        .unified-action-btn.pf-btn-primary {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            border: none;
+            box-shadow: 0 2px 8px rgba(40, 167, 69, 0.4), 0 0 15px rgba(32, 201, 151, 0.3);
+        }
+
+        .unified-action-btn.create:hover,
+        .unified-action-btn.pf-btn-primary:hover {
+            background: linear-gradient(135deg, #218838 0%, #1ba67a 100%);
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.6), 0 0 25px rgba(32, 201, 151, 0.5);
+        }
+
+        /* ---- Premium Form-specific Buttons ---- */
+        .pf-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 7px;
+            padding: 0 20px;
+            height: 42px;
+            border-radius: var(--radius-md);
+            font-family: var(--font-ui);
+            font-size: 0.82rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            cursor: pointer;
+            border: none;
+            transition: all var(--transition-base);
+            position: relative;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+
+        .pf-btn-save {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            box-shadow: 0 2px 8px rgba(40, 167, 69, 0.4), 0 0 15px rgba(32, 201, 151, 0.3);
+        }
+
+        .pf-btn-save:hover {
+            background: linear-gradient(135deg, #218838 0%, #1ba67a 100%);
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.6), 0 0 25px rgba(32, 201, 151, 0.5);
+            transform: translateY(-1px);
+        }
+
+        .pf-btn-secondary {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            border: none;
+            box-shadow: 0 2px 8px rgba(40, 167, 69, 0.4), 0 0 15px rgba(32, 201, 151, 0.3);
+        }
+
+        .pf-btn-secondary:hover {
+            background: linear-gradient(135deg, #218838 0%, #1ba67a 100%);
+            color: white;
+            border: none;
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.6), 0 0 25px rgba(32, 201, 151, 0.5);
+            transform: translateY(-1px);
+        }
+
+        .pf-btn-danger {
+            background: linear-gradient(135deg, rgba(220,38,38,0.15) 0%, rgba(249,115,22,0.15) 100%);
+            color: var(--accent-rose);
+            border: 1px solid rgba(251,113,133,0.25);
+        }
+
+        .pf-btn-danger:hover {
+            background: linear-gradient(135deg, rgba(220,38,38,0.25) 0%, rgba(249,115,22,0.25) 100%);
+            border-color: rgba(251,113,133,0.4);
+        }
+
+        /* ============================================================
+           PRICE HISTORY
+           ============================================================ */
+        .price-history {
+            margin-top: 0.75rem;
+            padding: 0.5rem;
+            background: rgba(255,255,255,0.03);
+            border-left: 3px solid var(--accent-cyan);
+            border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+        }
+
+        .price-history-item {
+            padding: 0.6rem 0.75rem;
+            margin: 0.3rem 0;
+            background: rgba(255,255,255,0.03);
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle);
+        }
+
+        .price-history-item.current {
+            background: rgba(251,191,36,0.1);
+            border-color: rgba(251,191,36,0.3);
+            font-weight: 700;
+        }
+
+        /* ============================================================
+           MESSAGES
+           ============================================================ */
+        .message-success {
+            background: rgba(52,211,153,0.1);
+            border: 1px solid rgba(52,211,153,0.25);
+            color: var(--accent-emerald);
+            padding: 0.875rem 1rem;
+            border-radius: var(--radius-md);
+            margin: 0.5rem 0;
+            font-size: 0.875rem;
+        }
+
+        .message-error {
+            background: rgba(251,113,133,0.1);
+            border: 1px solid rgba(251,113,133,0.25);
+            color: var(--accent-rose);
+            padding: 0.875rem 1rem;
+            border-radius: var(--radius-md);
+            margin: 0.5rem 0;
+            font-size: 0.875rem;
+        }
+
+        .message-warning {
+            background: rgba(251,191,36,0.1);
+            border: 1px solid rgba(251,191,36,0.25);
+            color: var(--accent-amber);
+            padding: 0.875rem 1rem;
+            border-radius: var(--radius-md);
+            margin: 0.5rem 0;
+            font-size: 0.875rem;
+        }
+
+        /* ============================================================
+           REPORT TITLE
+           ============================================================ */
+        .report-title {
+            font-size: 1.15rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.01em;
+            margin-bottom: 1rem;
+            padding-bottom: 0.875rem;
+            border-bottom: 1px solid var(--border-subtle);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        /* ============================================================
+           PREMIUM PRODUCT CARD
+           ============================================================ */
+        .product-card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 0;
+            margin-bottom: 1rem;
+            box-shadow: var(--shadow-card);
+            overflow: hidden;
+            transition: all var(--transition-base);
+        }
+
+        .product-card:hover {
+            border-color: rgba(129,140,248,0.25);
+            box-shadow: var(--shadow-card), var(--shadow-glow);
+        }
+
+        .product-card.audit.validated { border-left: 3px solid var(--accent-emerald); }
+        .product-card.audit.review    { border-left: 3px solid var(--accent-amber); }
+
+        /* ============================================================
+           INVENTORY TABLE (price matrix, etc.)
+           ============================================================ */
+        .response .inventory-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 0.5rem;
+            font-size: 0.82rem;
+            font-family: var(--font-ui);
+        }
+
+        .response .inventory-table th {
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            background: rgba(79,70,229,0.3);
+            color: var(--text-secondary);
+            text-align: left;
+            padding: 10px 14px;
+            font-weight: 600;
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border-bottom: 1px solid rgba(129,140,248,0.2);
+        }
+
+        .response .inventory-table td {
+            padding: 9px 14px;
+            border-bottom: 1px solid var(--border-subtle);
+            vertical-align: middle;
+            color: var(--text-secondary);
+        }
+
+        .response .inventory-table tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+        .response .inventory-table tr:hover td { background: rgba(129,140,248,0.07); }
+
+        .response .inventory-table tr.grand-totals-row td,
+        .summary-table tr.grand-totals-row td {
+            background: rgba(79,70,229,0.25);
+            color: var(--text-primary);
+            font-weight: 700;
+            border-top: 1px solid rgba(129,140,248,0.3);
+        }
+
+        /* ============================================================
+           FORM SECTION LAYOUT (new premium form)
+           ============================================================ */
+        .pf-card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+            box-shadow: var(--shadow-card);
+            margin-bottom: 1.5rem;
+        }
+
+        .pf-card-header {
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--border-subtle);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: rgba(255,255,255,0.02);
+        }
+
+        .pf-card-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.01em;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .pf-card-subtitle {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            font-weight: 400;
+            margin-top: 2px;
+        }
+
+        .pf-card-body {
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .pf-section {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .pf-section-label {
+            font-size: 0.68rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .pf-section-label::before {
+            content: '';
+            width: 3px;
+            height: 12px;
+            background: var(--accent-indigo);
+            border-radius: 2px;
+            display: block;
+        }
+
+        .pf-grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        .pf-grid-3 {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 1rem;
+        }
+
+        .pf-grid-4 {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr 1fr;
+            gap: 1rem;
+        }
+
+        .pf-full { grid-column: 1 / -1; }
+
+        /* ---- View-mode (read-only) field display ---- */
+        .pf-field-view {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .pf-field-view .pf-label {
+            font-size: 0.68rem;
+            color: var(--text-muted);
+        }
+
+        .pf-field-view .pf-value {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+            padding: 9px 14px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            min-height: 42px;
+            display: flex;
+            align-items: center;
+        }
+
+        /* ============================================================
+           RECORD LINES (list view, non-form)
+           ============================================================ */
+        .record-line-1, .record-line-2, .record-line-3,
+        .record-line-4, .record-line-5 {
+            padding: 0.75rem 1rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            font-size: 0.875rem;
+        }
+
+        .record-line-1 { border-bottom: 1px solid var(--border-subtle); background: rgba(129,140,248,0.04); }
+        .record-line-2 { border-bottom: 1px solid var(--border-subtle); }
+        .record-line-3 { border-bottom: 1px solid var(--border-subtle); background: rgba(251,191,36,0.03); }
+        .record-line-4 { border-bottom: 1px solid var(--border-subtle); }
+        .record-line-5 { font-size: 0.8rem; }
+
+        .field-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: baseline;
+        }
+
+        /* ============================================================
+           SPINNER & LOADING
+           ============================================================ */
+        .spinner {
+            border: 3px solid rgba(255,255,255,0.08);
+            border-top: 3px solid var(--accent-indigo);
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 0.8s linear infinite;
+            display: inline-block;
+            margin-right: 10px;
+            vertical-align: middle;
+            flex-shrink: 0;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .loading-message {
+            display: flex;
+            align-items: center;
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            padding: 2rem;
+            justify-content: center;
+        }
+
+        /* ============================================================
+           ANIMATIONS
+           ============================================================ */
+        .fade-in {
+            opacity: 0;
+            animation: fadeIn 0.45s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ============================================================
+           ACTION BUTTONS
+           ============================================================ */
+        .action-buttons {
+            margin-top: 1rem;
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            flex-wrap: wrap;
+            padding: 0.75rem 1rem;
+            border-top: 1px solid var(--border-subtle);
+            background: rgba(255,255,255,0.015);
+        }
+
+        .create-btn-container {
+            margin-top: 0.75rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        /* ---- PF (premium form) action bar ---- */
+        .pf-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 1rem 1.5rem;
+            border-top: 1px solid var(--border-subtle);
+            background: rgba(255,255,255,0.015);
+            justify-content: flex-end;
+        }
+
+        /* ============================================================
+           VOICE INPUT BUTTON
+           ============================================================ */
+        .input-wrapper {
+            position: relative;
+            flex: 1;
+            display: flex;
+            align-items: center;
+        }
+
+        .input-wrapper textarea { padding-right: 50px !important; flex: 1; }
+
+        .voice-btn-google {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: transparent;
+            border: none;
+            padding: 8px;
+            cursor: pointer;
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+            color: #5f6368;
+        }
+
+        .voice-btn-google:hover {
+            background: rgba(0, 0, 0, 0.05);
+            color: #202124;
+        }
+
+        .voice-btn-google:active { background: rgba(0, 0, 0, 0.1); }
+
+        .voice-btn-google.listening {
+            color: #EF4444;
+            animation: pulse-listening 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse-listening {
+            0%, 100% { transform: translateY(-50%) scale(1); box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
+            50%       { transform: translateY(-50%) scale(1.1); box-shadow: 0 0 0 8px rgba(239,68,68,0); }
+        }
+
+        .voice-status {
+            position: absolute;
+            bottom: calc(100% + 8px);
+            right: 8px;
+            background: #EF4444;
+            color: white;
+            padding: 5px 12px;
+            border-radius: var(--radius-pill);
+            font-size: 0.78rem;
+            font-weight: 600;
+            display: none;
+            animation: fadeInDown 0.3s ease-out;
+            box-shadow: 0 4px 16px rgba(239,68,68,0.35);
+            letter-spacing: 0.02em;
+        }
+
+        .voice-status.active { display: block; }
+
+        @keyframes fadeInDown {
+            from { opacity: 0; transform: translateY(-8px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        .voice-status::before { content: '🎤'; margin-right: 5px; }
+        .voice-status::after {
+            content: '';
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            background: white;
+            border-radius: 50%;
+            margin-left: 7px;
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50%       { opacity: 0.2; }
+        }
+
+        /* ============================================================
+           INVENTORY / REPORT CONTAINERS
+           ============================================================ */
+        .inventory-record {
+            border-radius: var(--radius-lg);
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            box-shadow: var(--shadow-card);
+        }
+
+        .full-message {
+            font-size: 0.875rem;
+            line-height: 1.7;
+            font-weight: 400;
+            white-space: pre-wrap;
+            background: rgba(255,255,255,0.03);
+            padding: 1rem;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border-subtle);
+            color: var(--text-secondary);
+        }
+
+        .negative-margin { color: var(--accent-rose); font-weight: 700; }
+        .strong-margin   { color: var(--accent-emerald); font-weight: 700; }
+        .neutral-margin  { color: var(--text-muted); }
+
+        .grand-totals-row { background: rgba(79,70,229,0.2); font-weight: 700; }
+
+        /* ============================================================
+           RESPONSIVE
+           ============================================================ */
+        @media (max-width: 768px) {
+            .action-buttons { flex-direction: column; }
+            .unified-action-btn { width: 100%; max-width: 100%; }
+            .pf-grid-2, .pf-grid-3, .pf-grid-4 { grid-template-columns: 1fr; }
+            .record-line-1, .record-line-2, .record-line-3, .record-line-4, .record-line-5 { flex-direction: column; gap: 6px; }
+            .field-row { flex-direction: column; }
+        }
+
+        /* Category dropdown group */
+        .category-dropdown-group {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .category-dropdown-group select { font-size: 0.875rem; }
+        .category-dropdown-group label  { font-size: 0.72rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+
+        /* desc-status group (legacy list view) */
+        .desc-status-group { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+        .desc-status-group .desc-field   { flex: 1; min-width: 280px; display: flex; align-items: flex-start; gap: 8px; }
+        .desc-status-group .status-field { display: flex; align-items: center; gap: 8px; }
+        .desc-field .field-title         { flex-shrink: 0; padding-top: 2px; }
+
+        /* Audit record container */
+        .audit-record {
+            padding: 0;
+        }
+
+        /* ============================================================
+           QUICK START PANEL
+           ============================================================ */
+        .qs-panel {
+            max-width: 820px;
+            margin: 4.5rem auto 2rem;
+            text-align: center;
+        }
+
+        .qs-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+            margin-bottom: 1.25rem;
+        }
+
+        .qs-buttons {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.6rem;
+            margin-bottom: 1.25rem;
+            max-width: 554px;      /* slightly less than search bar's 584px */
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        /* Inside the home-page grid, buttons fill their cell equally.
+           The fixed px width on unified-action-btn is for form action bars;
+           override it here so the grid controls sizing. */
+        .qs-buttons .unified-action-btn {
+            width: 100%;
+            min-width: 0;
+            max-width: none;
+        }
+
+        .qs-hint {
+            padding: 0.75rem 1rem;
+            background: rgba(129,140,248,0.06);
+            border: 1px solid rgba(129,140,248,0.12);
+            border-radius: var(--radius-md);
+            font-size: 0.78rem;
+            color: var(--text-muted);
+            line-height: 1.6;
+            margin-bottom: 0.6rem;
+        }
+
+        .qs-modes {
+            padding: 0.6rem 1rem;
+            background: rgba(52,211,153,0.05);
+            border: 1px solid rgba(52,211,153,0.12);
+            border-radius: var(--radius-md);
+            font-size: 0.75rem;
+            color: var(--accent-emerald);
+        }
+
+        /* ============================================================
+           LIGHT-BACKGROUND OVERRIDES
+           The .response panel is white. All cards and form elements
+           inside it need light-friendly colors.
+           ============================================================ */
+
+        /* --- Form card: white background --- */
+        .pf-card {
+            background: #ffffff;
+            border: 1px solid #e0e6ed;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05);
+        }
+        .pf-card-header {
+            background: #f8f9fa;
+            border-bottom-color: #e0e6ed;
+        }
+        .pf-card-title  { color: #2a4d8f; }
+        .pf-card-subtitle { color: #666; }
+
+        .pf-section-label {
+            color: #555;
+            border-bottom-color: #e0e6ed;
+        }
+        .pf-label { color: #555; }
+
+        .pf-actions {
+            background: #f8f9fa;
+            border-top-color: #e0e6ed;
+        }
+
+        /* Form inputs on white — use background-color so background-image/repeat/position/size are NOT reset */
+        input[type="text"].pf-input,
+        input[type="number"].pf-input,
+        select.pf-select,
+        textarea.pf-textarea {
+            background-color: #ffffff;
+            border-color: #ccc;
+            color: #333;
+        }
+
+        /* Universal field height — every field matches exactly */
+        input[type="text"].pf-input,
+        input[type="number"].pf-input,
+        select.pf-select {
+            height: 42px;
+            padding-top: 0;
+            padding-bottom: 0;
+            line-height: 42px;
+            box-sizing: border-box;
+        }
+
+        input[type="text"].pf-input::placeholder,
+        input[type="number"].pf-input::placeholder,
+        textarea.pf-textarea::placeholder { color: #aaa; }
+
+        input[type="text"].pf-input:hover,
+        input[type="number"].pf-input:hover,
+        select.pf-select:hover,
+        textarea.pf-textarea:hover {
+            border-color: rgba(0, 120, 215, 0.5);
+            background-color: #ffffff;
+        }
+        input[type="text"].pf-input:focus,
+        input[type="number"].pf-input:focus,
+        select.pf-select:focus,
+        textarea.pf-textarea:focus {
+            border-color: #0078d7;
+            background-color: #ffffff;
+            box-shadow: 0 0 0 3px rgba(0, 120, 215, 0.15);
+        }
+
+        /* Override the select chevron for light theme — full shorthand so nothing is inherited incorrectly */
+        select.pf-select {
+            background-color: #ffffff;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23555' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            background-size: 14px 14px;
+        }
+        select.pf-select option { background: #fff; color: #333; }
+
+        /* Read-only field values */
+        .pf-field-view .pf-label { color: #555; }
+        .pf-field-view .pf-value {
+            background: #f9fbfd;
+            border-color: #e0e6ed;
+            color: #333;
+        }
+
+        /* Field titles and values on white */
+        .field-title { color: #555 !important; }
+        .field-value { color: #444; }
+        .field-value.product-name { color: #0078d7 !important; }
+        .field-value.timestamp    { color: #7f8c8d; }
+
+        /* Record-line backgrounds on white */
+        .record-line-1 { background: #f1f8f4; border-bottom-color: #e0e6ed; }
+        .record-line-2 { border-bottom-color: #e0e6ed; background: transparent; }
+        .record-line-3 { background: #fffef9; border-bottom-color: #e0e6ed; }
+        .record-line-4 { border-bottom-color: #e0e6ed; background: transparent; }
+
+        /* Product list cards on white */
+        .product-card {
+            background: #f9fbfd;
+            border-color: #e0e6ed;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .product-card:hover {
+            background: #eef6ff;
+            border-color: rgba(0, 120, 215, 0.3);
+            box-shadow: 0 2px 6px rgba(0, 120, 215, 0.2);
+        }
+        .action-buttons {
+            background: #f8f9fa;
+            border-top-color: #e0e6ed;
+        }
+
+        /* pf-btn-secondary on white background — same green as all other action buttons */
+        .pf-btn-secondary {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%) !important;
+            color: white !important;
+            border: none !important;
+            box-shadow: 0 2px 8px rgba(40, 167, 69, 0.4), 0 0 15px rgba(32, 201, 151, 0.3) !important;
+        }
+        .pf-btn-secondary:hover {
+            background: linear-gradient(135deg, #218838 0%, #1ba67a 100%) !important;
+            color: white !important;
+            border: none !important;
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.6), 0 0 25px rgba(32, 201, 151, 0.5) !important;
+        }
+
+        /* Inventory & report containers on white */
+        .inventory-record {
+            background: #ffffff;
+            border-color: #e0e6ed;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+        }
+        .details-record {
+            background: #ffffff !important;
+            border-color: #e0e6ed !important;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.08) !important;
+        }
+
+        /* Spinner on white */
+        .spinner {
+            border-color: #f3f3f3;
+            border-top-color: #1976d2;
+        }
+        .loading-message { color: #1976d2; }
+
+        /* Messages on white */
+        .message-success { background: #d4edda; border-color: #c3e6cb; color: #155724; }
+        .message-error   { background: #f8d7da; border-color: #f5c6cb; color: #721c24; }
+        .message-warning { background: #fff3cd; border-color: #ffeaa7; color: #856404; }
+
+        /* Report title on white */
+        .report-title { color: #2a4d8f; }
+
+        /* Full-message on white */
+        .full-message { background: #f9f9f9; border-color: #ddd; color: #333; }
+
+        /* Price history on white */
+        .price-history      { background: #f8f9fa; border-left-color: #17a2b8; }
+        .price-history-item { background: #ffffff; border-color: #e0e6ed; color: #333; }
+
+        /* Summary table on white */
+        .summary-table th                       { background: #0078d7; color: white; }
+        .summary-table td                       { border-color: #e0e6ed; color: #333; }
+        .summary-table tr:nth-child(even) td    { background: #f9fbfd; }
+        .summary-table tr:hover td              { background: #e0f7fa; color: #111; }
+        .summary-table td:first-child           { color: #0078d7; }
+
+        /* Inventory table on white */
+        .response .inventory-table th                           { background: #0078d7; color: white; }
+        .response .inventory-table td                           { border-bottom-color: #e0e6ed; color: #333; }
+        .response .inventory-table tr:nth-child(even) td        { background: #f9f9f9; }
+        .response .inventory-table tr:hover td                  { background: #f1f1f1 !important; }
+        .response .inventory-table tr.grand-totals-row td,
+        .summary-table tr.grand-totals-row td                   { background: #e9ecef; color: #333; border-top-color: #ccc; }
+
+        /* Quick-start panel on white */
+        .qs-title  { color: #0078d7; }
+        .qs-hint   { background: #f0f8ff; border-color: #cce0ff; color: #555; }
+        .qs-modes  { background: #e8f5e9; border-color: #c3e6cb; color: #2e7d32; }
+
+        /* ============================================================
+           DESCRIPTION TEXTAREA — same height as Status select (42px)
+           by default, expands 50% (63px) on focus, collapses on blur.
+           ============================================================ */
+        textarea.pf-textarea#edit-description {
+            min-height: unset !important;
+            height: 42px !important;
+            line-height: 42px !important;
+            padding-top: 0 !important;
+            padding-bottom: 0 !important;
+            resize: none !important;
+            overflow: hidden;
+            transition: height 0.2s ease, line-height 0.2s ease, padding 0.2s ease;
+        }
+        textarea.pf-textarea#edit-description:focus {
+            height: 63px !important;
+            line-height: 1.6 !important;
+            padding-top: 10px !important;
+            padding-bottom: 10px !important;
+        }
+
+        /* ============================================================
+           PRODUCT TYPEAHEAD SEARCH — Unified Add/Update Form
+           ============================================================ */
+        /* ── Form typeahead — pixel-identical to home search bar (v15d) ── */
+        /* The dark-theme global rule excludes .pf-typeahead-input (fixed in v15d),
+           so these rules win cleanly without needing !important on structural props. */
+        .pf-typeahead-wrapper {
+            position: relative;
+            width: 100%;
+        }
+
+        /* Search icon — left side, identical to .pls-icon */
+        .pf-search-icon {
+            position: absolute;
+            left: 0.85rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #9ca3af;
+            pointer-events: none;
+            line-height: 0;
+            transition: opacity 0.15s ease;
+            z-index: 1;
+        }
+
+        /* Hide icon while request is in-flight */
+        .pf-typeahead-wrapper.pf-loading .pf-search-icon { opacity: 0; }
+
+        /* Spinner — left side, identical to .pls-spinner */
+        .pf-typeahead-spinner {
+            display: none;
+            position: absolute;
+            left: 0.75rem;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 1rem;
+            height: 1rem;
+            border: 2px solid #c7d2fe;
+            border-top-color: #4F46E5;
+            border-radius: 50%;
+            animation: plsSpin 0.6s linear infinite;
+        }
+
+        /* Show spinner while request is in-flight */
+        .pf-typeahead-wrapper.pf-loading .pf-typeahead-spinner { display: block; }
+
+        /* Input — identical to .product-list-search-bar input[type="text"] */
+        /* Specificity note: the global rule input[type="text"]:not(.pf-input) is (0,2,1).
+           This rule is also (0,2,1). They tie — cascade order would let the global rule win
+           (it appears earlier in the file). !important on each structural property ensures
+           this rule wins without touching any other input on the page. */
+        .pf-typeahead-input {
+            width: 100%;
+            box-sizing: border-box;
+            flex: 1;
+            padding: 0.55rem 1rem 0.55rem 2.6rem !important;  /* 2.6rem left clears the icon */
+            border: 1.5px solid #c7d2fe !important;
+            border-radius: 24px !important;                    /* pill */
+            font-family: var(--font-ui);
+            font-size: 0.88rem;
+            color: #2c3e50 !important;
+            background: #fff !important;
+            caret-color: #2c3e50 !important;
+            cursor: text !important;
+            outline: none;
+            height: 2.75rem !important;
+            box-shadow: 0 1px 4px rgba(79, 70, 229, 0.1) !important;
+            transition: height 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease !important;
+        }
+
+        .pf-typeahead-input::placeholder {
+            color: #aaa !important;
+            opacity: 1;
+        }
+
+        .pf-typeahead-input:hover {
+            border-color: rgba(79, 70, 229, 0.4) !important;
+            background: #fff !important;
+        }
+
+        /* Focus or typing — animated expand, identical to home bar */
+        .pf-typeahead-input:focus,
+        .pf-typeahead-input:not(:placeholder-shown) {
+            height: 4.125rem !important;
+            border-color: #4F46E5 !important;
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15) !important;
+            background: #fff !important;
+        }
+
+        .pf-dropdown {
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            right: 0;
+            background: white;
+            border: 1.5px solid #c7d2fe;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(79,70,229,0.18), 0 4px 12px rgba(0,0,0,0.1);
+            z-index: 200;
+            max-height: 260px;
+            overflow-y: auto;
+            display: none;
+        }
+
+        .pf-dropdown.visible { display: block; }
+
+        .pf-dropdown-item {
+            padding: 0.65rem 1rem;
+            cursor: pointer;
+            border-bottom: 1px solid #f0f0f0;
+            transition: background 0.15s;
+        }
+
+        .pf-dropdown-item:last-child { border-bottom: none; }
+
+        .pf-dropdown-item:hover {
+            background: linear-gradient(135deg, #EEF2FF 0%, #F5F3FF 100%);
+        }
+
+        .pf-dropdown-item .prod-name {
+            font-weight: 600;
+            color: #1e1b4b;
+            font-size: 0.9rem;
+        }
+
+        .pf-dropdown-item .prod-sub {
+            font-size: 0.74rem;
+            color: #888;
+            margin-top: 0.15rem;
+            font-family: monospace;
+        }
+
+        .pf-dropdown-msg {
+            padding: 0.85rem;
+            color: #888;
+            font-size: 0.85rem;
+            text-align: center;
+        }
+
+        /* Selected product chip */
+        .pf-product-chip {
+            display: flex;
+            align-items: center;
+            gap: 0.7rem;
+            background: linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%);
+            border: 1.5px solid #6366F1;
+            border-radius: 8px;
+            padding: 0.65rem 1rem;
+            font-size: 0.88rem;
+            color: #312e81;
+        }
+
+        .pf-product-chip .chip-icon { font-size: 1.1rem; flex-shrink: 0; }
+
+        .pf-product-chip .chip-name {
+            flex: 1;
+            font-weight: 700;
+            font-size: 0.9rem;
+        }
+
+        .pf-product-chip .chip-meta {
+            font-size: 0.72rem;
+            font-family: monospace;
+            color: #4338ca;
+            opacity: 0.8;
+        }
+
+        .pf-product-chip .chip-clear {
+            background: rgba(99, 102, 241, 0.15);
+            border: none;
+            border-radius: 50%;
+            width: 26px;
+            height: 26px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #4338ca;
+            transition: background 0.2s;
+            flex-shrink: 0;
+        }
+
+        .pf-product-chip .chip-clear:hover { background: rgba(99, 102, 241, 0.28); }
+
+        /* Mode badge */
+        /* ── Direct-operation loading spinner (v11.0) ── */
+        @keyframes pf-spin { to { transform: rotate(360deg); } }
+        .pf-spinner {
+            display: inline-block;
+            width: 13px; height: 13px;
+            border: 2px solid rgba(255,255,255,0.35);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: pf-spin 0.7s linear infinite;
+            vertical-align: middle;
+            margin-right: 4px;
+        }
+
+        .pf-mode-add {
+            display: inline-flex; align-items: center; gap: 5px;
+            background: linear-gradient(135deg, #d1fae5, #a7f3d0);
+            color: #065f46; border: 1px solid #34d399; border-radius: 20px;
+            padding: 4px 12px; font-size: 0.78rem; font-weight: 700;
+            letter-spacing: 0.03em;
+        }
+
+        .pf-mode-update {
+            display: inline-flex; align-items: center; gap: 5px;
+            background: linear-gradient(135deg, #ede9fe, #ddd6fe);
+            color: #5b21b6; border: 1px solid #8b5cf6; border-radius: 20px;
+            padding: 4px 12px; font-size: 0.78rem; font-weight: 700;
+            letter-spacing: 0.03em;
+        }
+
+        .pf-search-hint {
+            font-size: 0.78rem;
+            color: #888;
+            margin-top: 0.4rem;
+            font-style: italic;
+        }
+
+        /* Danger (delete) button — light-bg form context */
+        .pf-btn-danger {
+            background: var(--gradient-danger) !important;
+            color: #fff !important;
+            border: none !important;
+            min-width: 130px;   /* match Back Home / pf-btn-save natural width (v15d) */
+        }
+        .pf-btn-danger:hover { opacity: 0.88; transform: translateY(-1px); }
+
+        /* ============================================================
+           PRODUCT LIST — Google-style free-text search bar
+           ============================================================ */
+        /* Shared between home page and product-list result view.
+           Matches Google Search bar proportions: max-width 584px, 92% on smaller viewports. */
+        .product-list-search-bar {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            position: relative;
+            width: 100%;
+            max-width: 750px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        /* On the home page the search bar sits above the button grid —
+           double the gap so there is clear breathing room between them. */
+        #home-search-container .product-list-search-bar {
+            margin-bottom: 2rem;
+        }
+
+        .product-list-search-bar input[type="text"] {
+            flex: 1;
+            padding: 0.55rem 1rem 0.55rem 2.6rem;
+            border: 1.5px solid #c7d2fe;
+            border-radius: 24px;
+            font-family: var(--font-ui);
+            font-size: 0.88rem;
+            color: #2c3e50 !important;
+            background: #fff !important;
+            caret-color: #2c3e50 !important;
+            outline: none;
+            /* Height transition mirrors textarea behaviour */
+            transition: height 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+            box-shadow: 0 1px 4px rgba(79,70,229,0.1);
+            /* Default: 2.5rem (textarea baseline) × 1.1 = 2.75rem */
+            height: 2.75rem;
+            box-sizing: border-box;
+        }
+
+        .product-list-search-bar input[type="text"]::placeholder { color: #aaa !important; }
+
+        .product-list-search-bar input[type="text"]:focus,
+        .product-list-search-bar input[type="text"]:not(:placeholder-shown) {
+            /* Focus or typing: 2.75rem × 1.5 = 4.125rem */
+            height: 4.125rem;
+            border-color: #4F46E5;
+            box-shadow: 0 0 0 3px rgba(79,70,229,0.15);
+        }
+
+        .product-list-search-bar .pls-icon {
+            position: absolute;
+            left: 0.85rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #9ca3af;
+            pointer-events: none;
+            line-height: 0;
+            transition: opacity 0.15s ease;
+        }
+
+        /* Spinner shown while lazy search is in-flight */
+        .product-list-search-bar.pls-loading .pls-icon { opacity: 0; }
+
+        .product-list-search-bar .pls-spinner {
+            display: none;
+            position: absolute;
+            left: 0.75rem;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 1rem;
+            height: 1rem;
+            border: 2px solid #c7d2fe;
+            border-top-color: #4F46E5;
+            border-radius: 50%;
+            animation: plsSpin 0.6s linear infinite;
+        }
+
+        .product-list-search-bar.pls-loading .pls-spinner { display: block; }
+
+        @keyframes plsSpin {
+            to { transform: translateY(-50%) rotate(360deg); }
+        }
+
+        /* ===================================================
+           HOME-PAGE GOOGLE-STYLE SEARCH BAR  (mirrors leads)
+           Pill shape, animates height 48px → 72px on focus
+           =================================================== */
+        .home-search-bar-wrap {
+            max-width: 750px;
+            margin: 0 auto 2rem;
+        }
+
+        .home-uni-search-row {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            border: 1.5px solid #c7d2fe;
+            border-radius: 9999px;
+            background: #fff;
+            padding: 0 1.1rem;
+            min-height: 48px;
+            box-shadow: 0 2px 8px rgba(79, 70, 229, 0.10);
+            cursor: text;
+            transition:
+                min-height  0.30s cubic-bezier(0.4, 0, 0.2, 1),
+                padding     0.30s cubic-bezier(0.4, 0, 0.2, 1),
+                box-shadow  0.20s ease,
+                border-color 0.20s ease;
+        }
+        .home-uni-search-row:focus-within {
+            min-height: 72px;
+            border-color: #4F46E5;
+            box-shadow: 0 3px 18px rgba(79, 70, 229, 0.22);
+        }
+        .home-uni-search-row .home-search-icon {
+            color: #9aa0a6;
+            margin-right: 0.6rem;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            transition: color 0.2s ease;
+        }
+        .home-uni-search-row:focus-within .home-search-icon {
+            color: #4F46E5;
+        }
+        .home-uni-search-row #homeProductSearchInput {
+            flex: 1 !important;
+            border: none !important;
+            outline: none !important;
+            font-size: 1rem !important;
+            background: transparent !important;
+            color: #202124 !important;
+            min-width: 0 !important;
+            line-height: 1.4 !important;
+            padding: 0 !important;
+            height: auto !important;
+            box-shadow: none !important;
+            border-radius: 0 !important;
+            width: auto !important;
+            caret-color: #4F46E5 !important;
+            transition: none !important;
+        }
+        .home-uni-search-row #homeProductSearchInput::placeholder {
+            color: #b0b8c1 !important;
+        }
+
+    </style>
+   </head>
+   <body>
+   <!-- Galaxy Background -->
+   <div class="galaxy-background">
+       <div class="nebula-cloud"></div>
+       <div class="nebula-cloud"></div>
+       <div class="nebula-cloud"></div>
+   </div>
+   
+   <header id="mainHeader">
+        <h1>
+            <span>🛍️ Product Management — CRM AI Agent</span>
+        </h1>
+        <div class="session-info">
+        <span id="sessionDisplay">Session: </span>
+        <button id="resetSession">↺ Reset</button>
+        </div>
+   </header>
+
+    <div id="response" class="response">
+        <!-- Home panel injected on load by getHomeHTML() — see script below -->
+    </div>
+    
+    <div class="input-bar">
+        <form id="productForm">
+            <span class="search-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="8" fill="white" stroke="currentColor"/>
+                    <path d="m21 21-4.35-4.35"/>
+                </svg>
+            </span>
+            <div class="input-wrapper">
+                <div class="voice-status" id="voiceStatus">Listening...</div>
+                <textarea id="message" rows="1" placeholder="Click mic to speak or type... e.g. 'Show me electronic products' or 'Low stock alerts'"></textarea>
+                <button type="button" id="voiceBtn" class="voice-btn-google" onclick="toggleVoiceInput()" title="Click to start/stop voice input">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24">
+                        <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+                        <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+                    </svg>
+                </button>
+            </div>
+            <button type="submit" class="send" id="sendBtn">
+                <span id="btnText">Send</span>
+            </button>
+        </form>
+    </div>
+
+<script>
+    // === Category Lookup Table ===
+    const CATEGORIES = [
+        { id: '7632ef73-7a4a-4320-b5d8-a2bb72bd8c03', number: 1, name: 'Apparel' },
+        { id: 'c3c5c4b0-3ef1-4540-90e2-65e7e2800bf0', number: 2, name: 'Electronics' },
+        { id: 'fea01756-1ba1-4b38-841f-c6a2b86bb2a6', number: 3, name: 'Grocery' },
+        { id: 'fcaaec3d-21d4-461d-9dbe-849c7c14c7de', number: 4, name: 'Health & Wellness' },
+        { id: 'c346f439-e972-4f0a-8115-f3baa63cc1d8', number: 5, name: 'Home Essentials' },
+        { id: 'cdcbd1da-11a2-497a-bc1c-99ff2cd440ec', number: 6, name: 'Office Supplies' },
+        { id: 'adf36cbb-9243-4a60-96ac-f5998361ed91', number: 7, name: 'Personal Care' },
+        { id: '7fb054a9-5457-4932-9c89-4701da3f1dcc', number: 8, name: 'Pet Supplies' },
+        { id: '64c198d3-3bcc-4291-ab8d-7e12abf24b2f', number: 9, name: 'Snacks & Beverages' },
+        { id: '78e2ee6c-ee94-4bdc-ad4a-405ff2332e65', number: 10, name: 'Toys & Games' }
+    ];
+
+    function getCategoryByName(name) {
+        return CATEGORIES.find(c => c.name.toLowerCase() === name.toLowerCase()) || null;
+    }
+
+    function getCategoryByNumber(num) {
+        return CATEGORIES.find(c => c.number === parseInt(num)) || null;
+    }
+
+    function getCategoryById(id) {
+        return CATEGORIES.find(c => c.id === id) || null;
+    }
+
+    // === Global State ===
+    const WEBHOOK_URL = 'http://localhost:8000/prod-chat';
+    let lastListHTML = "";
+    let lastMode1Text = "";
+    let lastProductRecords = [];
+    let lastUpdatedProductId = null;
+    let cameFromList = false;
+    let debugMode = false;
+
+    // === DOM Elements ===
+    const form = document.getElementById("productForm");
+    const responseBox = document.getElementById("response");
+    const resetBtn = document.getElementById("resetSession");
+    const sessionDisplay = document.getElementById("sessionDisplay");
+    const sendBtn = document.getElementById("sendBtn");
+    const btnText = document.getElementById("btnText");
+    const messageBox = document.getElementById("message");
+
+    // === Session Management ===
+    function generateSessionId() {
+        return "sess-" + Math.random().toString(36).substring(2, 10);
+    }
+
+    let sessionId = localStorage.getItem("productSessionId");
+    if (!sessionId) {
+        sessionId = generateSessionId();
+        localStorage.setItem("productSessionId", sessionId);
+    }
+    sessionDisplay.textContent = `Current Session: ${sessionId}`;
+
+    // === Debug Mode Toggle (Shift+D) ===
+    document.addEventListener("keydown", function (event) {
+        if (event.key.toLowerCase() === "d" && event.shiftKey) {
+            debugMode = !debugMode;
+            console.log(`Debug mode toggled → ${debugMode ? "ON" : "OFF"}`);
+            const banner = document.createElement("div");
+            banner.textContent = `⚙️ Debug mode ${debugMode ? "ON" : "OFF"}`;
+            banner.style.cssText = `
+                position:fixed; top:10px; right:10px; background:#222; color:#0f0;
+                font-size:12px; padding:6px 10px; border-radius:4px; font-family:monospace; z-index:9999;
+            `;
+            document.body.appendChild(banner);
+            setTimeout(() => banner.remove(), 2000);
+        }
+    });
+
+    // === Handle Enter key in textarea to submit form ===
+    messageBox.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            form.dispatchEvent(new Event("submit"));
+        }
+    });
+
+    // === Reset Session ===
+    resetBtn.addEventListener("click", () => {
+        sessionId = generateSessionId();
+        localStorage.setItem("productSessionId", sessionId);
+        sessionDisplay.textContent = `Current Session: ${sessionId}`;
+        // Restore full home page — header + buttons (v15b)
+        showHeader();
+        responseBox.innerHTML = getHomeHTML();
+        _initHomeSearch();
+        messageBox.value = '';
+    });
+
+    // === Form Submit Handler ===
+    form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const userMessage = messageBox.value.trim();
+        if (!userMessage) return;
+
+        hideHeader();   // hide header the moment AI Agent is triggered (v15b)
+        sendBtn.disabled = true;
+        btnText.textContent = "...";
+        responseBox.innerHTML = `<div class="loading-message"><div class="spinner"></div> Processing your request...</div>`;
+
+        try {
+            const body = {
+                chatInput: { message: userMessage },
+                sessionId: sessionId
+            };
+
+            console.log('Sending:', body);
+
+            const res = await fetch(WEBHOOK_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+
+            let data;
+            try { data = await res.json(); } catch { data = await res.text(); }
+            
+            console.log('Webhook Response:', data);
+            
+            if (data) {
+                const html = buildProductResponseHTML(data);
+                responseBox.innerHTML = html;
+                _pfPostRenderSetup();   // sync pf_mode / pf_selectedProduct and init typeahead
+            } else {
+                responseBox.innerHTML = `<div class="message-error">❌ No response from server</div>`;
+            }
+
+        } catch (err) {
+            console.error('Error:', err);
+            responseBox.innerHTML = `<div class="message-error">
+                ❌ <strong>Error:</strong> ${escapeHTML(err.message)}
+                <br><small>Please make sure the n8n workflow is running on ${WEBHOOK_URL}</small>
+            </div>`;
+        } finally {
+            sendBtn.disabled = false;
+            btnText.textContent = "Send";
+        }
+    });
+
+    // =====================================================================
+    // SMART SEARCH — single-layer, single call path
+    // ─────────────────────────────────────────────────────────────────────
+    // Merges the best of lazy and predictive search into one simple layer:
+    //
+    //   • 3-char minimum — no pointless single/double-letter queries
+    //   • 300ms debounce — auto-fires while the user pauses typing
+    //     (gives the "it just searched" feel without a separate dropdown call)
+    //   • Enter fires immediately — cancels any pending debounce, searches now
+    //   • Spinner shows while in-flight; cleared by MutationObserver on response
+    //   • ONE call path only: always through product_direct_operation → pre-router
+    //     → sp_products. No AI Agent involved in any search operation.
+    //     Home bar calls _homeSearchDirect(). Product-list bar also calls
+    //     _homeSearchDirect(). Typeahead sends "Search products by name …" which
+    //     the pre-router routes directly (MODE:list).
+    // =====================================================================
+    function _initSmartSearch(inputId, onSearch) {
+        const input = document.getElementById(inputId);
+        if (!input) return;
+        const bar   = input.closest('.product-list-search-bar');
+        let   timer = null;
+        const MIN   = 3;    // chars required before any query fires
+        const DELAY = 300;  // ms debounce — waits for typing pause
+
+        function doSearch() {
+            const q = input.value.trim();
+            if (q.length < MIN) return;
+            bar?.classList.add('pls-loading');
+            onSearch(q);
+        }
+
+        // Clear spinner the moment a response renders in the response box
+        if (typeof responseBox !== 'undefined') {
+            new MutationObserver(() => bar?.classList.remove('pls-loading'))
+                .observe(responseBox, { childList: true, subtree: false });
+        }
+        // Safety fallback — remove spinner after 10s if response never arrives
+        function armFallback() { setTimeout(() => bar?.classList.remove('pls-loading'), 10000); }
+
+        // Auto-search after pause in typing
+        input.addEventListener('input', () => {
+            clearTimeout(timer);
+            const q = input.value.trim();
+            if (q.length < MIN) { bar?.classList.remove('pls-loading'); return; }
+            timer = setTimeout(() => { doSearch(); armFallback(); }, DELAY);
+        });
+
+        // Enter fires immediately, no waiting
+        input.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            clearTimeout(timer);
+            doSearch();
+            armFallback();
+        });
+    }
+
+    // Wire home-page bar on initial page load
+    function _initHomeSearch() {
+        _initSmartSearch('homeProductSearchInput', _homeSearchDirect);
+    }
+
+    // ── Direct home search — no AI Agent (v15c) ──────────────────────────
+    // Sends the same 'Search products by name …' message as _pfSearchProducts.
+    // The n8n pre-router detects this pattern and routes directly to the stored
+    // procedure (MODE:list path) — bypassing the AI Agent entirely.
+    // Result is rendered into responseBox via buildProductResponseHTML().
+    async function _homeSearchDirect(query) {
+        hideHeader();
+        responseBox.innerHTML = `<div class="loading-message"><div class="spinner"></div> Searching products…</div>`;
+        try {
+            const res = await fetch(WEBHOOK_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chatInput: { message: `Search products by name ${query}` },
+                    sessionId
+                })
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            responseBox.innerHTML = buildProductResponseHTML(data);
+            _pfPostRenderSetup();
+        } catch (err) {
+            console.error('Home search error:', err);
+            responseBox.innerHTML = buildErrorHTML(`❌ Search failed — ${escapeHTML(err.message)}`);
+        }
+    }
+    // === Initial Page Load — populate home panel from single source of truth (v15b) ===
+    responseBox.innerHTML = getHomeHTML();
+    _initHomeSearch();
+
+    // === Helper Functions ===
+    function hideHeader() {
+        const h = document.getElementById('mainHeader');
+        if (h) h.style.display = 'none';
+    }
+
+    function showHeader() {
+        const h = document.getElementById('mainHeader');
+        if (h) h.style.display = '';   // restore to CSS default (flex)
+    }
+
+    function fillAndSend(msg) {
+        hideHeader();
+        messageBox.value = msg;
+        // Immediately dispatch submit event to trigger AI Agent
+        setTimeout(() => form.dispatchEvent(new Event("submit")), 50);
+    }
+
+    // =========================================================================
+    // DIRECT QUERY — v16.0
+    // =========================================================================
+    // Sends product_direct_operation with an extended context value directly to
+    // the pre-router, bypassing the AI Agent entirely for all read-only SP modes.
+    //
+    // context values (handled by pre-router v2.0):
+    //   'list_products'        → sp_products mode: list
+    //   'get_product_details'  → sp_products mode: get_details
+    //   'inventory_summary'    → sp_products mode: inventory_summary
+    //   'low_stock_report'     → sp_products mode: low_stock
+    //   'price_matrix_report'  → sp_products mode: price_matrix
+    //   'price_history_report' → sp_products mode: price_history
+    //   'bulk_adjust_stock'    → sp_products mode: bulk_adjust_stock
+    // =========================================================================
+    async function _directQuery(context, params = {}, label = 'Loading…') {
+        hideHeader();
+        responseBox.innerHTML = `<div class="loading-message"><div class="spinner"></div> ${escapeHTML(label)}</div>`;
+        try {
+            const res = await fetch(WEBHOOK_URL, {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sessionId,
+                    chatInput: {
+                        message:     'product_direct_operation',
+                        productData: { context, ...params }
+                    }
+                })
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            const text = typeof data === 'string' ? data
+                : (Array.isArray(data) ? data[0]?.output : null)
+                || data?.output || data?.response || data?.text
+                || JSON.stringify(data);
+            responseBox.innerHTML = buildProductResponseHTML(text);
+            _pfPostRenderSetup();
+        } catch (err) {
+            console.error(`_directQuery [${context}] error:`, err);
+            responseBox.innerHTML = buildErrorHTML(`❌ ${escapeHTML(label)} failed — ${escapeHTML(err.message)}`);
+        }
+    }
+
+    // ── Bulk Stock Dialog ────────────────────────────────────────────────────
+    // Prompts for adjustment amount and optional category number, then routes
+    // directly to mode:bulk_adjust_stock — no AI Agent involved.
+    function _showBulkStockDialog() {
+        const adjStr = prompt(
+            '📈 Bulk Stock Adjustment\n\n' +
+            'Enter adjustment amount (positive to increase, negative to decrease):\n' +
+            'Example: 25  or  -10',
+            '25'
+        );
+        if (adjStr === null) return; // cancelled
+        const adj = parseInt(adjStr, 10);
+        if (isNaN(adj) || adj === 0) { alert('Please enter a non-zero integer adjustment.'); return; }
+
+        const catStr = prompt(
+            'Category number to filter (leave blank for ALL categories):',
+            ''
+        );
+        if (catStr === null) return; // cancelled
+        const catNum = catStr.trim() ? parseInt(catStr.trim(), 10) : undefined;
+
+        _directQuery(
+            'bulk_adjust_stock',
+            {
+                stock_adjustment: adj,
+                category_number:  catNum,
+                is_active_filter: true   // only adjust active products
+            },
+            `Adjusting stock by ${adj > 0 ? '+' : ''}${adj}…`
+        );
+    }
+
+    // ── Price History Dialog ─────────────────────────────────────────────────
+    // Prompts for a product number (or UUID), then routes directly to
+    // mode:price_history — no AI Agent involved.
+    function _showPriceHistoryDialog() {
+        const input = prompt(
+            '📊 Price History\n\n' +
+            'Enter product number or paste product UUID:',
+            ''
+        );
+        if (input === null || !input.trim()) return;
+
+        const trimmed = input.trim();
+        const uuidRe  = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+        if (uuidRe.test(trimmed)) {
+            _directQuery(
+                'price_history_report',
+                { product_id: trimmed },
+                'Loading price history…'
+            );
+        } else if (/^\d+$/.test(trimmed)) {
+            _directQuery(
+                'price_history_report',
+                { product_number: parseInt(trimmed, 10) },
+                `Loading price history for product #${trimmed}…`
+            );
+        } else {
+            alert('Please enter a valid product number (e.g. 32) or a UUID.');
+        }
+    }
+
+    function escapeHTML(s) {
+        return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function formatCurrency(n, currency = 'USD') {
+        const v = parseFloat(n);
+        if (isNaN(v)) return '$0.00';
+        return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency }).format(v);
+    }
+
+    function formatBigNumber(n) {
+        const v = parseFloat(n);
+        if (isNaN(v)) return '0';
+        return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(v);
+    }
+
+    // === Markdown Formatter ===
+    function formatMarkdown(text) {
+        return text
+            .replace(/^#### (.+)$/gm, '<div class="report-title">$1</div>')
+            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+            .replace(/^\s*---\s*$/gm, '<hr>')
+            .replace(/\n/g, '<br>');
+    }
+
+    // === Main Response Router ===
+    function buildProductResponseHTML(text) {
+        if (!text) return "<div class='message-error'>No response</div>";
+
+        let rawText, mode, reportMode;
+
+        if (Array.isArray(text) && text[0]) {
+            rawText = text[0].output || "";
+            mode = text[0].mode || null;
+            reportMode = text[0].reportMode || null;
+            console.log("📦 Received array response:", { output: rawText.substring(0, 100), mode, reportMode });
+        } else if (typeof text === "object" && text.output) {
+            rawText = text.output;
+            mode = text.mode || null;
+            reportMode = text.reportMode || null;
+            console.log("📦 Received object response:", { output: rawText.substring(0, 100), mode, reportMode });
+        } else {
+            rawText = String(text);
+            mode = null;
+            reportMode = null;
+            console.log("📦 Received string response:", rawText.substring(0, 100));
+        }
+
+        if (!mode) {
+            const modeMatch = rawText.match(/\[MODE:(\w+)\]/);
+            if (modeMatch) {
+                mode = modeMatch[1];
+                console.log("📦 Extracted mode from text:", mode);
+            }
+        }
+
+        console.log(`✅ Routing to mode: ${mode}`);
+        
+        switch(mode) {
+            case 'list':
+                return buildProductListHTML(rawText);
+            case 'get_details':
+            case 'get':
+            case 'detail':
+                return buildProductDetailsHTML(rawText);
+            case 'add':
+            case 'add_confirmation':
+            case 'create':
+            case 'create_confirmation':
+                return buildAddConfirmationHTML(rawText);
+            case 'update':
+            case 'update_confirmation':
+                return buildUpdateConfirmationHTML(rawText);
+            case 'bulk_adjust_stock':
+                return buildBulkAdjustStockHTML(rawText);
+            case 'inventory_summary':
+                return buildInventorySummaryHTML(rawText);
+            case 'low_stock':
+                return buildLowStockHTML(rawText);
+            case 'price_history':
+                return buildPriceHistoryHTML(rawText);
+            case 'price_matrix':
+                return buildPriceMatrixHTML(rawText);
+            default:
+                return buildFallbackResponse(rawText);
+        }
+    }
+
+    // === Fallback Response Handler ===
+    function buildFallbackResponse(rawText) {
+        const routes = [
+            { regex: /PRODUCT LIST|List.*products/i, handler: buildProductListHTML },
+            { regex: /PRODUCT DETAILS|Product Details/i, handler: buildProductDetailsHTML },
+            { regex: /PRODUCT CREATED|Created Successfully|Product added Successfully/i, handler: buildAddConfirmationHTML },
+            { regex: /PRODUCT UPDATED|Updated Successfully/i, handler: buildUpdateConfirmationHTML },
+            { regex: /BULK STOCK|Bulk.*Update|Bulk Stock Adjustment/i, handler: buildBulkAdjustStockHTML },
+            { regex: /INVENTORY SUMMARY/i, handler: buildInventorySummaryHTML },
+            { regex: /LOW STOCK|Stock Alert/i, handler: buildLowStockHTML },
+            { regex: /PRICE HISTORY/i, handler: buildPriceHistoryHTML },
+            { regex: /PRICE MATRIX/i, handler: buildPriceMatrixHTML },
+            { regex: /ERROR|error|Failed|Invalid/i, handler: buildErrorHTML },
+        ];
+
+        for (const route of routes) {
+            if (route.regex.test(rawText)) {
+                console.log(`Fallback matched: ${route.regex}`);
+                return route.handler(rawText);
+            }
+        }
+
+        return buildPlainMessageHTML(rawText);
+    }
+
+    function buildPlainMessageHTML(text) {
+        const formatted = formatMarkdown(text);
+        return `
+            <div class="details-record fade-in">
+                <div class="full-message">${formatted}</div>
+                <div class="create-btn-container" style="margin-top: 1.25rem;">
+                    <button class="pf-btn pf-btn-secondary" onclick="goBackHome()">🏠 Back Home</button>
+                </div>
+            </div>
+        `;
+    }
+
+    function buildErrorHTML(text) {
+        return `
+            <div class="message-error fade-in">
+                <strong>❌ Error</strong><br>
+                ${formatMarkdown(text)}
+            </div>
+        `;
+    }
+
+    // === MODE: list - Product List ===
+    // FIX: Parse FULL UUIDs (never truncated)
+    function buildProductListHTML(text) {
+        lastMode1Text = text;
+        lastProductRecords = [];
+
+        // Split into product blocks
+        const blocks = text.split(/\*\*\d+\.\s+/);
+        
+        let products = [];
+        
+        for (let i = 1; i < blocks.length; i++) {
+            const block = blocks[i];
+            
+            // Parse product name and ID - capture FULL UUID
+            const headerMatch = block.match(/^([^\*]+)\*\*\s*\(Product ID:\s*([a-f0-9-]+)/i);
+            if (!headerMatch) continue;
+            
+            const name = headerMatch[1].trim();
+            // FIX: Get the FULL Product ID from the text - look for complete UUID pattern
+            let id = headerMatch[2];
+            // If truncated (ends with ...), try to find the full UUID elsewhere
+            if (id.endsWith('...')) {
+                // The ID is truncated in the display, we need the full one
+                // For now, store the truncated version - we'll fix the Format Response Code
+                id = id.replace('...', '');
+            }
+            
+            // Parse Product# 
+            const productNumMatch = block.match(/Product#:\s*([^\n]+)/i);
+            const productNum = productNumMatch ? productNumMatch[1].trim() : 'N/A';
+            
+            // Parse SKU
+            const skuMatch = block.match(/SKU:\s*([^\n|]+)/i);
+            const sku = skuMatch ? skuMatch[1].trim() : '';
+            
+            // Parse Category Name
+            const categoryMatch = block.match(/Category:\s*([^\n]+)/i);
+            const category = categoryMatch ? categoryMatch[1].trim() : '';
+            
+            // Parse Category#
+            const categoryNumMatch = block.match(/Category#:\s*([^\n]+)/i);
+            const categoryNum = categoryNumMatch ? categoryNumMatch[1].trim() : '';
+            
+            // Parse Category ID - get FULL UUID
+            const categoryIdMatch = block.match(/Category ID:\s*([a-f0-9-]+)/i);
+            let categoryId = categoryIdMatch ? categoryIdMatch[1].trim() : '';
+            if (categoryId.endsWith('...')) {
+                categoryId = categoryId.replace('...', '');
+            }
+            
+            // Parse Description
+            const descMatch = block.match(/Description:\s*([^\n]+)/i);
+            const description = descMatch ? descMatch[1].trim() : '';
+            
+            // Parse Stock
+            const stockMatch = block.match(/Stock:\s*(\d+)\s*units/i);
+            const stock = stockMatch ? stockMatch[1] : '0';
+            
+            // Parse Prices
+            const retailMatch = block.match(/Retail:\s*\$([0-9,.]+)/i);
+            const promoMatch = block.match(/Promo:\s*\$([0-9,.]+)/i);
+            const wholesaleMatch = block.match(/Wholesale:\s*\$([0-9,.]+)/i);
+            
+            const retail = retailMatch ? retailMatch[1].replace(/,/g, '') : null;
+            const promo = promoMatch ? promoMatch[1].replace(/,/g, '') : null;
+            const wholesale = wholesaleMatch ? wholesaleMatch[1].replace(/,/g, '') : null;
+            
+            // Parse Status
+            const statusMatch = block.match(/Status:\s*(Active|Inactive)/i);
+            const isActive = statusMatch ? statusMatch[1] : 'Active';
+            
+            // Parse timestamps
+            const createdMatch = block.match(/Created:\s*([^\n]+)/i);
+            const updatedMatch = block.match(/Updated:\s*([^\n]+)/i);
+            const created = createdMatch ? createdMatch[1].trim() : '';
+            const updated = updatedMatch ? updatedMatch[1].trim() : '';
+            
+            const p = {
+                num: i,
+                productNum,
+                name,
+                id,
+                sku,
+                category,
+                categoryNum,
+                categoryId,
+                stock,
+                retail,
+                promo,
+                wholesale,
+                isActive,
+                description,
+                created,
+                updated
+            };
+            
+            p.auditState = (!p.sku || !p.retail) ? "review" : "validated";
+            lastProductRecords.push(p);
+            products.push(p);
+        }
+
+        // Build HTML
+        let html = `<div class="audit-record fade-in">`;
+        html += `<div class="report-title">📋 Product List</div>`;
+
+        // ── Google-style free-text search bar ─────────────────────────────
+        // Uses MODE: list (NOT product_search). Accepts natural-language queries
+        // such as "Find products like DeskFlow in the product name". The query is
+        // sent through fillAndSend() exactly like the 🔍 Search home-page button,
+        // so the AI agent routes it to the list handler with full filter support.
+        html += `
+        <div class="product-list-search-bar" id="plsBar">
+          <span class="pls-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+          </span>
+          <div class="pls-spinner"></div>
+          <input type="text" id="productListSearchInput"
+                 placeholder="Search products… (3+ chars auto-searches)"
+                 autocomplete="off">
+        </div>`;
+
+        // Extract search term if present
+        const searchMatch = text.match(/Search:\s*"([^"]+)"/i);
+        if (searchMatch) {
+            html += `<div style="margin: 0.5rem 0; color: #0078d7; font-size: 0.95rem; font-weight: bold;">🔍 Search: "${escapeHTML(searchMatch[1])}"</div>`;
+        }
+        
+        // Extract pagination info
+        const pageMatch = text.match(/Page\s+(\d+)\s+of\s+(\d+)/i);
+        const totalMatch = text.match(/Showing\s+(\d+)\s+of\s+(\d+)\s+products/i);
+        
+        if (pageMatch || totalMatch) {
+            html += `<div style="margin: 0.5rem 0; color: #6c757d; font-size: 0.9rem;">`;
+            if (totalMatch) html += `Showing ${totalMatch[1]} of ${totalMatch[2]} products`;
+            if (pageMatch) html += ` | Page ${pageMatch[1]} of ${pageMatch[2]}`;
+            html += `</div>`;
+        }
+
+        html += `<div class="create-btn-container" style="margin-bottom: 1rem;">
+            <button class="pf-btn pf-btn-secondary" onclick="goBackHome()">🏠 Back Home</button>
+            <button class="pf-btn pf-btn-save" onclick="createNewProductForm()">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Add / Update Product
+            </button>
+        </div>`;
+
+        if (products.length > 0) {
+            products.forEach(p => {
+                html += renderProductRecord(p, { isInList: true });
+            });
+        } else {
+            html += `<div class="message-warning">ℹ️ No products found matching your criteria.</div>`;
+        }
+
+        html += `<div class="create-btn-container" style="justify-content: space-between; margin-top: 1rem;">
+            <button class="pf-btn pf-btn-secondary" onclick="goBackHome()">🏠 Back Home</button>
+            <button class="pf-btn pf-btn-save" onclick="createNewProductForm()">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Add / Update Product
+            </button>
+        </div>`;
+
+        html += `</div>`;
+        lastListHTML = html;
+
+        // Wire smart search on the product-list result bar after DOM is live.
+        // Uses _homeSearchDirect (same direct SP path as home-page bar — no AI Agent).
+        setTimeout(() => {
+            _initSmartSearch('productListSearchInput', (q) => {
+                _homeSearchDirect(q);
+            });
+        }, 50);
+
+        return html;
+    }
+
+    // === MODE: get_details - Product Details ===
+    function buildProductDetailsHTML(text) {
+        const clean = text.replace(/\*\*/g, '');
+        
+        const getField = (pattern) => {
+            const match = clean.match(pattern);
+            return match ? match[1].trim() : "";
+        };
+
+        // Extract product name - handle multiple formats:
+        // 1. get_details: "Product Details" followed by name on next non-empty line
+        // 2. add/update: "[MODE:xxx] Product Added/Updated Successfully" followed by name
+        let name = "";
+        let id = "";
+        
+        // Try Format 1: Product Details header
+        const nameLineMatch = text.match(/Product Details\*?\*?\s*\n+\*?\*?([^\n*]+)\*?\*?\s*\n+Product ID:/i);
+        if (nameLineMatch) {
+            name = nameLineMatch[1].trim();
+        }
+        
+        // Try Format 2: [MODE:add/update] ... Successfully header
+        // Pattern: First line is **[MODE:xxx]...**, then blank, then product name, then Product ID:
+        if (!name) {
+            const addUpdateMatch = text.match(/\[MODE:(?:add|update)\][^\n]*\*?\*?\s*\n+\s*\n*\*?\*?([^\n*]+?)\*?\*?\s*\n+Product ID:/i);
+            if (addUpdateMatch) {
+                name = addUpdateMatch[1].trim();
+            }
+        }
+        
+        // Try Format 3: Alternative pattern - look for line before "Product ID:"
+        // Skip lines containing MODE, Successfully, or empty lines
+        if (!name) {
+            const lines = clean.split('\n');
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (line.toLowerCase().includes('product id:')) {
+                    // Look backwards for the product name
+                    for (let j = i - 1; j >= 0; j--) {
+                        const prevLine = lines[j].trim();
+                        // Skip empty lines and header lines
+                        if (!prevLine) continue;
+                        if (prevLine.includes('[MODE:')) continue;
+                        if (prevLine.toLowerCase().includes('successfully')) continue;
+                        if (prevLine.toLowerCase().includes('product details')) continue;
+                        // Found the product name
+                        name = prevLine;
+                        break;
+                    }
+                    break;
+                }
+            }
+        }
+        
+        // Get FULL Product ID
+        const idMatch = clean.match(/Product ID:\s*([a-f0-9-]+)/i);
+        if (idMatch) {
+            id = idMatch[1];
+        }
+        
+        // Get Product#
+        const productNumMatch = clean.match(/Product#:\s*([^\n]+)/i);
+        const productNum = productNumMatch ? productNumMatch[1].trim() : 'N/A';
+        
+        // Get Category fields
+        const categoryMatch = clean.match(/Category:\s*([^\n]+)/i);
+        const category = categoryMatch ? categoryMatch[1].trim() : '';
+        
+        const categoryNumMatch = clean.match(/Category#:\s*([^\n]+)/i);
+        const categoryNum = categoryNumMatch ? categoryNumMatch[1].trim() : '';
+        
+        // Get FULL Category ID
+        const categoryIdMatch = clean.match(/Category ID:\s*([a-f0-9-]+)/i);
+        const categoryId = categoryIdMatch ? categoryIdMatch[1].trim() : '';
+        
+        // Prices
+        const retailMatch = clean.match(/Retail:\s*\$([0-9,.]+)/i);
+        const promoMatch = clean.match(/Promo:\s*\$([0-9,.]+)/i);
+        const wholesaleMatch = clean.match(/Wholesale:\s*\$([0-9,.]+)/i);
+
+        const product = {
+            id,
+            productNum,
+            name,
+            sku: getField(/SKU:\s*([^\n|]+)/),
+            category,
+            categoryNum,
+            categoryId,
+            description: getField(/Description[:\s]*([^\n]+)/),
+            stock: getField(/Stock:\s*[^\d]*(\d+)/),
+            retail: retailMatch ? retailMatch[1].replace(/,/g, '') : null,
+            promo: promoMatch ? promoMatch[1].replace(/,/g, '') : null,
+            wholesale: wholesaleMatch ? wholesaleMatch[1].replace(/,/g, '') : null,
+            isActive: /Status:\s*Active/i.test(clean) ? "Active" : "Inactive",
+            created: getField(/Created:\s*([^\n]+)/),
+            updated: getField(/Updated:\s*([^\n]+)/)
+        };
+
+        // Parse pricing history
+        const priceHistory = [];
+        const historyMatches = [...text.matchAll(/(\d+)\.\s*([^:]+):\s*\$([0-9,.]+)\s*(\[ACTIVE\])?[\s\S]*?(\w+\s+\d+,\s*\d+)/gi)];
+        historyMatches.forEach(m => {
+            priceHistory.push({
+                priceType: m[2].trim(),
+                priceValue: m[3],
+                effectiveFrom: m[5],
+                isCurrent: !!m[4]
+            });
+        });
+
+        let html = `<div class="audit-record fade-in" id="pf_unified_root">`;
+
+        // ── Search banner (Option 2) ──────────────────────────────────────
+        // Always rendered so the user can search for another product without
+        // going back to the home screen. When a product is already loaded the
+        // banner shows the product chip + Update Mode badge immediately.
+        const hasProduct = !!id;
+        const chipHTML = hasProduct
+            ? `<div class="pf-product-chip">
+                <span class="chip-icon">📦</span>
+                <span class="chip-name">${escapeHTML(product.name)}</span>
+                <span class="chip-meta">${escapeHTML(id)}${product.sku ? ' · ' + product.sku : ''}</span>
+                <button class="chip-clear" onclick="_pfClearProduct()" title="Clear — switch to Add Mode">&times;</button>
+               </div>
+               <div class="pf-search-hint" style="color:#4338ca;">✅ Update Mode active — edit the fields below and click <strong>Update Product</strong></div>`
+            : _pfTypeaheadWidgetHTML +
+               `<div class="pf-search-hint">💡 Type the product name to search — select a result to switch to <strong>Update Mode</strong></div>`;
+
+        const modeBadgeHTML = hasProduct
+            ? `<span class="pf-mode-update">✎ Update Mode</span>`
+            : `<span class="pf-mode-add">➕ Add Mode</span>`;
+
+        html += `
+        <div class="pf-card" style="margin-bottom:1rem; border:1.5px solid #c7d2fe; overflow:visible;">
+          <div class="pf-card-header" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+            <div>
+              <div class="pf-card-title">🔍 Product Search <span style="font-size:0.8rem;font-weight:400;color:#888;">(optional)</span></div>
+              <div class="pf-card-subtitle">Search an existing product to update — or leave empty to add a new one</div>
+            </div>
+            <div id="pf_mode_badge">${modeBadgeHTML}</div>
+          </div>
+          <div class="pf-card-body" style="padding:1rem 1.5rem; overflow:visible;">
+            <div id="pf_product_area">${chipHTML}</div>
+          </div>
+        </div>
+        <div id="pf_search_init" style="display:none"
+             data-mode="${hasProduct ? 'update' : 'add'}"
+             data-product-id="${escapeHTML(id)}"
+             data-product-name="${escapeHTML(product.name)}"
+             data-product-sku="${escapeHTML(product.sku || '')}"></div>`;
+
+        if (lastListHTML) {
+            html += `<div class="create-btn-container" style="margin-bottom:0.75rem;">
+                       <button class="pf-btn pf-btn-secondary" onclick="goBackToProductList()">← Back to List</button>
+                     </div>`;
+        }
+        html += renderProductRecord(product, { isEditable: true, priceHistory });
+        html += `</div>`;
+        return html;
+    }
+
+    // === MODE: add - Add Confirmation ===
+    function buildAddConfirmationHTML(text) {
+        let html = `<div class="message-success fade-in">`;
+        html += `<strong>✨ Product Added Successfully!</strong>`;
+        html += `</div>`;
+        html += buildProductDetailsHTML(text);
+        return html;
+    }
+
+    // === MODE: update - Update Confirmation ===
+    function buildUpdateConfirmationHTML(text) {
+        // Only show the success banner if the server response actually confirms an update occurred.
+        // Guards against the banner appearing on plain detail views routed through this handler.
+        const isConfirmedUpdate = /product updated successfully|updated successfully|update.*success|successfully updated/i.test(text);
+
+        let html = '';
+
+        if (isConfirmedUpdate) {
+            let bannerLabel = 'Product Updated Successfully!';
+            if (text.includes('Price Added') || /price.*change/i.test(text)) {
+                bannerLabel = 'Product Updated Successfully! (Price Changed)';
+            }
+
+            html += `<div class="message-success fade-in">`;
+            html += `<strong>✅ ${bannerLabel}</strong>`;
+            html += `</div>`;
+
+            // New Status and Current Stock are intentionally NOT shown here —
+            // they are already visible in the edit form fields below.
+        }
+
+        html += buildProductDetailsHTML(text);
+        return html;
+    }
+
+    // === MODE: bulk_adjust_stock - Bulk Stock Update ===
+    function buildBulkAdjustStockHTML(text) {
+        const rowsMatch = text.match(/Rows Affected:\s*(\d+)/i);
+        const adjustmentMatch = text.match(/Adjustment.*?:\s*([+-]?\d+)/i);
+        
+        let html = `<div class="inventory-record fade-in">`;
+        html += `<div class="report-title">📊 Bulk Stock Adjustment Complete</div>`;
+        
+        html += `<div class="message-success">`;
+        html += `<strong>✅ Bulk Update Successful</strong><br>`;
+        if (rowsMatch) html += `Products Updated: <strong>${rowsMatch[1]}</strong><br>`;
+        if (adjustmentMatch) html += `Adjustment Applied: <strong>${adjustmentMatch[1]}</strong> units`;
+        html += `</div>`;
+
+        const lines = text.split('\n');
+        let inTable = false;
+        let headerParsed = false;
+        let products = [];
+        
+        for (const line of lines) {
+            const trimmedLine = line.trim();
+            
+            if (!trimmedLine) continue;
+            
+            if (trimmedLine.includes('Product Name') && trimmedLine.includes('SKU') && trimmedLine.includes('|')) {
+                inTable = true;
+                continue;
+            }
+            
+            if (inTable && trimmedLine.match(/^\|\s*-+\s*\|/)) {
+                headerParsed = true;
+                continue;
+            }
+            
+            if (inTable && headerParsed && trimmedLine.startsWith('|') && trimmedLine.endsWith('|')) {
+                const cells = trimmedLine.split('|').map(c => c.trim()).filter((c, i, arr) => i > 0 && i < arr.length - 1);
+                
+                if (cells.length >= 5) {
+                    products.push({
+                        name: cells[0] || 'N/A',
+                        sku: cells[1] || 'N/A',
+                        productNum: cells[2] || 'N/A',
+                        oldStock: parseInt(cells[3]) || 0,
+                        newStock: parseInt(cells[4]) || 0,
+                        change: cells[5] || '0'
+                    });
+                }
+            }
+        }
+        
+        if (products.length > 0) {
+            html += `<table class="summary-table">
+                <thead><tr>
+                    <th>#</th>
+                    <th>Product Name</th>
+                    <th>SKU</th>
+                    <th>Product#</th>
+                    <th>Old Stock</th>
+                    <th>New Stock</th>
+                    <th>Change</th>
+                </tr></thead><tbody>`;
+            
+            products.forEach((p, idx) => {
+                const change = p.newStock - p.oldStock;
+                const changeClass = change > 0 ? 'stock-ok' : change < 0 ? 'stock-out' : '';
+                
+                html += `<tr>
+                    <td>${idx + 1}</td>
+                    <td>${escapeHTML(p.name)}</td>
+                    <td>${escapeHTML(p.sku)}</td>
+                    <td>${escapeHTML(p.productNum)}</td>
+                    <td>${p.oldStock}</td>
+                    <td><strong>${p.newStock}</strong></td>
+                    <td class="${changeClass}">${change > 0 ? '+' : ''}${change}</td>
+                </tr>`;
+            });
+            
+            html += `</tbody></table>`;
+        }
+
+        html += `<div class="create-btn-container" style="margin-top: 1rem;">
+            <button class="pf-btn pf-btn-secondary" onclick="goBackHome()">🏠 Back Home</button>
+        </div>`;
+        html += `</div>`;
+        return html;
+    }
+
+    // === MODE: inventory_summary ===
+    function buildInventorySummaryHTML(text) {
+        let html = `<div class="inventory-record fade-in">`;
+        html += `<div class="report-title">📊 Inventory Summary by Category</div>`;
+
+        const thresholdMatch = text.match(/Low Stock Threshold:\s*(\d+)/i);
+        const generatedMatch = text.match(/Generated:\s*([^\n]+)/i);
+        
+        if (generatedMatch) {
+            html += `<div style="color: #666; font-size: 0.9rem; margin-bottom: 0.5rem;">🕒 Generated: ${escapeHTML(generatedMatch[1])}</div>`;
+        }
+        if (thresholdMatch) {
+            html += `<div style="color: #666; font-size: 0.9rem; margin-bottom: 1rem;">⚙️ Low Stock Threshold: <strong>${thresholdMatch[1]} units</strong></div>`;
+        }
+
+        html += `<table class="summary-table">
+            <thead><tr>
+                <th>Category Name</th>
+                <th>Category#</th>
+                <th style="text-align: center;">Products</th>
+                <th style="text-align: right;">Total Stock</th>
+                <th style="text-align: right;">Inventory Cost</th>
+                <th style="text-align: right;">Potential Revenue</th>
+                <th style="text-align: right;">Potential Profit</th>
+            </tr></thead><tbody>`;
+
+        const lines = text.split('\n');
+        let inTable = false;
+        let headerParsed = false;
+        let grandTotals = { products: 0, stock: 0, cost: 0, revenue: 0, profit: 0 };
+        
+        for (const line of lines) {
+            const trimmedLine = line.trim();
+            
+            if (!trimmedLine) continue;
+            
+            if (trimmedLine.includes('| Category |') && trimmedLine.includes('Products')) {
+                inTable = true;
+                continue;
+            }
+            
+            if (inTable && trimmedLine.match(/^\|\s*-+\s*\|/)) {
+                headerParsed = true;
+                continue;
+            }
+            
+            if (inTable && headerParsed && trimmedLine.startsWith('|') && trimmedLine.endsWith('|')) {
+                const cells = trimmedLine.split('|').map(c => c.trim()).filter((c, i, arr) => i > 0 && i < arr.length - 1);
+                
+                if (cells.length >= 6) {
+                    const category = cells[0] || 'N/A';
+                    const categoryNum = cells[1] || '';
+                    const products = parseInt(cells[2]) || 0;
+                    const stock = parseInt(cells[3].replace(/,/g, '')) || 0;
+                    const cost = parseFloat(cells[4].replace(/[$,]/g, '')) || 0;
+                    const revenue = parseFloat(cells[5].replace(/[$,]/g, '')) || 0;
+                    const profit = parseFloat(cells[6]?.replace(/[$,]/g, '')) || (revenue - cost);
+                    
+                    grandTotals.products += products;
+                    grandTotals.stock += stock;
+                    grandTotals.cost += cost;
+                    grandTotals.revenue += revenue;
+                    grandTotals.profit += profit;
+                    
+                    html += `<tr>
+                        <td>📦 ${escapeHTML(category)}</td>
+                        <td>${escapeHTML(categoryNum)}</td>
+                        <td style="text-align: center;">${products}</td>
+                        <td style="text-align: right;">${formatBigNumber(stock)} units</td>
+                        <td style="text-align: right;">${formatCurrency(cost)}</td>
+                        <td style="text-align: right;">${formatCurrency(revenue)}</td>
+                        <td style="text-align: right;">${formatCurrency(profit)}</td>
+                    </tr>`;
+                }
+            }
+        }
+
+        html += `<tr class="grand-totals-row">
+            <td colspan="2"><strong>🏆 GRAND TOTALS</strong></td>
+            <td style="text-align: center;"><strong>${grandTotals.products}</strong></td>
+            <td style="text-align: right;"><strong>${formatBigNumber(grandTotals.stock)}</strong></td>
+            <td style="text-align: right;"><strong>${formatCurrency(grandTotals.cost)}</strong></td>
+            <td style="text-align: right;"><strong>${formatCurrency(grandTotals.revenue)}</strong></td>
+            <td style="text-align: right;"><strong>${formatCurrency(grandTotals.profit)}</strong></td>
+        </tr>`;
+
+        html += `</tbody></table>`;
+        html += `<div class="create-btn-container" style="margin-top: 1rem;">
+            <button class="pf-btn pf-btn-secondary" onclick="goBackHome()">🏠 Back Home</button>
+        </div>`;
+        html += `</div>`;
+        return html;
+    }
+
+    // === MODE: low_stock ===
+    function buildLowStockHTML(text) {
+        let html = `<div class="inventory-record fade-in">`;
+        html += `<div class="report-title" style="color:#dc3545;">🚨 Low Stock Alert Report</div>`;
+
+        const thresholdMatch = text.match(/Threshold:\s*(\d+)/i);
+        const alertCountMatch = text.match(/Total Alerts:\s*(\d+)/i);
+        
+        if (thresholdMatch) {
+            html += `<div style="margin-bottom: 0.5rem;"><span class="field-title">⚙️ Threshold:</span> <strong>${thresholdMatch[1]} units</strong></div>`;
+        }
+        if (alertCountMatch) {
+            html += `<div class="message-warning" style="margin-bottom: 1rem;">⚠️ <strong>${alertCountMatch[1]}</strong> product(s) need attention</div>`;
+        }
+
+        html += `<table class="summary-table">
+            <thead><tr>
+                <th>#</th>
+                <th>Product Name</th>
+                <th>SKU</th>
+                <th>Product#</th>
+                <th>Category Name</th>
+                <th>Category#</th>
+                <th style="text-align: center;">Stock</th>
+                <th style="text-align: right;">Retail Price</th>
+                <th style="text-align: right;">Promo Price</th>
+                <th style="text-align: right;">Wholesale Price</th>
+                <th>Alert</th>
+            </tr></thead><tbody>`;
+
+        const lines = text.split('\n');
+        let inTable = false;
+        let headerParsed = false;
+        let rowNum = 0;
+        
+        for (const line of lines) {
+            const trimmedLine = line.trim();
+            
+            if (!trimmedLine) continue;
+            
+            if (trimmedLine.includes('Product Name') && trimmedLine.includes('SKU') && trimmedLine.includes('|')) {
+                inTable = true;
+                continue;
+            }
+            
+            if (inTable && trimmedLine.match(/^\|\s*-+\s*\|/)) {
+                headerParsed = true;
+                continue;
+            }
+            
+            if (inTable && headerParsed && trimmedLine.startsWith('|') && trimmedLine.endsWith('|')) {
+                const cells = trimmedLine.split('|').map(c => c.trim()).filter((c, i, arr) => i > 0 && i < arr.length - 1);
+                
+                if (cells.length >= 6) {
+                    rowNum++;
+                    const name = cells[0] || 'N/A';
+                    const sku = cells[1] || 'N/A';
+                    const productNum = cells[2] || 'N/A';
+                    const category = cells[3] || 'N/A';
+                    const categoryNum = cells[4] || '';
+                    const stock = parseInt(cells[5]) || 0;
+                    
+                    const retail = cells[6] ? cells[6].replace(/[$,]/g, '') : '';
+                    const promo = cells[7] ? cells[7].replace(/[$,]/g, '') : '';
+                    const wholesale = cells[8] ? cells[8].replace(/[$,]/g, '') : '';
+                    
+                    const isCritical = stock === 0;
+                    const alertClass = isCritical ? 'stock-out' : 'stock-low';
+                    const alertText = isCritical ? '❌ Out' : '⚠️ Low';
+                    
+                    html += `<tr>
+                        <td>${rowNum}</td>
+                        <td><strong>${escapeHTML(name)}</strong></td>
+                        <td>${escapeHTML(sku)}</td>
+                        <td>${escapeHTML(productNum)}</td>
+                        <td>${escapeHTML(category)}</td>
+                        <td>${escapeHTML(categoryNum)}</td>
+                        <td style="text-align: center;"><span class="${alertClass}"><strong>${stock}</strong></span></td>
+                        <td style="text-align: right;">${retail ? '$' + retail : '—'}</td>
+                        <td style="text-align: right;">${promo ? '$' + promo : '—'}</td>
+                        <td style="text-align: right;">${wholesale ? '$' + wholesale : '—'}</td>
+                        <td><span class="${alertClass}">${alertText}</span></td>
+                    </tr>`;
+                }
+            }
+        }
+
+        if (rowNum === 0) {
+            html += `<tr><td colspan="11" style="text-align: center;">✅ No low stock products found.</td></tr>`;
+        }
+
+        html += `</tbody></table>`;
+        html += `<div class="create-btn-container" style="margin-top: 1rem;">
+            <button class="pf-btn pf-btn-secondary" onclick="goBackHome()">🏠 Back Home</button>
+        </div>`;
+        html += `</div>`;
+        return html;
+    }
+
+    // === MODE: price_history ===
+    function buildPriceHistoryHTML(text) {
+        let html = `<div class="inventory-record fade-in">`;
+        html += `<div class="report-title">📈 Price History</div>`;
+
+        const productMatch = text.match(/Product:\s*([^\n]+)/i);
+        const skuMatch = text.match(/SKU:\s*([^\n]+)/i);
+        const productNumMatch = text.match(/Product#:\s*([^\n]+)/i);
+        
+        if (productMatch) {
+            html += `<div><span class="field-title">🏷️ Product Name:</span> <span class="field-value product-name">${escapeHTML(productMatch[1].replace(/\*\*/g, '').trim())}</span></div>`;
+        }
+        if (productNumMatch) {
+            html += `<div><span class="field-title">🔢 Product Number:</span> <span class="field-value product-num">${escapeHTML(productNumMatch[1].trim())}</span></div>`;
+        }
+        if (skuMatch) {
+            html += `<div style="margin-bottom: 1rem;"><span class="field-title">🔖 SKU:</span> <span class="field-value sku">${escapeHTML(skuMatch[1].trim())}</span></div>`;
+        }
+
+        const lines = text.split('\n');
+        let inTable = false;
+        let headerParsed = false;
+        let priceEntries = [];
+        
+        for (const line of lines) {
+            const trimmedLine = line.trim();
+            
+            if (!trimmedLine) continue;
+            
+            if (trimmedLine.includes('| Type |') && trimmedLine.includes('Price')) {
+                inTable = true;
+                continue;
+            }
+            
+            if (inTable && trimmedLine.match(/^\|\s*-+\s*\|/)) {
+                headerParsed = true;
+                continue;
+            }
+            
+            if (inTable && headerParsed && trimmedLine.startsWith('|') && trimmedLine.endsWith('|')) {
+                const cells = trimmedLine.split('|').map(c => c.trim()).filter((c, i, arr) => i > 0 && i < arr.length - 1);
+                
+                if (cells.length >= 5) {
+                    priceEntries.push({
+                        type: cells[0] || 'N/A',
+                        price: cells[1] ? cells[1].replace(/[$,]/g, '') : '0',
+                        from: cells[2] || 'N/A',
+                        to: cells[3] || 'Present',
+                        isCurrent: (cells[4] || '').toLowerCase() === 'yes'
+                    });
+                }
+            }
+        }
+
+        const priceTypes = {};
+        priceEntries.forEach(entry => {
+            if (!priceTypes[entry.type]) priceTypes[entry.type] = [];
+            priceTypes[entry.type].push(entry);
+        });
+
+        const typeColors = { 'Retail': '#28a745', 'Promo': '#e91e63', 'Wholesale': '#17a2b8' };
+
+        Object.keys(priceTypes).forEach(type => {
+            const entries = priceTypes[type];
+            if (entries.length === 0) return;
+            
+            const color = typeColors[type] || '#0078d7';
+            const colorRgb = color === '#28a745' ? '40,167,69' : color === '#e91e63' ? '233,30,99' : '23,162,184';
+            
+            html += `<div style="margin: 1.5rem 0;">`;
+            html += `<div style="font-weight: bold; color: ${color}; padding: 0.5rem; background: rgba(${colorRgb},0.1); border-left: 4px solid ${color}; border-radius: 4px;">💰 ${type} Price History</div>`;
+            html += `<div class="price-history" style="border-left-color: ${color};">`;
+            
+            entries.forEach(entry => {
+                html += `<div class="price-history-item ${entry.isCurrent ? 'current' : ''}">`;
+                html += `<div style="display: flex; justify-content: space-between; align-items: center;">`;
+                html += `<div>`;
+                html += `<span style="font-size: 1.2rem; font-weight: bold;">$${entry.price}</span>`;
+                if (entry.isCurrent) {
+                    html += ` <span class="stock-ok" style="margin-left: 0.5rem;">CURRENT</span>`;
+                }
+                html += `</div>`;
+                html += `<div style="color: #666; font-size: 0.9rem;">${escapeHTML(entry.from)} → ${escapeHTML(entry.to)}</div>`;
+                html += `</div></div>`;
+            });
+            
+            html += `</div></div>`;
+        });
+
+        if (Object.keys(priceTypes).length === 0) {
+            html += `<div class="message-warning">No price history data found.</div>`;
+        }
+
+        html += `<div class="create-btn-container" style="margin-top: 1rem;">
+            <button class="pf-btn pf-btn-secondary" onclick="goBackHome()">🏠 Back Home</button>
+        </div>`;
+        html += `</div>`;
+        return html;
+    }
+
+    // === MODE: price_matrix ===
+    function buildPriceMatrixHTML(text) {
+        let html = `<div class="inventory-record fade-in">`;
+
+        html += `<div class="report-title">💵 Price Matrix Report</div>`;
+
+        html += `<table class="inventory-table">
+            <thead><tr>
+                <th>Product Name</th>
+                <th>SKU</th>
+                <th>Product#</th>
+                <th>Category Name</th>
+                <th>Category#</th>
+                <th style="text-align: right;">Retail Price</th>
+                <th style="text-align: right;">Promo Price</th>
+                <th style="text-align: right;">Wholesale Price</th>
+                <th style="text-align: right;">Margin</th>
+            </tr></thead><tbody>`;
+
+        const lines = text.split('\n');
+        let inTable = false;
+        let headerParsed = false;
+        let totalRetail = 0, totalWholesale = 0, totalMargin = 0;
+        let productCount = 0;
+        
+        for (const line of lines) {
+            const trimmedLine = line.trim();
+            
+            if (!trimmedLine) continue;
+            
+            if (trimmedLine.includes('Product Name') && trimmedLine.includes('SKU') && trimmedLine.includes('|')) {
+                inTable = true;
+                continue;
+            }
+            
+            if (inTable && trimmedLine.match(/^\|\s*-+\s*\|/)) {
+                headerParsed = true;
+                continue;
+            }
+            
+            if (inTable && headerParsed && trimmedLine.startsWith('|') && trimmedLine.endsWith('|')) {
+                const cells = trimmedLine.split('|').map(c => c.trim()).filter((c, i, arr) => i > 0 && i < arr.length - 1);
+                
+                if (cells.length >= 6) {
+                    productCount++;
+                    const name = cells[0] || 'N/A';
+                    const sku = cells[1] || 'N/A';
+                    const productNum = cells[2] || 'N/A';
+                    const category = cells[3] || 'N/A';
+                    const categoryNum = cells[4] || '';
+                    
+                    const retailStr = cells[5] ? cells[5].replace(/[$,]/g, '') : '';
+                    const promoStr = cells[6] ? cells[6].replace(/[$,]/g, '') : '';
+                    const wholesaleStr = cells[7] ? cells[7].replace(/[$,]/g, '') : '';
+                    
+                    const retail = retailStr ? parseFloat(retailStr) : 0;
+                    const promo = promoStr ? parseFloat(promoStr) : 0;
+                    const wholesale = wholesaleStr ? parseFloat(wholesaleStr) : 0;
+                    
+                    const margin = retail > 0 && wholesale > 0 ? retail - wholesale : 0;
+                    const marginPct = retail > 0 && wholesale > 0 ? (margin / retail) * 100 : 0;
+                    
+                    totalRetail += retail;
+                    totalWholesale += wholesale;
+                    totalMargin += margin;
+                    
+                    const marginClass = 
+                        margin < 0 ? 'negative-margin' :
+                        margin > 0 ? 'strong-margin' :
+                        'neutral-margin';
+                    
+                    html += `<tr>
+                        <td><strong>${escapeHTML(name)}</strong></td>
+                        <td>${escapeHTML(sku)}</td>
+                        <td>${escapeHTML(productNum)}</td>
+                        <td>${escapeHTML(category)}</td>
+                        <td>${escapeHTML(categoryNum)}</td>
+                        <td style="text-align: right;">${retail ? formatCurrency(retail) : '—'}</td>
+                        <td style="text-align: right;">${promo ? formatCurrency(promo) : '—'}</td>
+                        <td style="text-align: right;">${wholesale ? formatCurrency(wholesale) : '—'}</td>
+                        <td style="text-align: right;" class="${marginClass}">
+                            ${wholesale ? formatCurrency(margin) : '—'}
+                            <br><small style="color:#6c757d; font-size: 0.85rem;">${marginPct ? marginPct.toFixed(1) + '%' : ''}</small>
+                        </td>
+                    </tr>`;
+                }
+            }
+        }
+
+        html += `<tr class="grand-totals-row">
+            <td colspan="5"><strong>GRAND TOTALS (${productCount} products)</strong></td>
+            <td style="text-align: right;"><strong>${formatCurrency(totalRetail)}</strong></td>
+            <td></td>
+            <td style="text-align: right;"><strong>${formatCurrency(totalWholesale)}</strong></td>
+            <td style="text-align: right;"><strong>${formatCurrency(totalMargin)}</strong></td>
+        </tr>`;
+
+        html += `</tbody></table>`;
+        html += `<div class="create-btn-container" style="margin-top: 1rem;">
+            <button class="pf-btn pf-btn-secondary" onclick="goBackHome()">🏠 Back Home</button>
+        </div>`;
+        html += `</div>`;
+        return html;
+    }
+
+    // === Render Product Record — PREMIUM REDESIGN ===
+    function renderProductRecord(product, options = {}) {
+        const { isInList = false, isEditable = false, priceHistory = [] } = options;
+
+        const stockBadge = product.stock == 0
+            ? '<span class="stock-out">Out of Stock</span>'
+            : parseInt(product.stock) <= 10
+                ? '<span class="stock-low">Low Stock</span>'
+                : '<span class="stock-ok">In Stock</span>';
+
+        const statusBadge = product.isActive === 'Active'
+            ? '<span class="status-active">● Active</span>'
+            : '<span class="status-inactive">● Inactive</span>';
+
+        // ---------------------------------------------------------------
+        // LIST VIEW — compact premium card
+        // ---------------------------------------------------------------
+        if (isInList) {
+            let auditBorder = '';
+            if (product.auditState === 'validated') auditBorder = 'border-left: 3px solid var(--accent-emerald);';
+            if (product.auditState === 'review')    auditBorder = 'border-left: 3px solid var(--accent-amber);';
+
+            return `
+            <div class="product-card" style="${auditBorder}">
+                <div class="record-line-1">
+                    <div class="field-row" style="flex: 1; gap: 16px;">
+                        <span style="flex:2;">
+                            <span class="field-title">Product Name</span>&nbsp;
+                            <span class="field-value product-name">${escapeHTML(product.name || '—')}</span>
+                        </span>
+                        <span>
+                            <span class="field-title">SKU</span>&nbsp;
+                            <span class="field-value sku">${escapeHTML(product.sku || '—')}</span>
+                        </span>
+                        <span>${statusBadge}</span>
+                    </div>
+                </div>
+                <div class="record-line-2">
+                    <span><span class="field-title">Product#</span>&nbsp;<span class="field-value product-num">${escapeHTML(product.productNum || 'N/A')}</span></span>
+                    <span><span class="field-title">Category</span>&nbsp;<span class="field-value category-name">${escapeHTML(product.category || '—')}</span></span>
+                    <span><span class="field-title">Retail</span>&nbsp;<span class="field-value price">${product.retail ? '$' + product.retail : '—'}</span></span>
+                    <span><span class="field-title">Wholesale</span>&nbsp;<span class="field-value price wholesale">${product.wholesale ? '$' + product.wholesale : '—'}</span></span>
+                    <span><span class="field-title">Stock</span>&nbsp;<span class="field-value stock">${escapeHTML(product.stock || '0')}</span>&nbsp;${stockBadge}</span>
+                </div>
+                <div class="record-line-3" style="font-size:0.75rem;">
+                    <span><span class="field-title">Product ID</span>&nbsp;<span class="field-value product-id">${escapeHTML(product.id || '—')}</span></span>
+                </div>
+                <div class="action-buttons" style="padding: 0.5rem 1rem; border-top: 1px solid var(--border-subtle); background: rgba(255,255,255,0.015);">
+                    <button class="pf-btn pf-btn-secondary" onclick="showProductDetailFromList('${escapeHTML(product.id)}')">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                        View Details
+                    </button>
+                    <button class="pf-btn pf-btn-save" onclick="openEditFormFromList('${escapeHTML(product.id)}', '${escapeHTML(product.name)}', '${escapeHTML(product.sku || '')}')">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        Edit / Update
+                    </button>
+                </div>
+            </div>`;
+        }
+
+        // ---------------------------------------------------------------
+        // FORM VIEW — premium structured form card
+        // ---------------------------------------------------------------
+        const isNew = !product.id;
+        const formTitle  = isNew ? 'New Product' : 'Edit Product';
+        const formSubtitle = isNew ? 'Fill in the details to create a new product' : `Editing: ${escapeHTML(product.name || 'Product')}`;
+
+        // Helper: render a read-only field
+        const viewField = (label, valueHtml) => `
+            <div class="pf-field-view">
+                <div class="pf-label">${label}</div>
+                <div class="pf-value">${valueHtml}</div>
+            </div>`;
+
+        let html = `<div class="pf-card fade-in">`;
+
+        // ---- Card Header ----
+        html += `
+        <div class="pf-card-header">
+            <div>
+                <div class="pf-card-title">
+                    <span>${isNew ? '✦' : '✎'}</span>
+                    ${formTitle}
+                </div>
+                <div class="pf-card-subtitle">${formSubtitle}</div>
+            </div>
+            ${!isNew ? `<div>${statusBadge}</div>` : ''}
+        </div>`;
+
+        html += `<div class="pf-card-body">`;
+
+        // ---- Section 1: Identity ----
+        html += `<div class="pf-section">`;
+        html += `<div class="pf-section-label">Product Identity</div>`;
+        html += `<div class="pf-grid-2">`;
+
+        // Product Name (full width)
+        html += `<div class="pf-full">`;
+        if (isEditable) {
+            html += `<div class="pf-group">
+                <label class="pf-label">Product Name <span class="req">*required</span></label>
+                <input type="text" id="edit-name" class="pf-input" value="${escapeHTML(product.name || '')}" placeholder="e.g. DeskFlow Pro Ergonomic Chair">
+            </div>`;
+        } else {
+            html += viewField('Product Name', `<span class="field-value product-name">${escapeHTML(product.name || '—')}</span>`);
+        }
+        html += `</div>`;
+
+        // SKU
+        if (isEditable) {
+            html += `<div class="pf-group">
+                <label class="pf-label">SKU</label>
+                <input type="text" id="edit-sku" class="pf-input" value="${escapeHTML(product.sku || '')}" placeholder="e.g. SKU-00123">
+            </div>`;
+        } else {
+            html += viewField('SKU', `<span class="field-value sku">${escapeHTML(product.sku || '—')}</span>`);
+        }
+
+        // Product ID (read-only always)
+        html += viewField('Product ID', `<span class="field-value product-id pf-mono">${escapeHTML(product.id || '—')}</span>`);
+
+        html += `</div></div>`; // end grid + section
+
+        // ---- Section 2: Category ----
+        html += `<div class="pf-section">`;
+        html += `<div class="pf-section-label">Category</div>`;
+        if (isEditable) {
+            html += `<div class="pf-grid-3">
+                <div class="pf-group">
+                    <label class="pf-label">Category Name</label>
+                    <select id="edit-category-name" class="pf-select" onchange="syncCategoryDropdowns('name')">
+                        <option value="">— Select Category —</option>
+                        ${CATEGORIES.map(c => `<option value="${c.name}" ${product.category === c.name ? 'selected' : ''}>${c.name}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="pf-group">
+                    <label class="pf-label">Category Number</label>
+                    <select id="edit-category-num" class="pf-select" onchange="syncCategoryDropdowns('num')">
+                        <option value="">—</option>
+                        ${CATEGORIES.map(c => `<option value="${c.number}" ${product.categoryNum == c.number ? 'selected' : ''}>${c.number}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="pf-group">
+                    <label class="pf-label">Category ID</label>
+                    <select id="edit-category-id" class="pf-select pf-mono" style="font-size:0.72rem;" onchange="syncCategoryDropdowns('id')">
+                        <option value="">— Select ID —</option>
+                        ${CATEGORIES.map(c => `<option value="${c.id}" ${product.categoryId === c.id ? 'selected' : ''}>${c.id}</option>`).join('')}
+                    </select>
+                </div>
+            </div>`;
+        } else {
+            html += `<div class="pf-grid-3">`;
+            html += viewField('Category Name',   `<span class="field-value category-name">${escapeHTML(product.category || '—')}</span>`);
+            html += viewField('Category Number', `<span class="field-value category-num">${escapeHTML(product.categoryNum || '—')}</span>`);
+            html += viewField('Category ID',     `<span class="field-value category-id pf-mono" style="font-size:0.72rem;">${escapeHTML(product.categoryId || '—')}</span>`);
+            html += `</div>`;
+        }
+        html += `</div>`; // end section
+
+        // ---- Section 3: Pricing & Inventory ----
+        html += `<div class="pf-section">`;
+        html += `<div class="pf-section-label">Pricing & Inventory</div>`;
+        html += `<div class="pf-grid-4">`;
+
+        const priceFields = [
+            { key: 'retail',    id: 'edit-retail-price',    label: 'Retail Price',     cls: 'price',          req: false },
+            { key: 'promo',     id: 'edit-promo-price',     label: 'Promo Price',      cls: 'price promo',    req: false },
+            { key: 'wholesale', id: 'edit-wholesale-price', label: 'Wholesale Price',  cls: 'price wholesale', req: true  },
+        ];
+
+        priceFields.forEach(f => {
+            if (isEditable) {
+                html += `<div class="pf-group">
+                    <label class="pf-label">${f.label}${f.req ? ' <span class="req">*</span>' : ''}</label>
+                    <input type="number" id="${f.id}" class="pf-input" value="${product[f.key] || ''}" step="0.01" min="0" placeholder="0.00">
+                </div>`;
+            } else {
+                html += viewField(f.label, `<span class="field-value ${f.cls}">${product[f.key] ? '$' + product[f.key] : '—'}</span>`);
+            }
+        });
+
+        // Stock
+        if (isEditable) {
+            html += `<div class="pf-group">
+                <label class="pf-label">Stock Quantity</label>
+                <input type="number" id="edit-stock" class="pf-input" value="${product.stock || ''}" min="0" placeholder="0">
+            </div>`;
+        } else {
+            html += viewField('Stock Quantity', `<span class="field-value stock">${escapeHTML(product.stock || '0')}</span>&nbsp;${stockBadge}`);
+        }
+
+        html += `</div></div>`; // end grid + section
+
+        // ---- Section 4: Description & Status ----
+        html += `<div class="pf-section">`;
+        html += `<div class="pf-section-label">Details</div>`;
+        html += `<div class="pf-grid-4">`;
+
+        // Description — spans 3 of 4 columns
+        html += `<div style="grid-column: span 3;">`;
+        if (isEditable) {
+            html += `<div class="pf-group">
+                <label class="pf-label">Description</label>
+                <textarea id="edit-description" class="pf-textarea" placeholder="Brief product description...">${escapeHTML(product.description || '')}</textarea>
+            </div>`;
+        } else {
+            html += viewField('Description', `<span class="field-value description">${escapeHTML(product.description || '—')}</span>`);
+        }
+        html += `</div>`;
+
+        // Status — 1 column, same width as retail price
+        if (isEditable) {
+            html += `<div class="pf-group" style="align-self: end;">
+                <label class="pf-label">Status</label>
+                <select id="edit-status" class="pf-select">
+                    <option value="Active"   ${product.isActive === "Active"   ? "selected" : ""}>● Active</option>
+                    <option value="Inactive" ${product.isActive === "Inactive" ? "selected" : ""}>● Inactive</option>
+                </select>
+            </div>`;
+        } else {
+            html += viewField('Status', statusBadge);
+        }
+
+        html += `</div></div>`; // end grid + section
+
+        // ---- Section 5: Timestamps (read-only) ----
+        if (product.created || product.updated) {
+            html += `<div class="pf-section">`;
+            html += `<div class="pf-section-label">Audit Trail</div>`;
+            html += `<div class="pf-grid-2">`;
+            html += viewField('Created', `<span class="field-value timestamp">${escapeHTML(product.created || '—')}</span>`);
+            html += viewField('Last Updated', `<span class="field-value timestamp">${escapeHTML(product.updated || '—')}</span>`);
+            html += `</div></div>`;
+        }
+
+        html += `</div>`; // end pf-card-body
+
+        // ---- Action Footer ----
+        html += `<div class="pf-actions">`;
+
+        if (isInList) {
+            // handled above
+        } else if (isEditable && product.id) {
+            html += `${lastListHTML ? `<button class="pf-btn pf-btn-secondary" onclick="goBackToProductList()">← Back to List</button>` : ''}
+                <button class="pf-btn pf-btn-save" onclick="goBackHome()">🏠 Back Home</button>
+                <button class="pf-btn pf-btn-save" onclick="updateProductFromForm('${escapeHTML(product.id)}')">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                    Save Changes
+                </button>`;
+        } else if (isEditable && !product.id) {
+            html += `${lastListHTML ? `<button class="pf-btn pf-btn-secondary" onclick="goBackToProductList()">← Back to List</button>` : ''}
+                <button class="pf-btn pf-btn-save" onclick="goBackHome()">🏠 Back Home</button>
+                <button class="pf-btn pf-btn-save" onclick="saveNewProductFromForm()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Add Product
+                </button>`;
+        }
+
+        html += `</div></div>`; // end pf-actions + pf-card
+        return html;
+    }
+
+    // === Sync Category Dropdowns ===
+    function syncCategoryDropdowns(source) {
+        const idSelect = document.getElementById('edit-category-id');
+        const numSelect = document.getElementById('edit-category-num');
+        const nameSelect = document.getElementById('edit-category-name');
+        
+        if (!idSelect || !numSelect || !nameSelect) return;
+        
+        let category = null;
+        
+        if (source === 'id' && idSelect.value) {
+            category = getCategoryById(idSelect.value);
+        } else if (source === 'num' && numSelect.value) {
+            category = getCategoryByNumber(numSelect.value);
+        } else if (source === 'name' && nameSelect.value) {
+            category = getCategoryByName(nameSelect.value);
+        }
+        
+        if (category) {
+            idSelect.value = category.id;
+            numSelect.value = category.number;
+            nameSelect.value = category.name;
+        }
+    }
+
+    // === Navigation Functions ===
+    // === Show Product Detail — direct SP call (v16: no fillAndSend / AI Agent) ===
+    function showProductDetailFromList(productId) {
+        cameFromList = true;
+        // Post product_direct_operation with get_product_details context — routes directly
+        // to sp_products(p_mode := 'get_details') via pre-router without AI Agent.
+        _directQuery('get_product_details', { product_id: productId }, 'Loading product details…');
+    }
+
+    // === Open Unified Form pre-loaded with a product from the list ===
+    function openEditFormFromList(productId, productName, productSku) {
+        cameFromList = true;
+        createNewProductForm();  // render the unified form first
+        // Then immediately trigger product selection
+        setTimeout(() => {
+            _pfSelectProduct(productId, productName, productSku, '');
+        }, 100);
+    }
+
+    function goBackToProductList() {
+        if (lastListHTML) {
+            responseBox.innerHTML = lastListHTML;
+            cameFromList = false;
+        }
+    }
+
+    // ── Home panel HTML — single source of truth (v15b) ─────────────────────
+    // Used by: initial page load, goBackHome(), resetSession().
+    function getHomeHTML() {
+        return `
+            <div class="qs-panel fade-in">
+                <div id="home-search-container">
+                    <div class="home-search-bar-wrap">
+                        <div class="home-uni-search-row product-list-search-bar" id="homeSearchBar">
+                            <span class="home-search-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                                     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                                </svg>
+                            </span>
+                            <input type="text" id="homeProductSearchInput"
+                                   placeholder="Search products…"
+                                   autocomplete="off">
+                        </div>
+                    </div>
+                </div>
+                <div class="qs-buttons">
+                    <!-- Row 1 — all buttons now route directly to sp_products, no AI Agent -->
+                    <button class="unified-action-btn create" onclick="createNewProductForm()">➕ Add / Update Product</button>
+                    <button class="unified-action-btn" onclick="_showBulkStockDialog()">📈 Bulk Update</button>
+                    <button class="unified-action-btn" onclick="_directQuery('inventory_summary', {}, 'Loading inventory summary…')">📦 Inventory</button>
+                    <!-- Row 2 -->
+                    <button class="unified-action-btn" onclick="_directQuery('price_matrix_report', {is_active_filter: true}, 'Loading price matrix…')">💵 Price Matrix</button>
+                    <button class="unified-action-btn" onclick="_directQuery('low_stock_report', {low_stock_threshold: 150}, 'Loading low stock alerts…')">⚠️ Low Stock</button>
+                    <button class="unified-action-btn" onclick="_showPriceHistoryDialog()">📊 Price History</button>
+                </div>
+            </div>`;
+    }
+
+    function goBackHome() {
+        showHeader();
+        responseBox.innerHTML = getHomeHTML();
+        _initHomeSearch();
+    }
+
+    // === Create Product Form ===
+    // ====================================================================
+    //  UNIFIED ADD / UPDATE PRODUCT FORM — with One-Step Typeahead Search
+    // ====================================================================
+    let pf_selectedProduct = null;   // { id, name, sku } once user picks one
+    let pf_searchDebounceTimer = null;
+    let pf_mode = 'add';             // 'add' | 'update'
+
+    // Shared HTML for the form typeahead widget (used in 3 render sites) — v15c
+    const _pfTypeaheadWidgetHTML = `
+        <div class="pf-typeahead-wrapper" id="pf_typeahead_wrapper">
+          <span class="pf-search-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+          </span>
+          <div class="pf-typeahead-spinner" id="pf_search_spinner"></div>
+          <input type="text" id="pf_product_search" class="pf-typeahead-input"
+            placeholder="Type 2+ characters to search products…" autocomplete="off">
+          <div class="pf-dropdown" id="pf_dropdown"></div>
+        </div>`;
+
+    function createNewProductForm() {
+        hideHeader();               // header hidden in all AI Agent / form views (v15b)
+        responseBox.innerHTML = ''; // clear home screen immediately — buttons must not persist
+
+        pf_selectedProduct = null;
+        pf_mode = 'add';
+
+        const emptyProduct = {
+            id: "", productNum: "", name: "", category: "", categoryNum: "",
+            categoryId: "", sku: "", retail: "", promo: "", wholesale: "",
+            stock: "", description: "", isActive: "Active", created: "", updated: ""
+        };
+
+        let html = `<div class="audit-record fade-in" id="pf_unified_root">`;
+
+        // ── Search Banner ───────────────────────────────────────────────
+        html += `
+        <div class="pf-card" style="margin-bottom: 1rem; border: 1.5px solid #c7d2fe;">
+          <div class="pf-card-header" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+            <div>
+              <div class="pf-card-title">🔍 Product Search <span style="font-size:0.8rem;font-weight:400;color:#888;">(optional)</span></div>
+              <div class="pf-card-subtitle">Search an existing product to update — or leave empty to add a new one</div>
+            </div>
+            <div id="pf_mode_badge"><span class="pf-mode-add">➕ Add Mode</span></div>
+          </div>
+          <div class="pf-card-body" style="padding: 1rem 1.5rem;">
+            <div id="pf_product_area">
+              ${_pfTypeaheadWidgetHTML}
+              <div class="pf-search-hint">💡 Type the product name to search — select a result to switch to <strong>Update Mode</strong></div>
+            </div>
+          </div>
+        </div>`;
+
+        // ── Product Form (editable fields) ──────────────────────────────
+        html += renderProductRecord(emptyProduct, { isEditable: true });
+        html += `</div>`;
+
+        responseBox.innerHTML = html;
+        setTimeout(_pfInitTypeahead, 50);
+    }
+
+    // ── Post-render state sync ─────────────────────────────────────────
+    // Called immediately after responseBox.innerHTML is set.
+    // <script> tags inside innerHTML are NEVER executed by the browser, so
+    // we use a hidden data-* sentinel element instead and read it here.
+    function _pfPostRenderSetup() {
+        const sentinel = document.getElementById('pf_search_init');
+        if (!sentinel) return;
+        const mode = sentinel.dataset.mode;
+        if (mode === 'update') {
+            pf_mode = 'update';
+            pf_selectedProduct = {
+                id:   sentinel.dataset.productId   || '',
+                name: sentinel.dataset.productName || '',
+                sku:  sentinel.dataset.productSku  || ''
+            };
+            // Chip is already rendered in the HTML; no typeahead init needed.
+        } else {
+            pf_mode = 'add';
+            pf_selectedProduct = null;
+            setTimeout(_pfInitTypeahead, 50);
+        }
+    }
+
+    // ── Typeahead Initializer ──────────────────────────────────────────
+    function _pfInitTypeahead() {
+        const input    = document.getElementById('pf_product_search');
+        const wrapper  = document.getElementById('pf_typeahead_wrapper');
+        const dropdown = document.getElementById('pf_dropdown');
+        if (!input) return;
+
+        input.addEventListener('input', () => {
+            const q = input.value.trim();
+            clearTimeout(pf_searchDebounceTimer);
+            dropdown.innerHTML = '';
+            dropdown.classList.remove('visible');
+            wrapper.classList.remove('pf-loading');  // hide spinner, show icon (v15c)
+
+            // If user clears the search, go back to Add Mode
+            if (q.length === 0 && pf_mode === 'update') {
+                _pfClearProduct();
+                return;
+            }
+            if (q.length < 2) return;
+
+            wrapper.classList.add('pf-loading');  // show left spinner, hide icon (v15c)
+            pf_searchDebounceTimer = setTimeout(() => _pfSearchProducts(q), 400);
+        });
+
+        // Arrow-key navigation + Enter to select
+        input.addEventListener('keydown', (e) => {
+            const items = dropdown.querySelectorAll('.pf-dropdown-item');
+            if (!items.length) return;
+            const active = dropdown.querySelector('.pf-dropdown-item.active');
+            let idx = Array.from(items).indexOf(active);
+            if (e.key === 'ArrowDown') { e.preventDefault(); idx = Math.min(idx + 1, items.length - 1); }
+            else if (e.key === 'ArrowUp')   { e.preventDefault(); idx = Math.max(idx - 1, 0); }
+            else if (e.key === 'Enter' && active) { e.preventDefault(); active.click(); return; }
+            else if (e.key === 'Escape') { dropdown.classList.remove('visible'); return; }
+            else return;
+            items.forEach(i => i.classList.remove('active'));
+            items[idx]?.classList.add('active');
+            items[idx]?.scrollIntoView({ block: 'nearest' });
+        });
+
+        // Close on outside click
+        document.addEventListener('click', (e) => {
+            if (!document.getElementById('pf_typeahead_wrapper')?.contains(e.target)) {
+                dropdown?.classList.remove('visible');
+            }
+        }, { capture: true });
+    }
+
+    // ── Typeahead search — unified MODE:list path ──────────────────────
+    // Sends "Search products by name <query>" → pre-router routes to
+    // MODE:list (pageSize 20) → Build SQL Query → sp_products → formatter.
+    // Response arrives as [MODE:list] numbered-block markdown; parsed by
+    // _pfRenderProductDropdown parser #2.
+    // Note: MODE:product_search is retired (Option A unification).
+    async function _pfSearchProducts(query) {
+        const wrapper  = document.getElementById('pf_typeahead_wrapper');
+        const dropdown = document.getElementById('pf_dropdown');
+        if (!wrapper || !dropdown) return;
+
+        try {
+            const res = await fetch(WEBHOOK_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chatInput: { message: `Search products by name ${query}` },
+                    sessionId
+                })
+            });
+
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+
+            const text = typeof data === 'string' ? data
+                : (Array.isArray(data) ? data[0]?.output : null)
+                || data?.output || data?.response || data?.text || JSON.stringify(data);
+
+            wrapper.classList.remove('pf-loading');   // hide spinner, restore icon (v15c)
+            _pfRenderProductDropdown(text, dropdown);
+        } catch (err) {
+            console.error('Product search failed:', err);
+            wrapper.classList.remove('pf-loading');
+            if (dropdown) {
+                dropdown.innerHTML = `<div class="pf-dropdown-msg" style="color:#dc3545;">⚠️ Search failed. Check console.</div>`;
+                dropdown.classList.add('visible');
+            }
+        }
+    }
+
+    // ── Parse Search Response → Dropdown ──────────────────────────────
+    // Handles four response shapes (tried in order):
+    //   1. JSON array / {products:[]} — raw SP or future direct-JSON path
+    //   2. [MODE:list] formatter blocks — **N. Name** (Product ID: uuid)
+    //      This is the primary path: typeahead sends "Search products by name X",
+    //      pre-router routes to MODE:list, formatter returns numbered bold blocks.
+    //   3. Markdown table — | Name | ID | SKU | Category |
+    //   4. Inline "Name — (Product ID: uuid)" fallback
+    function _pfRenderProductDropdown(text, dropdown) {
+        const rows = [];
+
+        // ── 1. Fast-path: JSON / {products:[]} ────────────────────────
+        try {
+            const parsed = JSON.parse(text);
+            const arr = Array.isArray(parsed) ? parsed : parsed?.products || parsed?.data;
+            if (Array.isArray(arr)) {
+                arr.slice(0, 20).forEach(p => {
+                    const id = p.product_id || p.id || '';
+                    if (id) rows.push({ id, name: p.name || p.product_name || '', sku: p.sku || '', category: p.category || '' });
+                });
+            }
+        } catch (_) {}
+
+        // ── 2. [MODE:list] formatter output (PRIMARY) ─────────────────
+        // Format per product:
+        //   **N. Product Name** (Product ID: uuid)
+        //      Product#: 138
+        //      SKU: ELC-HUB-UC10
+        //      Category: Electronics
+        //      ...
+        if (rows.length === 0) {
+            // Split on the numbered bold header that starts each product block
+            const blocks = text.split(/(?=\*\*\d+\.)/);
+            for (const block of blocks) {
+                const headerMatch = block.match(
+                    /\*\*\d+\.\s+(.+?)\*\*\s+\(Product ID:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\)/i
+                );
+                if (!headerMatch) continue;
+                const name = headerMatch[1].trim();
+                const id   = headerMatch[2];
+                // "Category:" — careful not to match "Category#:"
+                const skuMatch = block.match(/SKU:\s*(\S+)/i);
+                const catMatch = block.match(/^\s*Category:\s*([^\n]+)/im);
+                rows.push({
+                    id,
+                    name,
+                    sku:      skuMatch ? skuMatch[1].trim() : '',
+                    category: catMatch ? catMatch[1].trim() : ''
+                });
+            }
+        }
+
+        // ── 3. Markdown table fallback ────────────────────────────────
+        // | Product Name | Product ID | SKU | Category |
+        if (rows.length === 0) {
+            const lines = text.split('\n');
+            let nameCol = -1, idCol = -1, skuCol = -1, catCol = -1, headerFound = false;
+            for (const line of lines) {
+                if (!line.includes('|')) continue;
+                const cells = line.split('|').map(c => c.trim()).filter((c, i, a) => i > 0 && i < a.length - 1);
+                if (cells.length === 0) continue;
+                if (!headerFound) {
+                    const lower = cells.map(c => c.toLowerCase());
+                    nameCol = lower.findIndex(c => c.includes('name'));
+                    idCol   = lower.findIndex(c => c.includes('id'));
+                    skuCol  = lower.findIndex(c => c.includes('sku'));
+                    catCol  = lower.findIndex(c => c.includes('category'));
+                    if (nameCol >= 0 || idCol >= 0) { headerFound = true; }
+                    continue;
+                }
+                if (/^[\s|:-]+$/.test(line)) continue;
+                const uuidRe = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+                let uuid = '';
+                if (idCol >= 0) uuid = (cells[idCol] || '').match(uuidRe)?.[0] || '';
+                if (!uuid) {
+                    for (const c of cells) { const m = c.match(uuidRe); if (m) { uuid = m[0]; break; } }
+                }
+                if (!uuid) continue;
+                const name = nameCol >= 0 ? cells[nameCol] : cells.find(c => c && !uuidRe.test(c) && !/^\d+$/.test(c) && !/^[-|]+$/.test(c)) || '';
+                rows.push({
+                    id: uuid,
+                    name: name.replace(/\*\*/g, ''),
+                    sku: skuCol >= 0 ? cells[skuCol] || '' : '',
+                    category: catCol >= 0 ? cells[catCol] || '' : ''
+                });
+            }
+        }
+
+        // ── 4. "Name — (Product ID: uuid)" inline fallback ────────────
+        if (rows.length === 0) {
+            const re = /([A-Za-z][A-Za-z0-9 ,.'&()\-]{1,60}?)\s*[—–|-]\s*\(?(?:Product ID:\s*)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\)?/gi;
+            for (const m of text.matchAll(re)) rows.push({ id: m[2], name: m[1].trim(), sku: '', category: '' });
+        }
+
+        if (rows.length === 0) {
+            dropdown.innerHTML = `<div class="pf-dropdown-msg">No products found. Try a different search.</div>`;
+            dropdown.classList.add('visible');
+            return;
+        }
+
+        dropdown.innerHTML = rows.slice(0, 20).map(r => `
+            <div class="pf-dropdown-item"
+                data-id="${escapeHTML(r.id)}"
+                data-name="${escapeHTML(r.name)}"
+                data-sku="${escapeHTML(r.sku)}"
+                data-category="${escapeHTML(r.category)}">
+                <div class="prod-name">${escapeHTML(r.name)}</div>
+                <div class="prod-sub">${r.id}${r.sku ? ' · SKU: ' + r.sku : ''}${r.category ? ' · ' + r.category : ''}</div>
+            </div>
+        `).join('');
+        dropdown.classList.add('visible');
+
+        dropdown.querySelectorAll('.pf-dropdown-item').forEach(item => {
+            item.addEventListener('click', () => {
+                dropdown.classList.remove('visible');
+                _pfSelectProduct(item.dataset.id, item.dataset.name, item.dataset.sku, item.dataset.category);
+            });
+        });
+    }
+
+    // ── Product Selected → Switch to Update Mode ───────────────────────
+    async function _pfSelectProduct(id, name, sku, category) {
+        pf_selectedProduct = { id, name, sku };
+        pf_mode = 'update';
+
+        // Show chip + loading state
+        _pfShowProductChip(name, id, sku);
+        _pfSetModeBadge('update');
+
+        // Show loading overlay on form
+        const formCard = document.querySelector('#pf_unified_root .pf-card:last-of-type');
+        if (formCard) {
+            formCard.style.opacity = '0.5';
+            formCard.style.pointerEvents = 'none';
+        }
+
+        // Fetch full product details
+        try {
+            const res = await fetch(WEBHOOK_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chatInput: { message: `Show product details for ${id}` },
+                    sessionId
+                })
+            });
+
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            const text = typeof data === 'string' ? data
+                : (Array.isArray(data) ? data[0]?.output : null)
+                || data?.output || data?.response || data?.text || '';
+
+            _pfPopulateFormFromText(text, id);
+        } catch (err) {
+            console.error('Fetch product details failed:', err);
+            // Still switch to Update Mode with available data
+            _pfPopulateFormFromText('', id);
+        } finally {
+            if (formCard) {
+                formCard.style.opacity = '';
+                formCard.style.pointerEvents = '';
+            }
+        }
+    }
+
+    // ── Parse detail text → populate form fields in-place ─────────────
+    function _pfPopulateFormFromText(text, productId) {
+        const clean = text.replace(/\*\*/g, '');
+        const getField = (re) => { const m = clean.match(re); return m ? m[1].trim() : ''; };
+
+        // Extract fields
+        let name = getField(/Product Name[:\s]+([^\n]+)/i) || getField(/^([^\n\[*]+)\n+Product ID:/im) || '';
+        const sku = getField(/SKU[:\s]+([^\n|]+)/i);
+        const category = getField(/Category[:\s]+([^\n]+)/i);
+        const categoryNum = getField(/Category#[:\s]+([^\n]+)/i);
+        const categoryId = getField(/Category ID[:\s]+([a-f0-9-]+)/i);
+        const retail = getField(/Retail[:\s]+\$?([0-9,.]+)/i).replace(/,/g,'');
+        const promo  = getField(/Promo[:\s]+\$?([0-9,.]+)/i).replace(/,/g,'');
+        const wholesale = getField(/Wholesale[:\s]+\$?([0-9,.]+)/i).replace(/,/g,'');
+        const stock  = getField(/Stock[:\s]+[^\d]*(\d+)/i);
+        const description = getField(/Description[:\s]+([^\n]+)/i);
+        const status  = /Status[:\s]*Active/i.test(clean) ? 'Active' : (/Status[:\s]*Inactive/i.test(clean) ? 'Inactive' : 'Active');
+        const created = getField(/Created[:\s]+([^\n]+)/i);
+        const updated = getField(/Updated[:\s]+([^\n]+)/i);
+
+        // Set form field values
+        const setVal = (id, val) => { const el = document.getElementById(id); if (el && val) el.value = val; };
+
+        setVal('edit-name', name);
+        setVal('edit-sku', sku);
+        setVal('edit-retail-price', retail);
+        setVal('edit-promo-price', promo);
+        setVal('edit-wholesale-price', wholesale);
+        setVal('edit-stock', stock);
+        setVal('edit-description', description);
+        setVal('edit-status', status);
+
+        // Category dropdowns
+        const catEl = document.getElementById('edit-category-name');
+        const catNumEl = document.getElementById('edit-category-num');
+        const catIdEl = document.getElementById('edit-category-id');
+        if (categoryId && catIdEl) { catIdEl.value = categoryId; syncCategoryDropdowns('id'); }
+        else if (categoryNum && catNumEl) { catNumEl.value = categoryNum; syncCategoryDropdowns('num'); }
+        else if (category && catEl) { catEl.value = category; syncCategoryDropdowns('name'); }
+
+        // Update form header to show we're editing
+        const cardTitle = document.querySelector('#pf_unified_root .pf-card:last-of-type .pf-card-title');
+        const cardSub   = document.querySelector('#pf_unified_root .pf-card:last-of-type .pf-card-subtitle');
+        if (cardTitle) cardTitle.innerHTML = '<span>✎</span> Edit Product';
+        if (cardSub) cardSub.textContent = `Editing: ${name || pf_selectedProduct?.name || 'Product'}`;
+
+        // Update the Product ID read-only field
+        const idValEl = document.querySelector('#pf_unified_root .field-value.product-id.pf-mono');
+        if (idValEl) idValEl.textContent = productId;
+
+        // Swap action footer buttons
+        _pfUpdateActionBar(productId);
+    }
+
+    // ── Replace the pf-actions bar for Update Mode ─────────────────────
+    function _pfUpdateActionBar(productId) {
+        const actionsBar = document.querySelector('#pf_unified_root .pf-actions');
+        if (!actionsBar) return;
+        actionsBar.innerHTML = `
+            ${lastListHTML ? `<button class="pf-btn pf-btn-secondary" onclick="goBackToProductList()">← Back to List</button>` : ''}
+            <button class="pf-btn pf-btn-save" onclick="goBackHome()">🏠 Back Home</button>
+            <button class="pf-btn pf-btn-danger" onclick="_pfDeleteProduct('${escapeHTML(productId)}')">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                Delete
+            </button>
+            <button class="pf-btn pf-btn-save" onclick="updateProductFromForm('${escapeHTML(productId)}')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                Update Product
+            </button>
+        `;
+    }
+
+    // ── Delete Product ─────────────────────────────────────────────────
+    // NOTE: sp_products has no 'delete' mode — AI Agent is the intentional
+    // fallback here. The Agent translates the free-text command into the
+    // appropriate SQL (soft-delete via status update or hard DELETE).
+    function _pfDeleteProduct(productId) {
+        if (!confirm(`Are you sure you want to delete this product?\n\nProduct ID: ${productId}\n\nThis action cannot be undone.`)) return;
+        fillAndSend(`Delete product ${productId}`);
+    }
+
+    // ── Clear product selection → back to Add Mode ─────────────────────
+    function _pfClearProduct() {
+        pf_selectedProduct = null;
+        pf_mode = 'add';
+
+        // Restore typeahead
+        const area = document.getElementById('pf_product_area');
+        if (area) {
+            area.innerHTML = _pfTypeaheadWidgetHTML +
+              `<div class="pf-search-hint">💡 Type the product name to search — select a result to switch to <strong>Update Mode</strong></div>`;
+            setTimeout(_pfInitTypeahead, 0);
+        }
+
+        _pfSetModeBadge('add');
+
+        // Reset form fields
+        ['edit-name','edit-sku','edit-retail-price','edit-promo-price','edit-wholesale-price','edit-stock','edit-description'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.value = '';
+        });
+        const statusEl = document.getElementById('edit-status');
+        if (statusEl) statusEl.value = 'Active';
+        ['edit-category-name','edit-category-num','edit-category-id'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.value = '';
+        });
+
+        // Reset form header
+        const cardTitle = document.querySelector('#pf_unified_root .pf-card:last-of-type .pf-card-title');
+        const cardSub   = document.querySelector('#pf_unified_root .pf-card:last-of-type .pf-card-subtitle');
+        if (cardTitle) cardTitle.innerHTML = '<span>✦</span> New Product';
+        if (cardSub)   cardSub.textContent = 'Fill in the details to create a new product';
+
+        // Reset Product ID field
+        const idValEl = document.querySelector('#pf_unified_root .field-value.product-id.pf-mono');
+        if (idValEl) idValEl.textContent = '—';
+
+        // Restore Add Mode action bar
+        const actionsBar = document.querySelector('#pf_unified_root .pf-actions');
+        if (actionsBar) {
+            actionsBar.innerHTML = `
+                ${lastListHTML ? `<button class="pf-btn pf-btn-secondary" onclick="goBackToProductList()">← Back to List</button>` : ''}
+                <button class="pf-btn pf-btn-save" onclick="goBackHome()">🏠 Back Home</button>
+                <button class="pf-btn pf-btn-save" onclick="saveNewProductFromForm()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Add Product
+                </button>
+            `;
+        }
+    }
+
+    // ── Mode Badge Helper ──────────────────────────────────────────────
+    function _pfSetModeBadge(mode) {
+        const badge = document.getElementById('pf_mode_badge');
+        if (!badge) return;
+        if (mode === 'update') {
+            badge.innerHTML = `<span class="pf-mode-update">✎ Update Mode</span>`;
+        } else {
+            badge.innerHTML = `<span class="pf-mode-add">➕ Add Mode</span>`;
+        }
+    }
+
+    // ── Show selected product as a chip ───────────────────────────────
+    function _pfShowProductChip(name, id, sku) {
+        const area = document.getElementById('pf_product_area');
+        if (!area) return;
+        area.innerHTML = `
+            <div class="pf-product-chip">
+                <span class="chip-icon">📦</span>
+                <span class="chip-name">${escapeHTML(name)}</span>
+                <span class="chip-meta">${escapeHTML(id)}${sku ? ' · ' + sku : ''}</span>
+                <button class="chip-clear" onclick="_pfClearProduct()" title="Clear — switch to Add Mode">&times;</button>
+            </div>
+            <div class="pf-search-hint" style="color:#4338ca;">✅ Update Mode active — edit the fields below and click <strong>Update Product</strong></div>
+        `;
+    }
+
+    // =========================================================================
+    // === DIRECT FORM SUBMIT — v11.0 ==========================================
+    // Bypasses AI Agent entirely. Sends structured JSON to pre-router which
+    // routes directly to Build SQL Query → sp_products stored procedure.
+    // Mirrors order_direct_operation / context pattern from order_v5.
+    // =========================================================================
+
+    // ── Shared async handler ─────────────────────────────────────────────────
+    async function _pfDirectOperation(productData, opLabel) {
+        // 1. Show loading overlay on the form card
+        const formRoot = document.getElementById('pf_unified_root');
+        const submitBtn = formRoot
+            ? formRoot.querySelector('.pf-actions .pf-btn-save:last-of-type')
+            : null;
+
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.dataset._origText = submitBtn.innerHTML;
+            submitBtn.innerHTML = `<span class="pf-spinner"></span> ${opLabel}`;
+        }
+
+        const overlayCard = formRoot
+            ? formRoot.querySelector('.pf-card:last-of-type')
+            : null;
+        if (overlayCard) {
+            overlayCard.style.opacity    = '0.6';
+            overlayCard.style.pointerEvents = 'none';
+        }
+
+        try {
+            // 2. POST structured payload — pre-router detects 'product_direct_operation'
+            //    and routes by productData.context without touching the AI Agent.
+            const res = await fetch(WEBHOOK_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sessionId,
+                    chatInput: {
+                        message:     'product_direct_operation',  // ← pre-router trigger
+                        productData                               // ← structured payload
+                    }
+                })
+            });
+
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+
+            // 3. Extract text from whatever shape the SP returns
+            const text = typeof data === 'string' ? data
+                : (Array.isArray(data) ? data[0]?.output : null)
+                || data?.output || data?.response || data?.text
+                || JSON.stringify(data);
+
+            // 4. Display confirmation in the response box
+            responseBox.innerHTML = buildProductResponseHTML(text);
+
+        } catch (err) {
+            console.error(`_pfDirectOperation error [${opLabel}]:`, err);
+            responseBox.innerHTML = buildErrorHTML(
+                `❌ ${opLabel} failed — ${err.message}. Check console for details.`
+            );
+        } finally {
+            // 5. Restore button / overlay regardless of success/failure
+            if (submitBtn) {
+                submitBtn.disabled  = false;
+                submitBtn.innerHTML = submitBtn.dataset._origText || opLabel;
+                delete submitBtn.dataset._origText;
+            }
+            if (overlayCard) {
+                overlayCard.style.opacity      = '';
+                overlayCard.style.pointerEvents = '';
+            }
+        }
+    }
+
+    // ── Save New Product ─────────────────────────────────────────────────────
+    function saveNewProductFromForm() {
+        const get = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+
+        const name          = get('edit-name');
+        const sku           = get('edit-sku');
+        const categoryId    = get('edit-category-id');
+        const categoryNum   = get('edit-category-num');
+        const categoryName  = get('edit-category-name');
+        const retailPrice   = get('edit-retail-price');
+        const promoPrice    = get('edit-promo-price');
+        const wholesalePrice= get('edit-wholesale-price');
+        const stock         = get('edit-stock');
+        const description   = get('edit-description');
+        const status        = get('edit-status') || 'Active';
+
+        // ── Validation ──────────────────────────────────────────────────
+        if (!name) { alert('Product name is required.'); return; }
+        if (!wholesalePrice) { alert('Wholesale price is required.'); return; }
+
+        // ── Build structured payload — pre-router maps these to SP params ─
+        const productData = {
+            context:          'create_product',
+            name,
+            sku:              sku           || undefined,
+            category_id:      categoryId    || undefined,
+            category_num:     categoryNum   || undefined,
+            category_name:    categoryName  || undefined,
+            retail_price:     retailPrice   ? parseFloat(retailPrice)    : undefined,
+            promo_price:      promoPrice    ? parseFloat(promoPrice)     : undefined,
+            wholesale_price:  wholesalePrice ? parseFloat(wholesalePrice) : undefined,
+            stock_quantity:   stock         ? parseInt(stock, 10)        : undefined,
+            description:      description  || undefined,
+            status,
+            created_by:       sessionId    || undefined
+        };
+
+        console.log('📦 saveNewProductFromForm → product_direct_operation', productData);
+        _pfDirectOperation(productData, 'Creating product…');
+    }
+
+    // ── Update Existing Product ──────────────────────────────────────────────
+    function updateProductFromForm(productId) {
+        const get = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+
+        const name          = get('edit-name');
+        const sku           = get('edit-sku');
+        const categoryId    = get('edit-category-id');
+        const categoryNum   = get('edit-category-num');
+        const retailPrice   = get('edit-retail-price');
+        const promoPrice    = get('edit-promo-price');
+        const wholesalePrice= get('edit-wholesale-price');
+        const stock         = get('edit-stock');
+        const description   = get('edit-description');
+        const status        = get('edit-status');
+
+        if (!productId) { alert('No product selected for update.'); return; }
+
+        // ── Build structured payload — pre-router maps these to SP params ─
+        const productData = {
+            context:          'update_product',
+            product_id:       productId,
+            name:             name          || undefined,
+            sku:              sku           || undefined,
+            category_id:      categoryId    || undefined,
+            category_num:     categoryNum   || undefined,
+            retail_price:     retailPrice   ? parseFloat(retailPrice)    : undefined,
+            promo_price:      promoPrice    ? parseFloat(promoPrice)     : undefined,
+            wholesale_price:  wholesalePrice ? parseFloat(wholesalePrice) : undefined,
+            stock_quantity:   stock         ? parseInt(stock, 10)        : undefined,
+            description:      description  || undefined,
+            status:           status        || undefined,
+            updated_by:       sessionId    || undefined
+        };
+
+        console.log('📦 updateProductFromForm → product_direct_operation', productData);
+        _pfDirectOperation(productData, 'Updating product…');
+    }
+
+    // === Voice Input ===
+    let recognition = null;
+    let isListening = false;
+    let voiceInputBaseline = '';
+    let voiceFinalTranscript = '';
+    
+    function toggleVoiceInput() {
+        if (isListening) {
+            stopVoiceInput();
+        } else {
+            startVoiceInput();
+        }
+    }
+    
+    function startVoiceInput() {
+        if (!recognition) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            
+            if (!SpeechRecognition) {
+                alert('Speech recognition is not supported in your browser. Please use Chrome, Edge, or Safari.');
+                return;
+            }
+            
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'en-US';
+            
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                let newFinalTranscript = '';
+                
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        newFinalTranscript += transcript + ' ';
+                    } else {
+                        interimTranscript += transcript;
+                    }
+                }
+                
+                if (newFinalTranscript) {
+                    voiceFinalTranscript += newFinalTranscript;
+                }
+                
+                const input = document.getElementById('message');
+                input.value = voiceInputBaseline + voiceFinalTranscript + interimTranscript;
+            };
+            
+            recognition.onerror = (event) => {
+                console.error('Speech recognition error:', event.error);
+                if (event.error === 'not-allowed' || event.error === 'permission-denied') {
+                    alert('Microphone permission denied. Please allow microphone access in your browser settings.');
+                }
+                stopVoiceInput();
+            };
+            
+            recognition.onend = () => {
+                if (isListening) {
+                    try {
+                        recognition.start();
+                    } catch (e) {
+                        console.log('Recognition restart failed');
+                        stopVoiceInput();
+                    }
+                }
+            };
+        }
+        
+        const input = document.getElementById('message');
+        voiceInputBaseline = input.value;
+        voiceFinalTranscript = '';
+        
+        try {
+            recognition.start();
+            isListening = true;
+            
+            document.getElementById('voiceBtn').classList.add('listening');
+            document.getElementById('voiceStatus').classList.add('active');
+            
+            console.log('🎤 Voice input started');
+            
+            const handleTextareaClick = () => {
+                if (isListening) stopVoiceInput();
+            };
+            
+            const handleTextareaInput = () => {
+                if (isListening) stopVoiceInput();
+            };
+            
+            input.addEventListener('click', handleTextareaClick, { once: true });
+            input.addEventListener('input', handleTextareaInput, { once: true });
+            input.addEventListener('keydown', handleTextareaInput, { once: true });
+            
+            input._voiceClickHandler = handleTextareaClick;
+            input._voiceInputHandler = handleTextareaInput;
+            
+        } catch (error) {
+            console.error('Error starting voice input:', error);
+        }
+    }
+
+    function stopVoiceInput() {
+        if (recognition) {
+            try {
+                recognition.stop();
+            } catch (e) {
+                console.log('Recognition already stopped');
+            }
+        }
+        
+        isListening = false;
+        
+        document.getElementById('voiceBtn').classList.remove('listening');
+        document.getElementById('voiceStatus').classList.remove('active');
+        
+        const input = document.getElementById('message');
+        if (input._voiceClickHandler) {
+            input.removeEventListener('click', input._voiceClickHandler);
+            input.removeEventListener('input', input._voiceInputHandler);
+            input.removeEventListener('keydown', input._voiceInputHandler);
+            delete input._voiceClickHandler;
+            delete input._voiceInputHandler;
+        }
+        
+        voiceInputBaseline = '';
+        voiceFinalTranscript = '';
+        
+        console.log('🎤 Voice input stopped');
+    }
+</script>
+
+</body>
+</html>

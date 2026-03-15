@@ -1,0 +1,3454 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>Lead Management - CRM AI Agent v6c</title>
+    <!-- 
+      LEAD MANAGEMENT SYSTEM v4.2 - INPUT BAR UX + LIFECYCLE MANAGEMENT
+      
+      FEATURES:
+      - ✅ Button clicks display command text in Input Bar before sending
+      - ✅ Input bar text remains visible during request processing
+      - ✅ Processing message shows the command being executed
+      - ✅ Input cleared only after response is displayed (or on error)
+      - ✅ Quick Examples and Quick Actions for common operations
+      - ✅ Full Lead Lifecycle: Create → Qualify → Convert
+      - ✅ Status badges with color coding
+      - ✅ Dedupe indicators for merged/duplicate leads
+      - ✅ Pipeline Report with charts
+      - ✅ JSON Preview Panel for all returned records
+      
+      SUPPORTED MODES (11):
+      - list: Paginated lead listing with search/filters
+      - get: Single lead with full details
+      - create: Create lead with duplicate detection
+      - update: Update lead fields
+      - qualify: Qualify a lead
+      - score: Update lead score
+      - convert: Convert lead to Account/Contact/Opportunity
+      - archive: Soft delete lead
+      - restore: Restore archived lead
+      - duplicates: Report duplicate leads
+      - merge: Merge duplicate leads
+      - pipeline: Lead pipeline summary
+      
+      BACKEND: n8n Workflow + PostgreSQL 17
+      API ENDPOINT: http://localhost:8000/leads-chat'
+      
+      v4.2 CHANGES:
+      - Issue #7: "View Qualified Leads" button (post-qualify confirmation) now calls
+                  sendDirectRequest('list leads:', { status: 'qualified' }) directly,
+                  bypassing the AI Agent entirely. Previously used sendRequest('Show
+                  qualified leads') which fell through to the AI Agent passthru path.
+
+      v4.1 CHANGES:
+      - Issue #1: Format response displays account/contact/opportunity IDs
+      - Issue #2: Post-conversion buttons properly bound to entity IDs
+                  - Shows buttons only when IDs are returned
+                  - Disables buttons for already-converted leads
+                  - Hides buttons on conversion errors
+      - Issue #3: Convert Lead button dynamically selects next unconverted lead
+      - Issue #4: Pipeline summary metrics cards reduced 50% (height/font)
+      - Issue #5: Qualify success banner reduced 50% (height/font)
+      - Issue #6: Create button moved to right, size matches Detail/Qualify
+    -->
+    <style>
+        /* === Galaxy Background === */
+        .galaxy-background {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            overflow: hidden;
+            background: radial-gradient(ellipse at center, #0d1f2d 0%, #0a0a1a 100%);
+        }
+        
+        .galaxy-background::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: 
+                radial-gradient(ellipse at 30% 40%, rgba(0, 191, 255, 0.4) 0%, transparent 40%),
+                radial-gradient(ellipse at 70% 60%, rgba(50, 205, 50, 0.4) 0%, transparent 40%),
+                radial-gradient(ellipse at 50% 50%, rgba(255, 165, 0, 0.3) 0%, transparent 50%);
+            animation: galaxy-rotate 120s linear infinite;
+        }
+        
+        .galaxy-background::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                radial-gradient(2px 2px at 20% 30%, white, transparent),
+                radial-gradient(2px 2px at 60% 70%, white, transparent),
+                radial-gradient(1px 1px at 50% 50%, white, transparent),
+                radial-gradient(1px 1px at 80% 10%, white, transparent),
+                radial-gradient(2px 2px at 90% 60%, white, transparent),
+                radial-gradient(1px 1px at 33% 50%, white, transparent),
+                radial-gradient(1px 1px at 66% 33%, white, transparent);
+            background-size: 200% 200%, 200% 200%, 300% 300%, 250% 250%, 200% 200%, 280% 280%, 220% 220%;
+            background-position: 0% 0%, 100% 100%, 50% 50%, 80% 20%, 10% 90%, 40% 60%, 70% 30%;
+            animation: stars-twinkle 8s ease-in-out infinite;
+        }
+        
+        .nebula-cloud {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(60px);
+            opacity: 0.6;
+            animation: nebula-float 20s ease-in-out infinite;
+        }
+        
+        .nebula-cloud:nth-child(1) {
+            top: 10%;
+            left: 20%;
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(0, 191, 255, 0.6) 0%, transparent 70%);
+            animation-delay: 0s;
+        }
+        
+        .nebula-cloud:nth-child(2) {
+            top: 50%;
+            right: 15%;
+            width: 500px;
+            height: 500px;
+            background: radial-gradient(circle, rgba(50, 205, 50, 0.5) 0%, transparent 70%);
+            animation-delay: -7s;
+        }
+        
+        .nebula-cloud:nth-child(3) {
+            bottom: 15%;
+            left: 35%;
+            width: 450px;
+            height: 450px;
+            background: radial-gradient(circle, rgba(255, 165, 0, 0.5) 0%, transparent 70%);
+            animation-delay: -14s;
+        }
+        
+        @keyframes galaxy-rotate {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        @keyframes stars-twinkle {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        @keyframes nebula-float {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            33% { transform: translate(30px, -30px) scale(1.1); }
+            66% { transform: translate(-20px, 20px) scale(0.9); }
+        }
+        
+        /* === Base Layout === */
+        body {
+            font-family: "Segoe UI", Tahoma, sans-serif;
+            background: transparent;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            position: relative;
+        }
+        
+        header {
+            background: linear-gradient(135deg, rgba(0, 140, 180, 0.95) 0%, rgba(40, 167, 69, 0.95) 100%);
+            color: white;
+            padding: 0.5rem 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 20px rgba(0, 191, 255, 0.5);
+            backdrop-filter: blur(10px);
+            position: relative;
+            z-index: 10;
+            transition: max-height 0.25s ease, padding 0.25s ease, opacity 0.2s ease;
+            overflow: hidden;
+            max-height: 80px;
+        }
+        header.header-hidden {
+            max-height: 0;
+            padding-top: 0;
+            padding-bottom: 0;
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        header h1 { 
+            font-size: 1.2rem; 
+            font-weight: bold; 
+            margin: 0;
+            text-shadow: 0 0 20px rgba(255, 255, 255, 0.5), 0 0 40px rgba(0, 191, 255, 0.5);
+        }
+        
+        .session-info { font-size: 0.8rem; display: flex; align-items: center; gap: 0.5rem; }
+        .session-info button {
+            background: #fff; color: #008cb4; border: none; border-radius: 4px;
+            padding: 0.25rem 0.5rem; cursor: pointer; font-size: 0.7rem; font-weight: bold;
+        }
+        .session-info button:hover { background: #cce0ff; }
+
+        .response {
+            flex: 1; 
+            overflow-y: auto; 
+            padding: 1rem; 
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-top: 1px solid rgba(0, 191, 255, 0.3);
+            position: relative;
+            z-index: 5;
+        }
+        
+        .response .footer { color: #008cb4; font-weight: bold; margin-top: 1rem; display: block; }
+
+        .response .record {
+            background: #f9fbfd; border: 1px solid #e0e6ed; border-radius: 6px;
+            padding: 0.75rem; margin: 0.75rem 0;
+        }
+        
+        .response .record:hover {
+            box-shadow: 0 2px 8px rgba(0, 140, 180, 0.2);
+            cursor: pointer;
+        }
+
+        /* Field color-coding for leads */
+        .response .lead-name { color: #008cb4; font-weight: bold; }
+        .response .id { color: #d17b00; font-weight: bold; }
+        .response .email { color: #28a745; font-weight: bold; }
+        .response .phone { color: #e83e8c; font-weight: bold; }
+        .response .company { color: #6f42c1; font-weight: bold; }
+        .response .source { color: #17a2b8; font-weight: bold; }
+        .response .rating { color: #fd7e14; font-weight: bold; }
+        .response .score { color: #28a745; font-weight: bold; }
+        .response .created, .response .updated {
+            font-weight: normal; font-size: 0.8rem; color: #555;
+        }
+
+        /* Input styles */
+        input[type="text"], input[type="email"], input[type="number"], select, textarea {
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 0.25rem 0.4rem;
+            font-family: inherit;
+            font-size: 0.95rem;
+            color: #333;
+        }
+        input[type="text"]:focus, input[type="email"]:focus, input[type="number"]:focus, select:focus, textarea:focus {
+            border-color: #008cb4;
+            outline: none;
+            box-shadow: 0 0 3px rgba(0, 140, 180, 0.3);
+        }
+
+        /* === Input Bar === */
+        .input-bar {
+            display: flex;
+            flex-direction: column;
+            padding: 0.2rem 1rem;
+            background: linear-gradient(180deg, rgba(0, 191, 255, 0.25) 0%, rgba(50, 205, 50, 0.25) 100%);
+            backdrop-filter: blur(10px);
+            border-top: 1px solid rgba(0, 191, 255, 0.4);
+            position: relative;
+            z-index: 10;
+        }
+        
+        .input-bar form {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            position: relative;
+            width: 100%;
+        }
+        
+        .search-icon {
+            position: absolute;
+            left: 1rem;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 1.5rem;
+            height: 1.5rem;
+            color: #666;
+            pointer-events: none;
+            z-index: 2;
+            transition: color 0.3s ease;
+        }
+        
+        .search-icon svg {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        
+        .input-bar form:hover .search-icon,
+        .input-bar form:focus-within .search-icon {
+            color: #000;
+        }
+        
+        .input-wrapper {
+            flex: 1;
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+        
+        #message {
+            flex: 1;
+            width: 100%;
+            padding: 0.5rem 3rem 0.5rem 3.5rem;
+            border: 1px solid rgba(0, 191, 255, 0.4);
+            border-radius: 24px;
+            font-family: monospace;
+            resize: none;
+            background: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(5px);
+            box-shadow: 0 1px 6px rgba(0, 140, 180, 0.2);
+            transition: all 0.3s ease;
+            height: 1.5rem;
+        }
+        
+        #message:hover {
+            height: 2.5rem;
+            box-shadow: 0 2px 8px rgba(0, 140, 180, 0.3);
+            border-color: rgba(0, 140, 180, 0.45);
+        }
+        
+        #message:focus {
+            height: 2.5rem;
+            outline: none;
+            box-shadow: 0 2px 12px rgba(0, 140, 180, 0.5);
+            border-color: rgba(0, 140, 180, 0.6);
+        }
+        
+        button.send {
+            display: none;
+        }
+        
+        /* Spinner for send button */
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Voice Input Button */
+        .voice-btn-google {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: none;
+            background: #f1f3f4;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+            color: #5f6368;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        
+        .voice-btn-google:hover {
+            background: #e8eaed;
+            color: #202124;
+        }
+        
+        .voice-btn-google.listening {
+            background: #d93025;
+            color: white;
+            animation: pulse-mic 1.5s ease-in-out infinite;
+        }
+        
+        @keyframes pulse-mic {
+            0%, 100% { transform: translateY(-50%) scale(1); box-shadow: 0 0 0 0 rgba(217, 48, 37, 0.4); }
+            50% { transform: translateY(-50%) scale(1.05); box-shadow: 0 0 0 10px rgba(217, 48, 37, 0); }
+        }
+        
+        /* Voice Status Indicator */
+        .voice-status {
+            position: absolute;
+            bottom: calc(100% + 8px);
+            right: 8px;
+            background: #d93025;
+            color: white;
+            padding: 6px 12px;
+            border-radius: 16px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            display: none;
+            animation: fadeInDown 0.3s ease-out;
+            box-shadow: 0 2px 8px rgba(217, 48, 37, 0.3);
+        }
+        
+        .voice-status.active {
+            display: block;
+        }
+        
+        @keyframes fadeInDown {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* === Quick Actions Button Styling === */
+        .unified-action-btn {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            border: none;
+            padding: 0.45rem 1rem;
+            font-size: 0.82rem;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(40, 167, 69, 0.4), 0 0 15px rgba(32, 201, 151, 0.3);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+            width: 136px;
+            height: 40px;
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .unified-action-btn::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255, 255, 255, 0.3) 0%, transparent 70%);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        
+        .unified-action-btn:hover::before {
+            opacity: 1;
+        }
+        
+        .unified-action-btn:hover {
+            background: linear-gradient(135deg, #218838 0%, #1ba67a 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.6), 0 0 25px rgba(32, 201, 151, 0.5);
+        }
+
+        .action-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid #e0e6ed;
+        }
+
+        /* Status Badges for Leads */
+        .status-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        
+        .status-badge.new { background: #e9ecef; color: #495057; }
+        .status-badge.working { background: #cce5ff; color: #004085; }
+        .status-badge.qualified { background: #d4edda; color: #155724; }
+        .status-badge.converted { background: #e2d9f3; color: #4a235a; }
+        .status-badge.deleted { background: #f8d7da; color: #721c24; }
+        .status-badge.disqualified { background: #ffeaa7; color: #856404; }
+
+        /* Rating Badges */
+        .rating-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.7rem;
+            font-weight: bold;
+        }
+        
+        .rating-badge.hot { background: #ff6b6b; color: white; }
+        .rating-badge.warm { background: #ffa502; color: white; }
+        .rating-badge.cold { background: #74b9ff; color: white; }
+
+        /* Dedupe Indicators */
+        .dedupe-banner {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+            padding: 0.75rem;
+            border-radius: 6px;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .dedupe-group-badge {
+            background: #fff3cd;
+            color: #856404;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.7rem;
+            font-weight: bold;
+            cursor: help;
+        }
+
+        /* Record cards */
+        .response .lead-record {
+            background: #f9fbfd;
+            border: 1px solid #e0e6ed;
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 0.75rem 0;
+            transition: all 0.2s ease;
+        }
+        
+        .response .lead-record:hover {
+            box-shadow: 0 3px 12px rgba(0, 140, 180, 0.2);
+            cursor: pointer;
+            border-color: #008cb4;
+        }
+
+        /* Audit record styling */
+        .response .audit-record {
+            border: 2px solid #008cb4;
+            background: #f4f9ff;
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+        
+        .response .audit-record:hover {
+            box-shadow: 0 3px 8px rgba(0, 140, 180, 0.3);
+        }
+
+        /* Success record */
+        .response .success-record {
+            border: 2px solid #28a745;
+            background: #f0fff4;
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+
+        /* Error record */
+        .response .error-record {
+            border: 2px solid #dc3545;
+            background: #fff3f3;
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+
+        /* Warning record */
+        .response .warning-record {
+            border: 2px solid #fd7e14;
+            background: #fff8e6;
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+
+        /* Summary tables */
+        .summary-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 0.5rem;
+            font-family: Consolas, "Courier New", monospace;
+        }
+        
+        .summary-table th {
+            background: #008cb4;
+            color: white;
+            padding: 8px 12px;
+            text-align: left;
+            white-space: nowrap;
+        }
+        
+        .summary-table td {
+            border: 1px solid #e0e6ed;
+            padding: 8px 12px;
+            vertical-align: top;
+        }
+        
+        .summary-table tr:nth-child(even) td {
+            background: #f9fbfd;
+        }
+        
+        .summary-table tr:hover td {
+            background: #eef6ff;
+        }
+
+        /* Loading indicator */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #e0e6ed;
+            border-top-color: #008cb4;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        /* Pipeline Stats Cards - Compact version (50% reduced) */
+        .pipeline-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 0.75rem;
+            margin: 0.75rem 0;
+        }
+        
+        .pipeline-card {
+            background: linear-gradient(135deg, #f8f9fa 0%, #fff 100%);
+            border: 1px solid #e0e6ed;
+            border-radius: 8px;
+            padding: 0.75rem;
+            text-align: center;
+            box-shadow: 0 1px 5px rgba(0, 0, 0, 0.05);
+            transition: all 0.2s ease;
+        }
+        
+        .pipeline-card:hover {
+            box-shadow: 0 3px 8px rgba(0, 140, 180, 0.15);
+            transform: translateY(-1px);
+        }
+        
+        .pipeline-card .label {
+            font-size: 0.5rem;
+            color: #6c757d;
+            margin-bottom: 0.25rem;
+        }
+        
+        .pipeline-card .value {
+            font-size: 1rem;
+            font-weight: bold;
+            color: #008cb4;
+        }
+
+        /* Pipeline Section Cards */
+        .pipeline-section {
+            background: #fff;
+            border: 1px solid #e0e6ed;
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+        
+        .pipeline-section h4 {
+            margin: 0 0 0.75rem 0;
+            color: #008cb4;
+            border-bottom: 2px solid #008cb4;
+            padding-bottom: 0.5rem;
+        }
+
+        /* Create button container - Right aligned, compact */
+        .create-lead-btn-container {
+            margin-bottom: 1rem;
+            text-align: right;
+            padding-right: 1.75rem;
+        }
+
+        /* Form styling — full desktop width */
+        .lead-form {
+            max-width: 85%;
+            width: 85%;
+            margin: 0 auto;
+            padding: 1.5rem 2rem;
+            background: #fff;
+            border-radius: 0;
+            box-shadow: none;
+        }
+        
+        .lead-form .form-group {
+            margin-bottom: 1rem;
+        }
+        
+        .lead-form label {
+            display: block;
+            margin-bottom: 0.25rem;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .lead-form input,
+        .lead-form select {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 0.95rem;
+        }
+        
+        .lead-form input:focus,
+        .lead-form select:focus {
+            outline: none;
+            border-color: #008cb4;
+            box-shadow: 0 0 0 2px rgba(0, 140, 180, 0.1);
+        }
+        
+        .form-row {
+            display: flex;
+            gap: 1rem;
+        }
+        
+        .form-row .form-group {
+            flex: 1;
+        }
+
+        /* Fade in animation */
+        .fade-in {
+            animation: fadeIn 0.3s ease-in;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Keyboard shortcut styling */
+        kbd {
+            background: #f1f3f4;
+            border: 1px solid #dadce0;
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-family: monospace;
+            font-size: 0.8rem;
+            color: #5f6368;
+        }
+
+        /* Conversion links styling */
+        .conversion-links {
+            display: flex;
+            gap: 1rem;
+            margin: 1rem 0;
+            flex-wrap: wrap;
+        }
+        
+        .conversion-link {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.5rem 1rem;
+            background: #e7f3ff;
+            border-radius: 6px;
+            color: #004085;
+            text-decoration: none;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+        
+        .conversion-link:hover {
+            background: #cce0ff;
+        }
+
+        /* Quick Actions Button Grid - 2 rows x 4 columns */
+        .quick-actions-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.72rem;
+            max-width: 612px;
+            margin: 0 auto;
+        }
+        
+        @media (max-width: 768px) {
+            .quick-actions-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        /* ===== Unified Google-style Typeahead Search Bar (ported from Opportunity v18) ===== */
+        .gs-search-wrap {
+            position: relative;
+            width: 100%;
+        }
+        .gs-search-icon {
+            color: #5f6368;
+            margin-right: 0.5rem;
+            flex-shrink: 0;
+        }
+        .gs-search-field {
+            flex: 1;
+            border: none;
+            outline: none;
+            font-size: 0.95rem;
+            background: transparent;
+            color: #202124;
+            min-width: 0;
+        }
+        .gs-search-field::placeholder { color: #9aa0a6; }
+        .gs-clear-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: #5f6368;
+            font-size: 1.1rem;
+            padding: 0 0.25rem;
+            line-height: 1;
+            display: none;
+        }
+        .gs-clear-btn.visible { display: block; }
+        .gs-dropdown {
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            right: 0;
+            background: #fff;
+            border: 1px solid #dadce0;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.14);
+            z-index: 9999;
+            max-height: 280px;
+            overflow-y: auto;
+            display: none;
+        }
+        .gs-dropdown.open { display: block; }
+        .gs-dropdown-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.6rem;
+            padding: 0.65rem 1rem;
+            cursor: pointer;
+            border-bottom: 1px solid #f1f3f4;
+            transition: background 0.12s;
+        }
+        .gs-dropdown-item:last-child { border-bottom: none; }
+        .gs-dropdown-item:hover { background: #f1f8ff; }
+        .gs-item-icon { font-size: 1.1rem; flex-shrink: 0; margin-top: 2px; }
+        .gs-item-main { font-size: 0.93rem; font-weight: 600; color: #202124; }
+        .gs-item-sub  { font-size: 0.8rem; color: #5f6368; margin-top: 1px; }
+        .gs-spinner {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1rem;
+            color: #5f6368;
+            font-size: 0.88rem;
+        }
+        .gs-no-results {
+            padding: 0.75rem 1rem;
+            color: #5f6368;
+            font-size: 0.88rem;
+            font-style: italic;
+        }
+        .gs-selection-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            background: #e8f0fe;
+            border: 1px solid #aecbfa;
+            border-radius: 20px;
+            padding: 0.3rem 0.75rem;
+            font-size: 0.88rem;
+            color: #1a73e8;
+            margin-top: 0.5rem;
+        }
+        .gs-pill-dismiss {
+            cursor: pointer;
+            font-weight: bold;
+            color: #1a73e8;
+            font-size: 0.9rem;
+            line-height: 1;
+            background: none;
+            border: none;
+            padding: 0;
+        }
+        .gs-filter-label {
+            font-size: 0.8rem;
+            color: #5f6368;
+            margin-top: 0.35rem;
+        }
+
+        /* ===================================================
+           UNIFIED GOOGLE-STYLE SEARCH BAR  (.uni-search-row)
+           Identical to Opportunity v18 — pill shape, animated
+           height on focus (48 px → 72 px), icon always centred
+           =================================================== */
+        .uni-search-row {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            border: 1.5px solid #dadce0;
+            border-radius: 9999px;
+            background: #fff;
+            padding: 0 1.1rem;
+            min-height: 48px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            cursor: text;
+            transition:
+                min-height  0.30s cubic-bezier(0.4, 0, 0.2, 1),
+                padding     0.30s cubic-bezier(0.4, 0, 0.2, 1),
+                box-shadow  0.20s ease,
+                border-color 0.20s ease;
+        }
+        .uni-search-row:focus-within {
+            min-height: 72px;
+            border-color: #0078d7;
+            box-shadow: 0 3px 18px rgba(0, 120, 215, 0.22);
+        }
+        .uni-search-row .gs-search-icon {
+            color: #9aa0a6;
+            margin-right: 0.6rem;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            transition: color 0.2s ease;
+        }
+        .uni-search-row:focus-within .gs-search-icon {
+            color: #0078d7;
+        }
+        .uni-search-row .gs-search-field {
+            flex: 1;
+            border: none;
+            outline: none;
+            font-size: 1rem;
+            background: transparent;
+            color: #202124;
+            min-width: 0;
+            line-height: 1.4;
+            padding: 0;
+        }
+        .uni-search-row .gs-search-field::placeholder { color: #b0b8c1; }
+
+        /* Wrapper that constrains width on the home page */
+        .home-search-bar-wrap {
+            max-width: 750px;
+            margin: 0 auto 1.4rem;
+        }
+
+        /* Address field color */
+        .response .address { color: #6c757d; font-size: 0.85rem; }
+
+        /* Employee dropdown wrapper */
+        .employee-select-wrap { position: relative; }
+        .employee-select-wrap select { width: 100%; }
+    </style>
+</head>
+<body>
+    <div class="galaxy-background">
+        <div class="nebula-cloud"></div>
+        <div class="nebula-cloud"></div>
+        <div class="nebula-cloud"></div>
+    </div>
+
+    <header>
+        <h1>🎯 Lead Management - CRM AI Agent</h1>
+        <div class="session-info">
+            <span>Session: <span id="sessionId"></span></span>
+            <button onclick="resetSession()">Reset</button>
+        </div>
+    </header>
+
+    <div class="response" id="responseArea">
+        <div id="quick-ui" style="margin-top: 4.5rem; text-align: center; max-width: 900px; margin-left: auto; margin-right: auto;">
+
+            <!-- Unified Google-style Home Search Bar (Opportunity v18 parity) -->
+            <div class="home-search-bar-wrap">
+                <div class="gs-search-wrap" id="home-find-wrap">
+                    <div class="uni-search-row">
+                        <span class="gs-search-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="11" cy="11" r="8"/>
+                                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                            </svg>
+                        </span>
+                        <input class="gs-search-field" id="home-find-input"
+                               type="text" autocomplete="off" spellcheck="false"
+                               placeholder="Search leads by name, company, rating…">
+                        <button class="gs-clear-btn" type="button">×</button>
+                    </div>
+                    <div class="gs-dropdown"></div>
+                    <div class="gs-selection-pill" style="display:none;"></div>
+                    <div class="gs-filter-label"></div>
+                    <input type="hidden" id="home-find-id">
+                </div>
+            </div>
+
+            <div id="quick-actions" style="margin: 0 auto; max-width: 612px;">
+
+                <div class="quick-actions-grid">
+                    <button class="unified-action-btn" data-action="listLeads"    title="List all leads">📋 List Leads</button>
+                    <button class="unified-action-btn" data-action="createLead"   title="Create new lead">➕ Create Lead</button>
+                    <button class="unified-action-btn" data-action="updateLead"   title="Update lead info">⚙️ Update Lead</button>
+                    <button class="unified-action-btn" data-action="showPipeline" title="View pipeline summary">📈 Pipeline</button>
+                </div>
+
+                <div style="margin-top: 1rem; padding: 0.6rem 0.85rem; background: #f0f8ff; border-radius: 6px; font-size: 0.82rem; color: #555; text-align: left;">
+                    <strong>🎙️ Voice:</strong> Click the mic and speak &nbsp;·&nbsp;
+                    <strong>💡 Shortcuts:</strong>
+                    <kbd>Ctrl+L</kbd> List &nbsp;
+                    <kbd>Ctrl+P</kbd> Pipeline &nbsp;
+                    <kbd>Ctrl+D</kbd> Details
+                </div>
+                <div style="margin-top: 0.6rem; padding: 0.6rem 0.85rem; background: #f0fff4; border-radius: 6px; font-size: 0.82rem; color: #2d662d; text-align: left;">
+                    <strong>✨ Lead Lifecycle:</strong> Create → Working → Qualified → Converted (Account + Contact + Opportunity)
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="input-bar">
+        <form id="chatForm" onsubmit="return sendMessage(event)">
+            <div class="search-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+            </div>
+            <div class="input-wrapper">
+                <div class="voice-status" id="voiceStatus">🎤 Listening...</div>
+                <textarea id="message" placeholder="Click mic to speak or type... e.g. 'Show hot leads'" rows="1" onkeydown="handleKeyDown(event)"></textarea>
+                <button type="button" id="voiceBtn" class="voice-btn-google" onclick="toggleVoiceInput()" title="Click to start/stop voice input">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+                        <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+                    </svg>
+                </button>
+            </div>
+            <button type="submit" class="send" id="sendBtn">Send</button>
+        </form>
+    </div>
+
+<script>
+    // === Configuration ===
+    const API_ENDPOINT = 'http://localhost:8000/leads-chat';
+    
+    // === Sample Lead Data (using ACTUAL lead_ids from database) ===
+    // v4.1: Updated to use valid UUIDs for direct API calls with conversion tracking
+    const SAMPLE_LEADS = {
+        janeSmith: { 
+            name: 'Jane Smith', 
+            id: 'e4ee83c9-8977-47d5-9976-b8e44346e19d', 
+            company: 'Jane Smith Ltd.', 
+            email: 'jane.smith@example.com', 
+            status: 'working', 
+            rating: 'Hot',
+            converted: false
+        },
+        johnDoe: { 
+            name: 'John Doe', 
+            id: '5dc68573-0701-4205-80c1-eabb14d7549a', 
+            company: 'John Doe Ltd.', 
+            email: 'john@example.com', 
+            status: 'working', 
+            rating: 'Hot',
+            converted: false
+        },
+        marcusChen: { 
+            name: 'Marcus Chen', 
+            id: '1b5df612-d3f4-42b6-8127-b28290032d9d', 
+            company: 'Marcus Chen Ltd.', 
+            email: 'marcus.chen@example.com', 
+            status: 'new', 
+            rating: 'Cold',
+            converted: false
+        },
+        alanZhang: { 
+            name: 'Alan Zhang', 
+            id: '41893174-4387-4654-b266-5d5e35f387d6', 
+            company: 'Alan Zhang Ltd.', 
+            email: 'alan.zh@gmail.com', 
+            status: 'working', 
+            rating: 'Warm',
+            converted: true  // Already converted per the issue
+        },
+        priyaPatel: { 
+            name: 'Priya Patel', 
+            id: 'da329dda-59da-4d4c-bf97-a543224f5287', 
+            company: 'Priya Patel Ltd.', 
+            email: 'priya.patel@domain.ca', 
+            status: 'new', 
+            rating: 'Cold',
+            converted: false
+        },
+        bobBrown: { 
+            name: 'Bob Brown', 
+            id: '0f25f66d-82b7-4da1-839a-4bb039cb51ab', 
+            company: 'Bob Brown Ltd.', 
+            email: 'bob@example.com', 
+            status: 'working', 
+            rating: 'Hot',
+            converted: false
+        },
+        tomSun: {
+            name: 'Tom Sun',
+            id: '27a18d7b-555a-4bc7-9eeb-e31382db8550',
+            company: 'Tom Sun Ltd.',
+            email: 'tomsun@example.com',
+            status: 'working',
+            rating: 'Hot',
+            converted: false
+        }
+    };
+    
+    // v4.1: Track converted leads in localStorage for persistence
+    function loadConvertedLeads() {
+        try {
+            const stored = localStorage.getItem('convertedLeadIds');
+            if (stored) {
+                const convertedIds = JSON.parse(stored);
+                // Update SAMPLE_LEADS with converted status
+                Object.values(SAMPLE_LEADS).forEach(lead => {
+                    if (convertedIds.includes(lead.id)) {
+                        lead.converted = true;
+                    }
+                });
+            }
+        } catch (e) {
+            console.log('Could not load converted leads from storage');
+        }
+    }
+    
+    function markLeadAsConverted(leadId) {
+        // Update in SAMPLE_LEADS
+        Object.values(SAMPLE_LEADS).forEach(lead => {
+            if (lead.id === leadId) {
+                lead.converted = true;
+            }
+        });
+        // Persist to localStorage
+        try {
+            const stored = localStorage.getItem('convertedLeadIds');
+            const convertedIds = stored ? JSON.parse(stored) : [];
+            if (!convertedIds.includes(leadId)) {
+                convertedIds.push(leadId);
+                localStorage.setItem('convertedLeadIds', JSON.stringify(convertedIds));
+            }
+        } catch (e) {
+            console.log('Could not save converted lead to storage');
+        }
+    }
+    
+    function getNextUnconvertedLead() {
+        // Find the first unconverted lead (prefer qualified > working > new)
+        const statusPriority = ['qualified', 'working', 'new'];
+        for (const status of statusPriority) {
+            const lead = Object.values(SAMPLE_LEADS).find(l => !l.converted && l.status === status);
+            if (lead) return lead;
+        }
+        // Fallback: return any unconverted lead
+        const anyUnconverted = Object.values(SAMPLE_LEADS).find(l => !l.converted);
+        return anyUnconverted || null;
+    }
+    
+    // Load converted leads on page load
+    loadConvertedLeads();
+
+    // === Source and Rating Options ===
+    const SOURCES = ['website', 'referral', 'advertisement', 'trade_show', 'cold_call', 'import', 'social_media', 'partner', 'other'];
+    const RATINGS = ['Hot', 'Warm', 'Cold'];
+    const STATUSES = ['new', 'working', 'qualified', 'converted', 'disqualified'];
+    
+    // === Session Management ===
+    let sessionId = localStorage.getItem('leadSessionId') || generateSessionId();
+    localStorage.setItem('leadSessionId', sessionId);
+    document.getElementById('sessionId').textContent = sessionId.substring(0, 8) + '...';
+    
+    // === State Management ===
+    let lastListHTML = '';
+    let cameFromList = false;
+    
+    function generateSessionId() {
+        return 'sess_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    }
+    
+    // === Header Visibility — shown only on Home Page ===
+    function showHeader() {
+        document.querySelector('header').classList.remove('header-hidden');
+    }
+    function hideHeader() {
+        document.querySelector('header').classList.add('header-hidden');
+    }
+
+    // === CRITICAL: Hide Quick UI after AI response ===
+    function hideQuickUI() {
+        const quickUI = document.getElementById('quick-ui');
+        if (quickUI) {
+            quickUI.style.display = 'none';
+        }
+        hideHeader();
+    }
+    
+    // === Show Quick UI (for reset) ===
+    function showQuickUI() {
+        const quickUI = document.getElementById('quick-ui');
+        if (quickUI) {
+            quickUI.style.display = 'block';
+        }
+    }
+    
+    // ======================================================================
+    // SHARED HOME PAGE HTML — single source of truth for all three callers
+    // (initial load, resetSession, goHome)
+    // ======================================================================
+    function buildHomePageHTML(subtitleNote) {
+        const note = subtitleNote || `<strong>✨ Lead Lifecycle:</strong> Create → Working → Qualified → Converted`;
+        return `
+            <div id="quick-ui" style="margin-top: 4.5rem; text-align: center; max-width: 900px; margin-left: auto; margin-right: auto;">
+
+                <!-- Unified Google-style Home Search Bar (Opportunity v18 parity) -->
+                <div class="home-search-bar-wrap">
+                    <div class="gs-search-wrap" id="home-find-wrap">
+                        <div class="uni-search-row">
+                            <span class="gs-search-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                                     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <circle cx="11" cy="11" r="8"/>
+                                    <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                                </svg>
+                            </span>
+                            <input class="gs-search-field" id="home-find-input"
+                                   type="text" autocomplete="off" spellcheck="false"
+                                   placeholder="Search leads by name, company, rating…">
+                            <button class="gs-clear-btn" type="button">×</button>
+                        </div>
+                        <div class="gs-dropdown"></div>
+                        <div class="gs-selection-pill" style="display:none;"></div>
+                        <div class="gs-filter-label"></div>
+                        <input type="hidden" id="home-find-id">
+                    </div>
+                </div>
+
+                <div id="quick-actions" style="margin: 0 auto; max-width: 612px;">
+
+                    <div class="quick-actions-grid">
+                        <button class="unified-action-btn" data-action="listLeads"    title="List all leads">📋 List Leads</button>
+                        <button class="unified-action-btn" data-action="createLead"   title="Create new lead">➕ Create Lead</button>
+                        <button class="unified-action-btn" data-action="updateLead"   title="Update lead info">⚙️ Update Lead</button>
+                        <button class="unified-action-btn" data-action="showPipeline" title="View pipeline summary">📈 Pipeline</button>
+                    </div>
+
+                    <div style="margin-top: 1rem; padding: 0.6rem 0.85rem; background: #f0f8ff; border-radius: 6px; font-size: 0.82rem; color: #555; text-align: left;">
+                        <strong>🎙️ Voice:</strong> Click the mic and speak &nbsp;·&nbsp;
+                        <strong>💡 Shortcuts:</strong>
+                        <kbd>Ctrl+L</kbd> List &nbsp;
+                        <kbd>Ctrl+P</kbd> Pipeline &nbsp;
+                        <kbd>Ctrl+D</kbd> Details
+                    </div>
+                    <div style="margin-top: 0.6rem; padding: 0.6rem 0.85rem; background: #f0fff4; border-radius: 6px; font-size: 0.82rem; color: #2d662d; text-align: left;">
+                        ${note}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    function resetSession() {
+        sessionId = generateSessionId();
+        localStorage.setItem('leadSessionId', sessionId);
+        document.getElementById('sessionId').textContent = sessionId.substring(0, 8) + '...';
+        
+        document.getElementById('responseArea').innerHTML = buildHomePageHTML(
+            `<strong>✨ Session Reset!</strong> Ready for a new conversation.`
+        );
+        attachQuickActionHandlers();
+        showHeader();
+        initHomeSearch();
+    }
+    function sendRequest(text) {
+        const messageBox = document.getElementById('message');
+        messageBox.value = text;
+        document.getElementById('chatForm').dispatchEvent(new Event('submit'));
+    }
+    
+    // === Helper: Send a DIRECT structured request (bypasses AI Agent) ===
+    //   prefix : string — message prefix matched by pre-router (e.g. "list leads:")
+    //   params : object — additional chatInput fields (e.g. { pageSize: 50, search: "Smith" })
+    async function sendDirectRequest(prefix, params) {
+        hideQuickUI();
+        const responseArea = document.getElementById('responseArea');
+        const sendBtn = document.getElementById('sendBtn');
+
+        sendBtn.disabled = true;
+        sendBtn.innerHTML = '<span class="spinner"></span>';
+        responseArea.innerHTML = `<div id="loadingIndicator" style="padding: 1rem; color: #666; text-align: center;">
+            <div class="loading" style="margin: 0 auto;"></div>
+            <p style="margin-top: 0.5rem;">Processing: "${prefix} ${JSON.stringify(params).substring(0, 60)}…"</p>
+        </div>`;
+
+        try {
+            const chatInput = { message: prefix, ...params };
+            const res = await fetch(API_ENDPOINT, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chatInput, sessionId })
+            });
+
+            let data;
+            try { data = await res.json(); } catch { data = await res.text(); }
+
+            let responseHTML = '';
+            if (Array.isArray(data) && data.length > 0 && data[0].output) {
+                responseHTML = buildResponseHTML(data[0].output, data[0]);
+                if (data[0].reportMode === 'lead_converted' && data[0].accountId && data[0].lead?.lead_id) {
+                    markLeadAsConverted(data[0].lead.lead_id);
+                }
+            } else if (data?.output) {
+                responseHTML = buildResponseHTML(data.output, data);
+            } else if (typeof data === 'string') {
+                responseHTML = buildResponseHTML(data, {});
+            } else {
+                responseHTML = `<div class="audit-record"><pre>${JSON.stringify(data, null, 2)}</pre></div>`;
+            }
+            responseArea.innerHTML = `<div class="fade-in">${responseHTML}</div>`;
+        } catch (err) {
+            responseArea.innerHTML = `<div style="padding:0.75rem;background:#fff3f3;border:1px solid #dc3545;border-radius:6px;color:#dc3545;">
+                ❌ Error connecting to server: ${err.message}
+            </div>`;
+        } finally {
+            sendBtn.disabled = false;
+            sendBtn.innerHTML = 'Send';
+        }
+    }
+    
+    // === Helper: Show command in textarea without submitting ===
+    function showCommandInTextarea(text) {
+        const messageBox = document.getElementById('message');
+        messageBox.value = text;
+        messageBox.focus();
+    }
+
+    // === Actions Namespace (Quick Examples & Quick Actions) ===
+    const actions = {
+        listLeads() { 
+            sendDirectRequest('list leads:', { pageSize: 50 }); 
+        },
+        filterByStatus() {
+            const status = prompt('Enter status to filter (new, working, qualified, converted, disqualified):');
+            if (status) sendDirectRequest('list leads:', { pageSize: 50, status: status.trim().toLowerCase() });
+        },
+        filterByRating() {
+            const rating = prompt('Enter rating to filter (hot, warm, cold):');
+            if (rating) sendDirectRequest('list leads:', { pageSize: 50, rating: rating.trim().toLowerCase() });
+        },
+        showDetails() { 
+            sendDirectRequest('get lead:', { leadId: SAMPLE_LEADS.janeSmith.id }); 
+        },
+        showPipeline() { 
+            sendDirectRequest('pipeline leads:', {}); 
+        },
+        createLead() { 
+            showCreateLeadForm();
+        },
+        qualifyLead() { 
+            sendDirectRequest('qualify lead:', { leadId: SAMPLE_LEADS.johnDoe.id, reason: 'Strong interest, budget confirmed' });
+        },
+        convertLead() { 
+            const nextLead = getNextUnconvertedLead();
+            if (nextLead) {
+                sendDirectRequest('convert lead:', { leadId: nextLead.id });
+            } else {
+                alert('No unconverted leads available. All sample leads have been converted.');
+            }
+        },
+        updateLead() { 
+            showUpdateLeadForm(SAMPLE_LEADS.alanZhang);
+        }
+    };
+
+    // === Attach Quick Action Button Handlers ===
+    function attachQuickActionHandlers() {
+        document.querySelectorAll("[data-action]").forEach(btn => {
+            btn.addEventListener("click", () => {
+                const fnName = btn.dataset.action;
+                if (fnName && actions[fnName]) {
+                    actions[fnName]();
+                }
+            });
+        });
+    }
+    
+    // Initial attachment
+    attachQuickActionHandlers();
+
+    // === Keyboard Shortcuts ===
+    document.addEventListener("keydown", function(e) {
+        const isCtrl = e.ctrlKey || e.metaKey;
+        if (isCtrl) {
+            switch (e.key.toLowerCase()) {
+                case "l": e.preventDefault(); actions.listLeads(); break;
+                case "p": e.preventDefault(); actions.showPipeline(); break;
+                case "d": e.preventDefault(); actions.showDetails(); break;
+                case "a": e.preventDefault(); actions.createLead(); break;
+            }
+        }
+    });
+
+    // === Message Handling ===
+    function handleKeyDown(event) {
+        if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            sendMessage(event);
+        }
+    }
+    
+    async function sendMessage(event) {
+        if (event) event.preventDefault();
+        
+        const input = document.getElementById('message');
+        const sendBtn = document.getElementById('sendBtn');
+        const message = input.value.trim();
+        
+        if (!message) return false;
+        
+        // CRITICAL: Hide quick UI when user sends a message
+        hideQuickUI();
+        
+        const responseArea = document.getElementById('responseArea');
+        
+        // Don't clear input immediately - keep it visible so user can see what was sent
+        sendBtn.disabled = true;
+        sendBtn.innerHTML = '<span class="spinner"></span>';
+        
+        // REPLACE entire content with ONLY loading indicator showing the command
+        responseArea.innerHTML = `<div id="loadingIndicator" style="padding: 1rem; color: #666; text-align: center;">
+            <div class="loading" style="margin: 0 auto;"></div>
+            <p style="margin-top: 0.5rem;">Processing: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"</p>
+        </div>`;
+        
+        try {
+            const res = await fetch(API_ENDPOINT, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chatInput: { message },
+                    sessionId
+                })
+            });
+            
+            let data;
+            try {
+                data = await res.json();
+            } catch {
+                data = await res.text();
+            }
+            
+            // Build response HTML
+            let responseHTML = '';
+            
+            if (Array.isArray(data) && data.length > 0 && data[0].output) {
+                responseHTML = buildResponseHTML(data[0].output, data[0]);                // v4.1: Mark lead as converted if conversion was successful
+                if (data[0].reportMode === 'lead_converted' && data[0].accountId && data[0].lead?.lead_id) {
+                    markLeadAsConverted(data[0].lead.lead_id);
+                }
+            } else if (typeof data === 'string') {
+                responseHTML = buildResponseHTML(data);
+            } else if (data.output) {
+                responseHTML = buildResponseHTML(data.output, data);
+                // v4.1: Mark lead as converted if conversion was successful
+                if (data.reportMode === 'lead_converted' && data.accountId && data.lead?.lead_id) {
+                    markLeadAsConverted(data.lead.lead_id);
+                }
+            } else if (data.message) {
+                responseHTML = buildResponseHTML(data.message, data);
+            } else {
+                responseHTML = `<div class="audit-record"><pre>${JSON.stringify(data, null, 2)}</pre></div>`;
+            }
+            
+            // REPLACE entire content with response (single mode only, no stacking)
+            responseArea.innerHTML = `<div class="fade-in">${responseHTML}</div>`;
+            
+            // Clear input after response is displayed
+            input.value = '';
+            
+        } catch (err) {
+            // REPLACE with error message
+            responseArea.innerHTML = `
+                <div style="padding: 0.75rem; background: #fff3f3; border: 1px solid #dc3545; border-radius: 6px; color: #dc3545;">
+                    ❌ Error connecting to server: ${err.message}
+                </div>
+            `;
+            // Clear input even on error
+            input.value = '';
+        } finally {
+            sendBtn.disabled = false;
+            sendBtn.innerHTML = 'Send';
+        }
+        
+        return false;
+    }
+    
+    // === HELPER: Strip "You:" messages and mode markers from text ===
+    function stripUserMessages(text) {
+        return text.split('\n')
+            .filter(line => !line.trim().match(/^(\*\*)?You:(\*\*)?/i))
+            .filter(line => !line.trim().match(/^\[MODE:\w+\]/i))
+            .join('\n');
+    }
+    
+    // === LEAD ACTION HELPERS — all use direct routes ===
+    function getLeadDetails(leadId) {
+        if (leadId && leadId.length === 36) {
+            sendDirectRequest('get lead:', { leadId });
+        } else {
+            console.error('Invalid lead_id:', leadId);
+            alert('Invalid lead ID');
+        }
+    }
+    
+    function qualifyLead(leadId, reason) {
+        if (leadId && leadId.length === 36) {
+            sendDirectRequest('qualify lead:', { leadId, reason: reason || '' });
+        } else {
+            console.error('Invalid lead_id:', leadId);
+            alert('Invalid lead ID');
+        }
+    }
+    
+    function convertLead(leadId) {
+        if (leadId && leadId.length === 36) {
+            sendDirectRequest('convert lead:', { leadId });
+        } else {
+            console.error('Invalid lead_id:', leadId);
+            alert('Invalid lead ID');
+        }
+    }
+    
+    function updateLeadById(leadId) {
+        if (leadId && leadId.length === 36) {
+            showUpdateLeadForm({ id: leadId });
+        } else {
+            console.error('Invalid lead_id:', leadId);
+            alert('Invalid lead ID');
+        }
+    }
+    
+    // === DATETIME FORMATTING ===
+    function formatDateTimeDisplay(value) {
+        if (!value) return 'N/A';
+        const d = new Date(value);
+        if (isNaN(d.getTime())) return 'N/A';
+        return d.toLocaleString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+    
+    // ======================================================================
+    // MARKDOWN RENDERER — converts markdown text to styled HTML
+    // Handles: ### h3, ## h2, # h1, **bold**, *italic*, `code`,
+    //          --- hr, blank-line paragraphs, and plain lines
+    // ======================================================================
+    function renderMarkdown(text) {
+        if (!text) return '';
+        const lines = text.split('\n');
+        let html = '';
+        let inPara = false;
+
+        const closePara = () => {
+            if (inPara) { html += '</p>'; inPara = false; }
+        };
+
+        const inlineFormat = (s) => escapeHTML(s)
+            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*(.+?)\*/g,     '<em>$1</em>')
+            .replace(/`(.+?)`/g,       '<code style="background:#f1f3f4;padding:1px 5px;border-radius:3px;font-size:0.9em;">$1</code>');
+
+        lines.forEach(raw => {
+            const line = raw.trimEnd();
+
+            // Blank line → close paragraph
+            if (line.trim() === '') {
+                closePara();
+                return;
+            }
+            // H3
+            if (line.startsWith('### ')) {
+                closePara();
+                html += `<h3 style="margin:0.75rem 0 0.4rem;font-size:1rem;">${inlineFormat(line.slice(4))}</h3>`;
+                return;
+            }
+            // H2
+            if (line.startsWith('## ')) {
+                closePara();
+                html += `<h2 style="margin:0.75rem 0 0.4rem;font-size:1.1rem;">${inlineFormat(line.slice(3))}</h2>`;
+                return;
+            }
+            // H1
+            if (line.startsWith('# ')) {
+                closePara();
+                html += `<h2 style="margin:0.75rem 0 0.4rem;font-size:1.2rem;">${inlineFormat(line.slice(2))}</h2>`;
+                return;
+            }
+            // HR
+            if (/^---+$/.test(line.trim())) {
+                closePara();
+                html += '<hr style="border:none;border-top:1px solid #e0e6ed;margin:0.75rem 0;">';
+                return;
+            }
+            // Bullet list item
+            if (line.trimStart().startsWith('- ') || line.trimStart().startsWith('* ')) {
+                closePara();
+                html += `<div style="padding:0.15rem 0 0.15rem 1.25rem;">• ${inlineFormat(line.trimStart().slice(2))}</div>`;
+                return;
+            }
+            // Normal text line — append to open paragraph
+            if (!inPara) {
+                html += '<p style="margin:0.3rem 0;">';
+                inPara = true;
+            } else {
+                html += ' ';
+            }
+            html += inlineFormat(line);
+        });
+
+        closePara();
+        return html;
+    }
+
+    // === ERROR RENDERER — styled card for data.error === true responses ===
+    function buildErrorHTML(text, data) {
+        // Detect error type from text
+        const isNotFound   = text.includes('-31') || text.toLowerCase().includes('not found');
+        const isValidation = text.includes('-10') || text.includes('-11') || text.toLowerCase().includes('required');
+        const isDuplicate  = text.toLowerCase().includes('duplicate') || text.includes('-20');
+
+        // Extract error code and message from markdown if present
+        const codeMatch    = text.match(/\*\*Error Code:\*\*\s*([^\n]+)/i);
+        const msgMatch     = text.match(/\*\*Error Message:\*\*\s*([^\n]+)/i);
+        const timeMatch    = text.match(/\*\*Time:\*\*\s*([^\n]+)/i);
+
+        const errorCode    = codeMatch ? codeMatch[1].trim() : null;
+        const errorMsg     = msgMatch  ? msgMatch[1].trim()  : null;
+        const errorTime    = timeMatch ? timeMatch[1].trim() : null;
+
+        let html = `<div class="error-record">`;
+
+        // Header row: icon + title
+        html += `<div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.75rem;">
+            <span style="font-size:1.4rem;">❌</span>
+            <h3 style="margin:0;color:#dc3545;">Error</h3>
+        </div>`;
+
+        // Structured fields table (if parseable)
+        if (errorCode || errorMsg || errorTime) {
+            html += `<table style="width:100%;border-collapse:collapse;margin-bottom:0.75rem;">`;
+            if (errorTime) html += `
+                <tr>
+                    <td style="font-weight:bold;color:#555;width:130px;padding:4px 8px;">Time</td>
+                    <td style="padding:4px 8px;color:#333;">${escapeHTML(errorTime)}</td>
+                </tr>`;
+            if (errorCode) html += `
+                <tr style="background:#fff3f3;">
+                    <td style="font-weight:bold;color:#555;padding:4px 8px;">Error Code</td>
+                    <td style="padding:4px 8px;"><span style="background:#dc3545;color:white;padding:2px 8px;border-radius:10px;font-size:0.8rem;font-weight:bold;">${escapeHTML(errorCode)}</span></td>
+                </tr>`;
+            if (errorMsg) html += `
+                <tr>
+                    <td style="font-weight:bold;color:#555;padding:4px 8px;">Message</td>
+                    <td style="padding:4px 8px;color:#721c24;font-weight:500;">${escapeHTML(errorMsg)}</td>
+                </tr>`;
+            html += `</table>`;
+
+            // Contextual hint
+            if (isNotFound) {
+                html += `<div style="background:#fff8e6;border:1px solid #ffc107;border-radius:6px;padding:0.6rem 0.85rem;margin-bottom:0.75rem;font-size:0.88rem;color:#856404;">
+                    💡 <strong>Tip:</strong> The record may have been deleted, converted, or merged. Try listing leads to confirm it still exists.
+                </div>`;
+            } else if (isValidation) {
+                html += `<div style="background:#fff8e6;border:1px solid #ffc107;border-radius:6px;padding:0.6rem 0.85rem;margin-bottom:0.75rem;font-size:0.88rem;color:#856404;">
+                    💡 <strong>Tip:</strong> Check that all required fields are filled in correctly and try again.
+                </div>`;
+            } else if (isDuplicate) {
+                html += `<div style="background:#fff8e6;border:1px solid #ffc107;border-radius:6px;padding:0.6rem 0.85rem;margin-bottom:0.75rem;font-size:0.88rem;color:#856404;">
+                    💡 <strong>Tip:</strong> A duplicate record was detected. Review existing records before proceeding.
+                </div>`;
+            }
+        } else {
+            // Fallback: render full markdown text
+            html += `<div style="margin-bottom:0.75rem;">${renderMarkdown(text)}</div>`;
+        }
+
+        // Action buttons — mode-aware recovery actions
+        const mode = data?.mode || '';
+        html += `<div class="action-buttons">`;
+        if (mode === 'qualify' || mode === 'convert' || mode === 'get' || mode === 'update') {
+            html += `<button class="unified-action-btn" onclick="sendRequest('Show all leads')">📋 View All Leads</button>`;
+        }
+        if (mode === 'create') {
+            html += `<button class="unified-action-btn" onclick="showCreateLeadForm()">➕ Try Again</button>`;
+        }
+        if (mode === 'update') {
+            html += `<button class="unified-action-btn" onclick="sendRequest('Show all leads')">🔍 Find Lead</button>`;
+        }
+        html += `<button class="unified-action-btn" onclick="goHome()">🏠 Back Home</button>`;
+        html += `</div>`;
+
+        html += `</div>`;
+        return html;
+    }
+
+    // ======================================================================
+    // RESPONSE ROUTING - Dispatch to appropriate renderer based on mode
+    // ======================================================================
+    function buildResponseHTML(text, data) {
+        // Determine mode from data or text
+        const mode = data?.reportMode || data?.mode || extractModeFromText(text);
+        
+        console.log('Building response for mode:', mode, data);
+        
+        // Strip any "You:" prefix lines from AI response
+        const cleanText = stripUserMessages(text);
+
+        // === ERROR SHORT-CIRCUIT: data.error === true → styled error card ===
+        if (data?.error === true) {
+            return buildErrorHTML(cleanText, data);
+        }
+        
+        switch(mode) {
+            case 'lead_list':
+            case 'list':
+                return buildListModeHTML(cleanText, data);
+            case 'lead_detail':
+            case 'get':
+                return buildGetModeHTML(cleanText, data);
+            case 'lead_created':
+            case 'create':
+                return buildCreateConfirmationHTML(cleanText, data);
+            case 'lead_updated':
+            case 'update':
+                return buildUpdateConfirmationHTML(cleanText, data);
+            case 'qualify':
+            case 'lead_qualified':
+                return buildQualifyConfirmationHTML(cleanText, data);
+            case 'convert':
+            case 'lead_converted':
+                return buildConvertConfirmationHTML(cleanText, data);
+            case 'pipeline':
+                return buildPipelineModeHTML(cleanText, data);
+            case 'duplicates':
+                return buildDuplicatesModeHTML(cleanText, data);
+            case 'archive':
+            case 'restore':
+                return buildArchiveConfirmationHTML(cleanText, data);
+            default:
+                // Fallback: try to detect from text content
+                return buildFallbackHTML(cleanText, data);
+        }
+    }
+    
+    // Extract mode from text markers like [MODE:list]
+    function extractModeFromText(text) {
+        const modeMatch = text.match(/\[MODE:(\w+)\]/);
+        if (modeMatch) return modeMatch[1];
+        
+        // Fallback detection
+        if (text.includes('LEAD LIST') || text.includes('LIST LEADS')) return 'list';
+        if (text.includes('LEAD DETAILS') || text.includes('LEAD DETAIL')) return 'get';
+        if (text.includes('CREATED SUCCESSFULLY') || text.includes('Lead Created')) return 'create';
+        if (text.includes('UPDATED SUCCESSFULLY') || text.includes('Lead Updated')) return 'update';
+        if (text.includes('QUALIFIED SUCCESSFULLY') || text.includes('Lead Qualified')) return 'qualify';
+        if (text.includes('CONVERTED SUCCESSFULLY') || text.includes('Lead Converted')) return 'convert';
+        if (text.includes('PIPELINE') || text.includes('Pipeline Summary') || text.includes('Pipeline Analysis')) return 'pipeline';
+        if (text.includes('DUPLICATE') && text.includes('REPORT')) return 'duplicates';
+        if (text.includes('ARCHIVED') || text.includes('RESTORED')) return 'archive';
+        
+        return 'unknown';
+    }
+    
+    // === LIST MODE RENDERER (v3.0 - New 4-line layout, full lead_id) ===
+    // Layout: Line1=Name|Company|Email|Phone, Line2=Status|Rating|Score|Source|Owner
+    //         Line3=Created by|Updated by|Qual reason, Line4=Created at|Updated at
+    //         Buttons on right side, below last line - use FULL lead_id UUID
+    function buildListModeHTML(text, data) {
+        let html = `<div class="audit-record">`;
+
+        // Title row — standalone above the button/info row
+        html += `<div style="margin: 0.5rem 1.75rem 0.5rem 1.75rem;">
+                    <h3 style="color: #008cb4; font-weight: bold; margin: 0;">🎯 Lead List</h3>
+                 </div>`;
+
+        // Parse pagination info from text
+        const pageMatch = text.match(/\*\*Page:\*\*\s*(\d+)\s*of\s*(\d+)/);
+        const totalMatch = text.match(/\*\*Total:\*\*\s*(\d+)\s*leads?/);
+        const paginationText = [
+            pageMatch  ? `Page ${pageMatch[1]} of ${pageMatch[2]}` : '',
+            totalMatch ? `${totalMatch[1]} leads` : ''
+        ].filter(Boolean).join(' | ');
+
+        // Single row: [Back Home] [pagination info — centered] [Create Lead]
+        html += `<div style="display: flex; justify-content: space-between; align-items: center; margin: 0.5rem 1.75rem 0.75rem 1.75rem;">
+                    <button class="unified-action-btn" onclick="goHome()">🏠 Back Home</button>
+                    <span style="color: #666; font-size: 0.9rem; flex: 1; text-align: center;">${paginationText}</span>
+                    <button class="unified-action-btn" onclick="showCreateLeadForm()">➕ Create Lead</button>
+                 </div>`;
+        
+        // PREFERRED: Use leads array from data (contains full lead_ids)
+        if (data?.leads && Array.isArray(data.leads) && data.leads.length > 0) {
+            data.leads.forEach((l, index) => {
+                const fullName = `${l.first_name || ''} ${l.last_name || ''}`.trim() || 'Unknown';
+                const statusLower = (l.status || 'new').toLowerCase();
+                const ratingLower = (l.rating || 'cold').toLowerCase();
+                const ratingIcon = ratingLower === 'hot' ? '🔥' : (ratingLower === 'warm' ? '☀️' : '❄️');
+                
+                // CRITICAL: Use full lead_id for button actions
+                const fullLeadId = l.lead_id || '';
+                
+                html += `
+                    <div class="lead-record" data-lead-id="${escapeHTML(fullLeadId)}">
+                        <!-- Line 1: Name, Company, Email, Phone -->
+                        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem;">
+                            <strong class="lead-name" style="font-size: 1.05rem;">${index + 1}. ${escapeHTML(fullName)}</strong>
+                            <span style="color: #6f42c1;">| ${escapeHTML(l.company || 'N/A')}</span>
+                            <span style="color: #28a745;">| ${escapeHTML(l.email || 'N/A')}</span>
+                            <span style="color: #e83e8c;">| ${escapeHTML(l.phone || 'N/A')}</span>
+                        </div>
+                        
+                        <!-- Line 2: Status, Rating, Score, Source, Owner -->
+                        <div style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; margin-bottom: 0.5rem;">
+                            <span class="status-badge ${statusLower}">${statusLower.toUpperCase()}</span>
+                            <span class="rating-badge ${ratingLower}">${ratingIcon} ${ratingLower.charAt(0).toUpperCase() + ratingLower.slice(1)}</span>
+                            <span><strong>Score:</strong> <span class="score">${l.score ?? 'N/A'}</span></span>
+                            <span><strong>Source:</strong> <span class="source">${escapeHTML(l.source || 'N/A')}</span></span>
+                            ${l.owner_name ? `<span><strong>Owner:</strong> ${escapeHTML(l.owner_name)}</span>` : ''}
+                        </div>
+                        
+                        <!-- Line 2b: Address (if present) -->
+                        ${(l.address_line1 || l.city || l.province) ? `
+                        <div style="font-size: 0.85rem; color: #6c757d; margin-bottom: 0.4rem;">
+                            📍 ${[l.address_line1, l.address_line2, l.city, l.province, l.postal_code, l.country].filter(Boolean).map(s => escapeHTML(s)).join(', ')}
+                        </div>` : ''}
+                        
+                        <!-- Line 3: Created by, Updated by, Qualification reason -->
+                        <div style="font-size: 0.85rem; color: #555; margin-bottom: 0.5rem;">
+                            ${l.created_by_name ? `<span><strong>Created by:</strong> ${escapeHTML(l.created_by_name)}</span>` : ''}
+                            ${l.updated_by_name ? `<span style="margin-left: 1rem;"><strong>Updated by:</strong> ${escapeHTML(l.updated_by_name)}</span>` : ''}
+                            ${l.qualification_reason ? `<span style="margin-left: 1rem; color: #155724;"><strong>Qual:</strong> ${escapeHTML(l.qualification_reason)}</span>` : ''}
+                        </div>
+                        
+                        <!-- Line 4: Created at, Updated at -->
+                        <div style="font-size: 0.8rem; color: #888; margin-bottom: 0.75rem;">
+                            <span>Created: ${formatDateTimeDisplay(l.created_at)}</span>
+                            <span style="margin-left: 1.5rem;">Updated: ${formatDateTimeDisplay(l.updated_at)}</span>
+                        </div>
+                        
+                        <!-- Buttons at right side - use FULL lead_id -->
+                        <div class="action-buttons" style="justify-content: flex-end;">
+                            <button class="unified-action-btn" onclick="event.stopPropagation(); getLeadDetails('${escapeHTML(fullLeadId)}')" style="width: 100px; height: 32px; font-size: 0.75rem;">📄 Details</button>
+                            ${statusLower !== 'converted' && statusLower !== 'qualified' ? `<button class="unified-action-btn" onclick="event.stopPropagation(); qualifyLead('${escapeHTML(fullLeadId)}')" style="width: 100px; height: 32px; font-size: 0.75rem;">⭐ Qualify</button>` : ''}
+                            ${statusLower === 'qualified' ? `<button class="unified-action-btn" onclick="event.stopPropagation(); convertLead('${escapeHTML(fullLeadId)}')" style="width: 100px; height: 32px; font-size: 0.75rem;">🚀 Convert</button>` : ''}
+                        </div>
+                    </div>
+                `;
+            });
+        } else {
+            // FALLBACK: Parse from text using LEAD_DATA markers
+            const leadDataRegex = /<!--LEAD_DATA:([a-f0-9-]{36})-->/gi;
+            const leadBlocks = text.split(/<!--LEAD_DATA:[a-f0-9-]{36}-->/);
+            const leadIds = [...text.matchAll(leadDataRegex)].map(m => m[1]);
+            
+            if (leadIds.length > 0) {
+                // Parse each block after the first (before first is header)
+                leadBlocks.slice(1).forEach((block, idx) => {
+                    const fullLeadId = leadIds[idx] || '';
+                    
+                    // Parse Line 1: **N. Name** | Company | Email | Phone
+                    const line1Match = block.match(/\*\*(\d+)\.\s*([^*]+)\*\*\s*\|\s*([^|]+)\|\s*([^|]+)\|\s*([^\n]+)/);
+                    const index = line1Match ? line1Match[1] : (idx + 1);
+                    const name = line1Match ? line1Match[2].trim() : 'Unknown';
+                    const company = line1Match ? line1Match[3].trim() : 'N/A';
+                    const email = line1Match ? line1Match[4].trim() : 'N/A';
+                    const phone = line1Match ? line1Match[5].trim() : 'N/A';
+                    
+                    // Parse Line 2: status, rating, score, source, owner
+                    const statusMatch = block.match(/\[(NEW|WORKING|QUALIFIED|CONVERTED|DELETED|DISQUALIFIED)\]/i);
+                    const status = statusMatch ? statusMatch[1].toLowerCase() : 'new';
+                    const ratingIconMatch = block.match(/(🔥|☀️|❄️)/);
+                    const ratingIcon = ratingIconMatch ? ratingIconMatch[1] : '❄️';
+                    const rating = ratingIcon === '🔥' ? 'hot' : (ratingIcon === '☀️' ? 'warm' : 'cold');
+                    const scoreMatch = block.match(/Score:\s*([^\s|]+)/i);
+                    const score = scoreMatch ? scoreMatch[1] : 'N/A';
+                    const sourceMatch = block.match(/Source:\s*([^|]+)/i);
+                    const source = sourceMatch ? sourceMatch[1].trim() : 'N/A';
+                    const ownerMatch = block.match(/Owner:\s*([^\n|]+)/i);
+                    const owner = ownerMatch ? ownerMatch[1].trim() : '';
+                    
+                    // Parse Line 3: created_by, updated_by, qual reason
+                    const createdByMatch = block.match(/Created by:\s*([^|]+)/i);
+                    const createdBy = createdByMatch ? createdByMatch[1].trim() : '';
+                    const updatedByMatch = block.match(/Updated by:\s*([^|]+)/i);
+                    const updatedBy = updatedByMatch ? updatedByMatch[1].trim() : '';
+                    const qualMatch = block.match(/Qual:\s*([^\n]+)/i);
+                    const qualReason = qualMatch ? qualMatch[1].trim() : '';
+                    
+                    // Parse Line 4: timestamps
+                    const createdAtMatch = block.match(/Created:\s*([^|]+)\s*\|/i);
+                    const createdAt = createdAtMatch ? createdAtMatch[1].trim() : 'N/A';
+                    const updatedAtMatch = block.match(/Updated:\s*([^\n]+)/i);
+                    const updatedAt = updatedAtMatch ? updatedAtMatch[1].trim() : 'N/A';
+                    
+                    html += `
+                        <div class="lead-record" data-lead-id="${escapeHTML(fullLeadId)}">
+                            <!-- Line 1 -->
+                            <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem;">
+                                <strong class="lead-name" style="font-size: 1.05rem;">${index}. ${escapeHTML(name)}</strong>
+                                <span style="color: #6f42c1;">| ${escapeHTML(company)}</span>
+                                <span style="color: #28a745;">| ${escapeHTML(email)}</span>
+                                <span style="color: #e83e8c;">| ${escapeHTML(phone)}</span>
+                            </div>
+                            <!-- Line 2 -->
+                            <div style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; margin-bottom: 0.5rem;">
+                                <span class="status-badge ${status}">${status.toUpperCase()}</span>
+                                <span class="rating-badge ${rating}">${ratingIcon} ${rating.charAt(0).toUpperCase() + rating.slice(1)}</span>
+                                <span><strong>Score:</strong> ${escapeHTML(score)}</span>
+                                <span><strong>Source:</strong> ${escapeHTML(source)}</span>
+                                ${owner ? `<span><strong>Owner:</strong> ${escapeHTML(owner)}</span>` : ''}
+                            </div>
+                            <!-- Line 3 -->
+                            <div style="font-size: 0.85rem; color: #555; margin-bottom: 0.5rem;">
+                                ${createdBy ? `<span><strong>Created by:</strong> ${escapeHTML(createdBy)}</span>` : ''}
+                                ${updatedBy ? `<span style="margin-left: 1rem;"><strong>Updated by:</strong> ${escapeHTML(updatedBy)}</span>` : ''}
+                                ${qualReason ? `<span style="margin-left: 1rem; color: #155724;"><strong>Qual:</strong> ${escapeHTML(qualReason)}</span>` : ''}
+                            </div>
+                            <!-- Line 4 -->
+                            <div style="font-size: 0.8rem; color: #888; margin-bottom: 0.75rem;">
+                                <span>Created: ${escapeHTML(createdAt)}</span>
+                                <span style="margin-left: 1.5rem;">Updated: ${escapeHTML(updatedAt)}</span>
+                            </div>
+                            <!-- Buttons - FULL lead_id -->
+                            <div class="action-buttons" style="justify-content: flex-end;">
+                                <button class="unified-action-btn" onclick="event.stopPropagation(); getLeadDetails('${escapeHTML(fullLeadId)}')" style="width: 100px; height: 32px; font-size: 0.75rem;">📄 Details</button>
+                                ${status !== 'converted' && status !== 'qualified' ? `<button class="unified-action-btn" onclick="event.stopPropagation(); qualifyLead('${escapeHTML(fullLeadId)}')" style="width: 100px; height: 32px; font-size: 0.75rem;">⭐ Qualify</button>` : ''}
+                                ${status === 'qualified' ? `<button class="unified-action-btn" onclick="event.stopPropagation(); convertLead('${escapeHTML(fullLeadId)}')" style="width: 100px; height: 32px; font-size: 0.75rem;">🚀 Convert</button>` : ''}
+                            </div>
+                        </div>
+                    `;
+                });
+            } else {
+                // Last resort: display raw text
+                html += `<div style="padding:1rem;">${renderMarkdown(text)}</div>`;
+            }
+        }
+        
+        html += `</div>`;
+        // Bottom Back Home button
+        html += `<div style="margin-top: 1rem; margin-left: 1.75rem;">
+                    <button class="unified-action-btn" onclick="goHome()">🏠 Back Home</button>
+                </div>`;
+        html += `</div>`;
+        return html;
+    }
+    
+    // === GET MODE RENDERER (v3.0 - Full Detail View with Sections) ===
+    function buildGetModeHTML(text, data) {
+        let html = `<div class="audit-record">`;
+        
+        // Extract lead_id from data or text
+        const leadIdFromData = data?.lead?.lead_id;
+        const leadIdMatch = text.match(/<!--LEAD_ID:([a-f0-9-]{36})-->/i);
+        const fullLeadId = leadIdFromData || (leadIdMatch ? leadIdMatch[1] : '');
+        
+        // Extract lead name from text
+        const nameMatch = text.match(/\*\*([^*]+)\*\*\s*(?:\[|⭐|✔|🔥|☀️|❄️)/);
+        const leadName = nameMatch ? nameMatch[1].trim() : 'Lead';
+        
+        html += `<h3 style="color: #008cb4;">📄 Lead Details - ${escapeHTML(leadName)}</h3>`;
+        
+        // Try to use data.lead if available
+        if (data?.lead) {
+            const l = data.lead;
+            const fullName = `${l.first_name || ''} ${l.last_name || ''}`.trim() || 'Unknown';
+            const statusLower = (l.status || 'new').toLowerCase();
+            const ratingLower = (l.rating || 'cold').toLowerCase();
+            const ratingIcon = ratingLower === 'hot' ? '🔥' : (ratingLower === 'warm' ? '☀️' : '❄️');
+            
+            // Header with status and rating
+            html += `<div style="margin-bottom: 1rem;">
+                <span class="status-badge ${statusLower}" style="font-size: 0.9rem;">${statusLower.toUpperCase()}</span>
+                <span class="rating-badge ${ratingLower}" style="margin-left: 0.5rem;">${ratingIcon} ${ratingLower.charAt(0).toUpperCase() + ratingLower.slice(1)}</span>
+            </div>`;
+            
+            // === Identity Section ===
+            html += `<div class="detail-section" style="margin-bottom: 1.5rem;">
+                <h4 style="color: #008cb4; margin: 0 0 0.75rem 0;">📋 Identity</h4>
+                <table class="summary-table"><tbody>
+                    <tr><td style="font-weight: bold; width: 180px;">First Name</td><td>${escapeHTML(l.first_name || 'N/A')}</td></tr>
+                    <tr><td style="font-weight: bold;">Last Name</td><td>${escapeHTML(l.last_name || 'N/A')}</td></tr>
+                    <tr><td style="font-weight: bold;">Company</td><td>${escapeHTML(l.company || 'N/A')}</td></tr>
+                    <tr><td style="font-weight: bold;">Email</td><td><span class="email">${escapeHTML(l.email || 'N/A')}</span></td></tr>
+                    <tr><td style="font-weight: bold;">Phone</td><td><span class="phone">${escapeHTML(l.phone || 'N/A')}</span></td></tr>
+                </tbody></table>
+            </div>`;
+
+            // === Address Section ===
+            if (l.address_line1 || l.city || l.province || l.country) {
+                html += `<div class="detail-section" style="margin-bottom: 1.5rem;">
+                    <h4 style="color: #008cb4; margin: 0 0 0.75rem 0;">📍 Address</h4>
+                    <table class="summary-table"><tbody>
+                        ${l.address_line1 ? `<tr><td style="font-weight: bold; width: 180px;">Address Line 1</td><td>${escapeHTML(l.address_line1)}</td></tr>` : ''}
+                        ${l.address_line2 ? `<tr><td style="font-weight: bold;">Address Line 2</td><td>${escapeHTML(l.address_line2)}</td></tr>` : ''}
+                        ${l.city         ? `<tr><td style="font-weight: bold;">City</td><td>${escapeHTML(l.city)}</td></tr>` : ''}
+                        ${l.province     ? `<tr><td style="font-weight: bold;">Province / State</td><td>${escapeHTML(l.province)}</td></tr>` : ''}
+                        ${l.postal_code  ? `<tr><td style="font-weight: bold;">Postal Code</td><td>${escapeHTML(l.postal_code)}</td></tr>` : ''}
+                        ${l.country      ? `<tr><td style="font-weight: bold;">Country</td><td>${escapeHTML(l.country)}</td></tr>` : ''}
+                    </tbody></table>
+                </div>`;
+            }
+            
+            // === Lead Attributes Section ===
+            html += `<div class="detail-section" style="margin-bottom: 1.5rem;">
+                <h4 style="color: #008cb4; margin: 0 0 0.75rem 0;">🎯 Lead Attributes</h4>
+                <table class="summary-table"><tbody>
+                    <tr><td style="font-weight: bold; width: 180px;">Status</td><td><span class="status-badge ${statusLower}">${statusLower.toUpperCase()}</span></td></tr>
+                    <tr><td style="font-weight: bold;">Rating</td><td><span class="rating-badge ${ratingLower}">${ratingIcon} ${ratingLower.charAt(0).toUpperCase() + ratingLower.slice(1)}</span></td></tr>
+                    <tr><td style="font-weight: bold;">Score</td><td><span class="score">${l.score ?? 'N/A'}</span></td></tr>
+                    ${l.score_updated_at ? `<tr><td style="font-weight: bold;">Score Updated</td><td>${formatDateTimeDisplay(l.score_updated_at)}</td></tr>` : ''}
+                    <tr><td style="font-weight: bold;">Source</td><td><span class="source">${escapeHTML(l.source || 'N/A')}</span></td></tr>
+                    ${l.campaign_id ? `<tr><td style="font-weight: bold;">Campaign</td><td>${escapeHTML(l.campaign_id)}</td></tr>` : ''}
+                    ${l.qualification_reason ? `<tr><td style="font-weight: bold; color: #155724;">Qualification Reason</td><td style="color: #155724;">${escapeHTML(l.qualification_reason)}</td></tr>` : ''}
+                    ${l.disqualification_reason ? `<tr><td style="font-weight: bold; color: #856404;">Disqualification Reason</td><td style="color: #856404;">${escapeHTML(l.disqualification_reason)}</td></tr>` : ''}
+                    ${l.qualification_date ? `<tr><td style="font-weight: bold;">Qualification Date</td><td>${formatDateTimeDisplay(l.qualification_date)}</td></tr>` : ''}
+                </tbody></table>
+            </div>`;
+            
+            // === Ownership Section ===
+            html += `<div class="detail-section" style="margin-bottom: 1.5rem;">
+                <h4 style="color: #008cb4; margin: 0 0 0.75rem 0;">👤 Ownership</h4>
+                <table class="summary-table"><tbody>
+                    <tr><td style="font-weight: bold; width: 180px;">Owner</td><td>${escapeHTML(l.owner_name || 'Unassigned')}</td></tr>
+                </tbody></table>
+            </div>`;
+            
+            // === Audit Trail Section ===
+            html += `<div class="detail-section" style="margin-bottom: 1.5rem;">
+                <h4 style="color: #008cb4; margin: 0 0 0.75rem 0;">📝 Audit Trail</h4>
+                <table class="summary-table"><tbody>
+                    <tr><td style="font-weight: bold; width: 180px;">Created At</td><td>${formatDateTimeDisplay(l.created_at)}</td></tr>
+                    ${l.created_by_name ? `<tr><td style="font-weight: bold;">Created By</td><td>${escapeHTML(l.created_by_name)}</td></tr>` : ''}
+                    <tr><td style="font-weight: bold;">Updated At</td><td>${formatDateTimeDisplay(l.updated_at)}</td></tr>
+                    ${l.updated_by_name ? `<tr><td style="font-weight: bold;">Updated By</td><td>${escapeHTML(l.updated_by_name)}</td></tr>` : ''}
+                </tbody></table>
+            </div>`;
+            
+            // === Conversion Section (if converted) ===
+            if (l.converted) {
+                html += `<div class="detail-section" style="margin-bottom: 1.5rem; background: #f0fff4; border: 1px solid #28a745; border-radius: 8px; padding: 1rem;">
+                    <h4 style="color: #155724; margin: 0 0 0.75rem 0;">🎉 Conversion Details</h4>
+                    <table class="summary-table"><tbody>
+                        ${l.converted_at ? `<tr><td style="font-weight: bold; width: 180px;">Converted At</td><td>${formatDateTimeDisplay(l.converted_at)}</td></tr>` : ''}
+                        ${l.converted_account_id ? `<tr><td style="font-weight: bold;">Account ID</td><td>${escapeHTML(l.converted_account_id)}</td></tr>` : ''}
+                        ${l.converted_contact_id ? `<tr><td style="font-weight: bold;">Contact ID</td><td>${escapeHTML(l.converted_contact_id)}</td></tr>` : ''}
+                        ${l.converted_opportunity_id ? `<tr><td style="font-weight: bold;">Opportunity ID</td><td>${escapeHTML(l.converted_opportunity_id)}</td></tr>` : ''}
+                    </tbody></table>
+                </div>`;
+            }
+            
+            // === Dedupe Section (optional) ===
+            if (l.dedupe_group_id) {
+                html += `<div class="detail-section" style="margin-bottom: 1.5rem; background: #fff8e6; border: 1px solid #fd7e14; border-radius: 8px; padding: 1rem;">
+                    <h4 style="color: #856404; margin: 0 0 0.75rem 0;">🔗 Dedupe Information</h4>
+                    <table class="summary-table"><tbody>
+                        <tr><td style="font-weight: bold; width: 180px;">Dedupe Group</td><td>${escapeHTML(l.dedupe_group_id)}</td></tr>
+                        ${l.dedupe_confidence ? `<tr><td style="font-weight: bold;">Confidence</td><td>${(l.dedupe_confidence * 100).toFixed(0)}%</td></tr>` : ''}
+                    </tbody></table>
+                </div>`;
+            }
+            
+            // Action buttons with FULL lead_id
+            const leadId = l.lead_id || fullLeadId;
+            html += `<div class="action-buttons" style="margin-top: 1.5rem;">
+                <button class="unified-action-btn" onclick="goBackToList()">⬅️ Back to List</button>
+                <button class="unified-action-btn" onclick="updateLeadById('${escapeHTML(leadId)}')">⚙️ Update</button>
+                ${statusLower !== 'qualified' && statusLower !== 'converted' ? `<button class="unified-action-btn" onclick="qualifyLead('${escapeHTML(leadId)}')">⭐ Qualify</button>` : ''}
+                ${statusLower === 'qualified' ? `<button class="unified-action-btn" onclick="convertLead('${escapeHTML(leadId)}')">🚀 Convert</button>` : ''}
+                <button class="unified-action-btn" onclick="goHome()">🏠 Back Home</button>
+            </div>`;
+        } else {
+            // FALLBACK: Parse sections from text
+            const sections = text.split(/\*\*📋|\*\*🎯|\*\*👤|\*\*📝|\*\*🎉|\*\*🔗/);
+            
+            // Parse each section's table rows
+            sections.forEach(section => {
+                const tableRows = section.match(/\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|/g);
+                if (tableRows && tableRows.length > 0) {
+                    html += `<table class="summary-table"><tbody>`;
+                    tableRows.forEach(row => {
+                        const match = row.match(/\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|/);
+                        if (match) {
+                            const [, field, value] = match;
+                            if (field.trim() !== 'Field' && field.trim() !== '-------') {
+                                html += `<tr><td style="font-weight: bold; width: 180px;">${escapeHTML(field.trim())}</td><td>${escapeHTML(value.trim())}</td></tr>`;
+                            }
+                        }
+                    });
+                    html += `</tbody></table><br>`;
+                }
+            });
+            
+            // Action buttons with full lead_id from text
+            html += `<div class="action-buttons" style="margin-top: 1.5rem;">
+                <button class="unified-action-btn" onclick="goBackToList()">⬅️ Back to List</button>
+                <button class="unified-action-btn" onclick="goHome()">🏠 Back Home</button>
+            </div>`;
+        }
+        
+        html += `</div>`;
+        return html;
+    }
+    
+    // === CREATE CONFIRMATION RENDERER ===
+    function buildCreateConfirmationHTML(text, data) {
+        const isWarning = text.includes('Warning') || text.includes('⚠️') || text.includes('duplicate');
+        const recordClass = isWarning ? 'warning-record' : 'success-record';
+        const l = data?.lead || null;
+
+        let html = `<div class="${recordClass}">`;
+
+        // ── Title ──────────────────────────────────────────────────────────
+        html += `<h3 style="color:${isWarning ? '#856404' : '#155724'}; margin:0 0 1rem 0;">
+                    ${isWarning ? '⚠️ Lead Created with Warning' : '✅ Lead Created Successfully'}
+                 </h3>`;
+
+        // ── Warning notice ─────────────────────────────────────────────────
+        if (isWarning) {
+            html += `<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:0.65rem 0.9rem;margin-bottom:1rem;color:#856404;font-size:0.88rem;">
+                        ⚠️ <strong>Possible duplicate leads detected.</strong> Consider reviewing before proceeding.
+                     </div>`;
+        }
+
+        // ── Lead Summary Card (from data.lead) ─────────────────────────────
+        if (l) {
+            const fullName    = `${l.first_name || ''} ${l.last_name || ''}`.trim() || 'Unknown';
+            const statusLower = (l.status  || 'new').toLowerCase();
+            const ratingLower = (l.rating  || 'cold').toLowerCase();
+            const ratingIcon  = ratingLower === 'hot' ? '🔥' : ratingLower === 'warm' ? '☀️' : '❄️';
+            const sourceLabel = (l.source  || '').replace(/_/g, ' ');
+
+            // Status + Rating badges row
+            html += `<div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:1rem;">
+                        <span class="status-badge ${statusLower}">${statusLower.toUpperCase()}</span>
+                        <span class="rating-badge ${ratingLower}">${ratingIcon} ${ratingLower.charAt(0).toUpperCase() + ratingLower.slice(1)}</span>
+                        ${l.score !== undefined && l.score !== null
+                            ? `<span class="score" style="margin-left:0.25rem;">Score: ${l.score}</span>`
+                            : ''}
+                     </div>`;
+
+            // Identity section
+            html += `<div class="detail-section" style="margin-bottom:1.25rem;">
+                        <h4 style="color:#008cb4;margin:0 0 0.6rem 0;">👤 Lead Details</h4>
+                        <table class="summary-table"><tbody>
+                            <tr><td style="font-weight:bold;width:160px;">Name</td>
+                                <td><strong>${escapeHTML(fullName)}</strong></td></tr>
+                            ${l.company ? `<tr><td style="font-weight:bold;">Company</td>
+                                <td>${escapeHTML(l.company)}</td></tr>` : ''}
+                            ${l.email   ? `<tr><td style="font-weight:bold;">Email</td>
+                                <td><span class="email">${escapeHTML(l.email)}</span></td></tr>` : ''}
+                            ${l.phone   ? `<tr><td style="font-weight:bold;">Phone</td>
+                                <td><span class="phone">${escapeHTML(l.phone)}</span></td></tr>` : ''}
+                            ${sourceLabel ? `<tr><td style="font-weight:bold;">Source</td>
+                                <td><span class="source">${escapeHTML(sourceLabel)}</span></td></tr>` : ''}
+                            ${l.address_line1 ? `<tr><td style="font-weight:bold;">Address</td>
+                                <td>${escapeHTML(l.address_line1)}${l.address_line2 ? ', ' + escapeHTML(l.address_line2) : ''}</td></tr>` : ''}
+                            ${(l.city || l.province || l.postal_code) ? `<tr><td style="font-weight:bold;">City / Province</td>
+                                <td>${[l.city, l.province, l.postal_code].filter(Boolean).map(s => escapeHTML(s)).join(', ')}</td></tr>` : ''}
+                            ${l.country ? `<tr><td style="font-weight:bold;">Country</td>
+                                <td>${escapeHTML(l.country)}</td></tr>` : ''}
+                        </tbody></table>
+                     </div>`;
+
+            // System info section
+            html += `<div class="detail-section" style="margin-bottom:1.25rem;">
+                        <h4 style="color:#008cb4;margin:0 0 0.6rem 0;">🔖 System Info</h4>
+                        <table class="summary-table"><tbody>
+                            <tr><td style="font-weight:bold;width:160px;">Lead ID</td>
+                                <td><span class="id" style="font-size:0.8rem;">${escapeHTML(l.lead_id)}</span></td></tr>
+                            ${l.created_at ? `<tr><td style="font-weight:bold;">Created</td>
+                                <td>${formatDateTimeDisplay(l.created_at)}</td></tr>` : ''}
+                            ${l.owner_name ? `<tr><td style="font-weight:bold;">Owner</td>
+                                <td>${escapeHTML(l.owner_name)}</td></tr>` : ''}
+                            ${l.dedupe_group_id ? `<tr><td style="font-weight:bold;">Dedupe Group</td>
+                                <td style="font-size:0.8rem;">${escapeHTML(l.dedupe_group_id)}
+                                ${l.dedupe_confidence !== undefined && l.dedupe_confidence !== null
+                                    ? ` <span style="color:#856404;font-size:0.78rem;">(${(l.dedupe_confidence * 100).toFixed(0)}% confidence)</span>`
+                                    : ''}</td></tr>` : ''}
+                        </tbody></table>
+                     </div>`;
+
+        } else {
+            // Fallback: render markdown text if data.lead not available
+            html += `<div style="margin-bottom:1rem;">${renderMarkdown(text)}</div>`;
+        }
+
+        // ── Action buttons (all three on one row) ──────────────────────────
+        html += `<div class="action-buttons">
+                    <button class="unified-action-btn" onclick="sendRequest('Show all leads')">📋 View All Leads</button>
+                    <button class="unified-action-btn" onclick="showCreateLeadForm()">➕ Create Another</button>
+                    <button class="unified-action-btn" onclick="goHome()">🏠 Back Home</button>
+                 </div>`;
+
+        html += `</div>`;
+        return html;
+    }
+    
+    // === UPDATE CONFIRMATION RENDERER ===
+    function buildUpdateConfirmationHTML(text, data) {
+        const l = data?.lead || null;
+        const ts = l?.updated_at ? formatDateTimeDisplay(l.updated_at) : new Date().toLocaleString();
+        const fullName = l ? `${l.first_name || ''} ${l.last_name || ''}`.trim() : 'N/A';
+        const ratingLower = (l?.rating || '').toLowerCase();
+        const ratingIcon = ratingLower === 'hot' ? '🔥' : ratingLower === 'warm' ? '☀️' : ratingLower === 'cold' ? '❄️' : '⚪';
+        const statusLower = (l?.status || '').toLowerCase();
+
+        let html = `
+        <div style="background: linear-gradient(135deg,#f0fff4 0%,#e6ffed 100%);
+                    border: 2px solid #28a745; border-radius: 12px; padding: 0; overflow: hidden;
+                    box-shadow: 0 4px 18px rgba(40,167,69,0.12);">
+
+            <!-- Header Banner -->
+            <div style="background: linear-gradient(135deg,#28a745,#20c997);
+                        padding: 1rem 1.5rem; display:flex; align-items:center; gap:0.75rem;">
+                <div style="width:40px;height:40px;background:rgba(255,255,255,0.25);border-radius:50%;
+                            display:flex;align-items:center;justify-content:center;font-size:1.3rem;">✅</div>
+                <div>
+                    <div style="color:#fff;font-size:1.1rem;font-weight:700;">Lead Updated Successfully</div>
+                    <div style="color:rgba(255,255,255,0.85);font-size:0.8rem;">Updated at ${ts}</div>
+                </div>
+            </div>
+
+            <!-- Body -->
+            <div style="padding:1.25rem 1.5rem;">`;
+
+        if (l) {
+            // ── Identity card ──
+            html += `
+                <div style="background:#fff;border:1px solid #c3e6cb;border-radius:8px;padding:1rem;margin-bottom:1rem;">
+                    <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;
+                                letter-spacing:.08em;color:#28a745;margin-bottom:.75rem;">👤 Lead Identity</div>
+                    <table style="width:100%;border-collapse:collapse;font-size:0.875rem;">
+                        <tr><td style="padding:0.3rem 0.5rem;color:#6c757d;width:45%;">Full Name</td>
+                            <td style="padding:0.3rem 0.5rem;font-weight:600;">${escapeHTML(fullName)}</td></tr>
+                        ${l.company ? `<tr><td style="padding:0.3rem 0.5rem;color:#6c757d;">Company</td>
+                            <td style="padding:0.3rem 0.5rem;">${escapeHTML(l.company)}</td></tr>` : ''}
+                        ${l.email ? `<tr><td style="padding:0.3rem 0.5rem;color:#6c757d;">Email</td>
+                            <td style="padding:0.3rem 0.5rem;"><span class="email">${escapeHTML(l.email)}</span></td></tr>` : ''}
+                        ${l.phone ? `<tr><td style="padding:0.3rem 0.5rem;color:#6c757d;">Phone</td>
+                            <td style="padding:0.3rem 0.5rem;"><span class="phone">${escapeHTML(l.phone)}</span></td></tr>` : ''}
+                    </table>
+                </div>`;
+
+            // ── Status & rating ──
+            html += `
+                <div style="display:flex;gap:0.75rem;margin-bottom:1rem;">
+                    <div style="flex:1;background:#fff;border:1px solid #c3e6cb;border-radius:8px;
+                                padding:0.75rem;text-align:center;">
+                        <div style="font-size:0.7rem;color:#6c757d;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.3rem;">Status</div>
+                        <span class="status-badge ${statusLower}" style="font-size:0.9rem;">${escapeHTML(l.status || 'N/A')}</span>
+                    </div>
+                    <div style="flex:1;background:#fff;border:1px solid #c3e6cb;border-radius:8px;
+                                padding:0.75rem;text-align:center;">
+                        <div style="font-size:0.7rem;color:#6c757d;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.3rem;">Rating</div>
+                        <span style="font-size:1rem;">${ratingIcon} ${escapeHTML(l.rating || 'N/A')}</span>
+                    </div>
+                    <div style="flex:1;background:#fff;border:1px solid #c3e6cb;border-radius:8px;
+                                padding:0.75rem;text-align:center;">
+                        <div style="font-size:0.7rem;color:#6c757d;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.3rem;">Score</div>
+                        <span class="score" style="font-size:1rem;">${l.score ?? 'N/A'}</span>
+                    </div>
+                </div>`;
+
+            // ── Source & timestamps ──
+            html += `
+                <div style="background:#fff;border:1px solid #c3e6cb;border-radius:8px;padding:1rem;margin-bottom:1rem;">
+                    <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;
+                                letter-spacing:.08em;color:#28a745;margin-bottom:.75rem;">📅 Timestamps</div>
+                    <table style="width:100%;border-collapse:collapse;font-size:0.875rem;">
+                        ${l.source ? `<tr><td style="padding:0.3rem 0.5rem;color:#6c757d;width:45%;">Source</td>
+                            <td style="padding:0.3rem 0.5rem;">${escapeHTML(l.source)}</td></tr>` : ''}
+                        ${l.created_at ? `<tr><td style="padding:0.3rem 0.5rem;color:#6c757d;">Created At</td>
+                            <td style="padding:0.3rem 0.5rem;">${formatDateTimeDisplay(l.created_at)}</td></tr>` : ''}
+                        ${l.updated_at ? `<tr><td style="padding:0.3rem 0.5rem;color:#6c757d;">Updated At</td>
+                            <td style="padding:0.3rem 0.5rem;font-weight:600;color:#155724;">${formatDateTimeDisplay(l.updated_at)}</td></tr>` : ''}
+                        ${l.updated_by_name ? `<tr><td style="padding:0.3rem 0.5rem;color:#6c757d;">Updated By</td>
+                            <td style="padding:0.3rem 0.5rem;">${escapeHTML(l.updated_by_name)}</td></tr>` : ''}
+                    </table>
+                </div>`;
+        } else {
+            html += `<div style="margin-bottom:1rem;">${renderMarkdown(text)}</div>`;
+        }
+
+        // ── Actions ──
+        html += `
+                <div class="action-buttons">
+                    <button class="unified-action-btn" onclick="sendDirectRequest('list leads:',{pageSize:50})">📋 View All Leads</button>
+                    <button class="unified-action-btn" onclick="showUpdateLeadForm({})">⚙️ Update Another</button>
+                    <button class="unified-action-btn" onclick="goHome()">🏠 Back Home</button>
+                </div>
+            </div>
+        </div>`;
+        return html;
+    }
+    
+    // === QUALIFY CONFIRMATION RENDERER (v4.1 - Compact Success banner + Lead Summary) ===
+    function buildQualifyConfirmationHTML(text, data) {
+        let html = `<div class="success-record" style="border: 2px solid #28a745; background: linear-gradient(135deg, #f0fff4 0%, #e6ffed 100%);">`;
+        
+        // Extract lead_id from data or text
+        const leadIdMatch = text.match(/<!--LEAD_ID:([a-f0-9-]{36})-->/i);
+        const fullLeadId = data?.lead?.lead_id || (leadIdMatch ? leadIdMatch[1] : '');
+        
+        // Success Banner - Compact (50% reduced)
+        html += `<div style="text-align: center; padding: 0.5rem; margin-bottom: 0.75rem; background: #28a745; color: white; border-radius: 6px;">
+            <h3 style="margin: 0; font-size: 0.75rem;">⭐ Lead Qualified Successfully!</h3>
+        </div>`;
+        
+        // Qualification details
+        if (data?.lead) {
+            const l = data.lead;
+            const fullName = `${l.first_name || ''} ${l.last_name || ''}`.trim() || 'Unknown';
+            const statusLower = (l.status || 'qualified').toLowerCase();
+            const ratingLower = (l.rating || 'cold').toLowerCase();
+            const ratingIcon = ratingLower === 'hot' ? '🔥' : (ratingLower === 'warm' ? '☀️' : '❄️');
+            
+            // Qualification Info Box
+            if (l.qualification_reason || l.qualification_date) {
+                html += `<div style="background: #d4edda; border: 1px solid #c3e6cb; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+                    <h4 style="margin: 0 0 0.75rem 0; color: #155724;">✅ Qualification Details</h4>
+                    ${l.qualification_reason ? `<p style="margin: 0.25rem 0;"><strong>Reason:</strong> ${escapeHTML(l.qualification_reason)}</p>` : ''}
+                    ${l.qualification_date ? `<p style="margin: 0.25rem 0;"><strong>Date:</strong> ${formatDateTimeDisplay(l.qualification_date)}</p>` : ''}
+                </div>`;
+            }
+            
+            // Updated Lead Summary - Key fields highlighted
+            html += `<div style="margin-bottom: 1rem;">
+                <h4 style="color: #008cb4; margin: 0 0 0.75rem 0;">📋 Lead Summary</h4>
+                <table class="summary-table"><tbody>
+                    <tr style="background: #d4edda;"><td style="font-weight: bold; width: 180px;">Name</td><td><strong>${escapeHTML(fullName)}</strong></td></tr>
+                    <tr style="background: #d4edda;"><td style="font-weight: bold;">Status</td><td><span class="status-badge qualified">⭐ QUALIFIED</span></td></tr>
+                    ${l.qualification_reason ? `<tr style="background: #d4edda;"><td style="font-weight: bold;">Qualification Reason</td><td>${escapeHTML(l.qualification_reason)}</td></tr>` : ''}
+                    ${l.qualification_date ? `<tr style="background: #d4edda;"><td style="font-weight: bold;">Qualification Date</td><td>${formatDateTimeDisplay(l.qualification_date)}</td></tr>` : ''}
+                    ${l.updated_by_name ? `<tr style="background: #d4edda;"><td style="font-weight: bold;">Updated By</td><td>${escapeHTML(l.updated_by_name)}</td></tr>` : ''}
+                    ${l.owner_name ? `<tr style="background: #d4edda;"><td style="font-weight: bold;">Owner</td><td>${escapeHTML(l.owner_name)}</td></tr>` : ''}
+                    <tr><td style="font-weight: bold;">Score</td><td><span class="score">${l.score ?? 'N/A'}</span></td></tr>
+                    <tr><td style="font-weight: bold;">Company</td><td>${escapeHTML(l.company || 'N/A')}</td></tr>
+                    <tr><td style="font-weight: bold;">Email</td><td><span class="email">${escapeHTML(l.email || 'N/A')}</span></td></tr>
+                    <tr><td style="font-weight: bold;">Phone</td><td><span class="phone">${escapeHTML(l.phone || 'N/A')}</span></td></tr>
+                </tbody></table>
+            </div>`;
+            
+            // Next Steps section
+            html += `<div style="background: #e7f3ff; border: 1px solid #b3d7ff; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+                <h4 style="margin: 0 0 0.5rem 0; color: #004085;">🚀 Next Steps</h4>
+                <ul style="margin: 0; padding-left: 1.25rem;">
+                    <li>Convert this lead to Account, Contact, and Opportunity</li>
+                    <li>Edit lead details if needed</li>
+                    <li>View activity log</li>
+                </ul>
+            </div>`;
+            
+            // Action buttons with FULL lead_id
+            const leadId = l.lead_id || fullLeadId;
+            html += `<div class="action-buttons">
+                <button class="unified-action-btn" onclick="goBackToList()">⬅️ Back to List</button>
+                <button class="unified-action-btn" onclick="convertLead('${escapeHTML(leadId)}')">🚀 Convert Now</button>
+                <button class="unified-action-btn" onclick="getLeadDetails('${escapeHTML(leadId)}')">📄 View Details</button>
+                <button class="unified-action-btn" onclick="goHome()">🏠 Back Home</button>
+            </div>`;
+        } else {
+            // Fallback: parse from text
+            const qualReasonMatch = text.match(/Qualification Reason[:\*]*\s*([^\n|]+)/i);
+            const qualDateMatch = text.match(/Qualification Date[:\*]*\s*([^\n|]+)/i);
+            
+            if (qualReasonMatch || qualDateMatch) {
+                html += `<div style="background: #d4edda; border: 1px solid #c3e6cb; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+                    <h4 style="margin: 0 0 0.75rem 0; color: #155724;">✅ Qualification Details</h4>
+                    ${qualReasonMatch ? `<p style="margin: 0.25rem 0;"><strong>Reason:</strong> ${escapeHTML(qualReasonMatch[1].trim())}</p>` : ''}
+                    ${qualDateMatch ? `<p style="margin: 0.25rem 0;"><strong>Date:</strong> ${escapeHTML(qualDateMatch[1].trim())}</p>` : ''}
+                </div>`;
+            }
+            
+            html += `<p>The lead has been marked as qualified and is now ready for conversion.</p>`;
+            
+            // Action buttons
+            html += `<div class="action-buttons">
+                <button class="unified-action-btn" onclick="goBackToList()">⬅️ Back to List</button>
+                <button class="unified-action-btn" onclick="sendDirectRequest('list leads:', { status: 'qualified' })">📋 View Qualified Leads</button>
+                ${fullLeadId ? `<button class="unified-action-btn" onclick="convertLead('${escapeHTML(fullLeadId)}')">🚀 Convert Now</button>` : ''}
+                <button class="unified-action-btn" onclick="goHome()">🏠 Back Home</button>
+            </div>`;
+        }
+        
+        html += `</div>`;
+        return html;
+    }
+    
+    // === CONVERT CONFIRMATION RENDERER (v4.1 - Proper button binding based on Issue #2) ===
+    function buildConvertConfirmationHTML(text, data) {
+        // Get conversion IDs from data object (new in v4.1)
+        // v5.1: Format Response v4.5 now passes full entity objects; extract IDs from them too
+        const accountId     = data?.accountId     || data?.account?.account_id         || null;
+        const contactId     = data?.contactId     || data?.contact?.contact_id         || null;
+        const opportunityId = data?.opportunityId || data?.opportunity?.opportunity_id || null;
+        const account     = data?.account     || null;
+        const contact     = data?.contact     || null;
+        const opportunity = data?.opportunity || null;
+        const address     = data?.address     || null;
+        
+        // Check if this is a successful conversion with IDs returned
+        const hasConversionIds = accountId && contactId && opportunityId;
+        
+        // Check if lead was already converted (no IDs returned but status is converted)
+        const alreadyConverted = !hasConversionIds && data?.lead?.converted === true;
+        
+        // Check for errors
+        const isError = data?.metadata?.status === 'error' || data?.metadata?.code < 0;
+        
+        let html = '';
+        
+        if (isError) {
+            // ERROR: Don't display entity buttons
+            html = `<div class="error-record">`;
+            html += `<h3 style="color: #dc3545;">❌ Conversion Failed</h3>`;
+            html += `<p>${data?.metadata?.message || 'An error occurred during conversion.'}</p>`;
+            html += `<div class="action-buttons">
+                <button class="unified-action-btn" onclick="sendRequest('Show all leads')">📋 View All Leads</button>
+                <button class="unified-action-btn" onclick="goHome()">🏠 Back Home</button>
+            </div>`;
+            html += `</div>`;
+            return html;
+        }
+        
+        if (alreadyConverted) {
+            // ALREADY CONVERTED: No IDs returned, hide or disable buttons
+            html = `<div class="warning-record">`;
+            html += `<h3 style="color: #856404;">⚠️ Lead Already Converted</h3>`;
+            html += `<p>This lead has already been converted. The entity IDs are not available from this operation.</p>`;
+            
+            html += `<div class="action-buttons">
+                <button class="unified-action-btn" onclick="sendRequest('Show all leads')">📋 View All Leads</button>
+                <button class="unified-action-btn" onclick="sendRequest('Show pipeline summary')">📈 Pipeline</button>
+                <button class="unified-action-btn" onclick="goHome()">🏠 Back Home</button>
+            </div>`;
+            html += `</div>`;
+            return html;
+        }
+        
+        // SUCCESS: Rich confirmation with full entity details
+        const convTS = data?.lead?.converted_at ? formatDateTimeDisplay(data.lead.converted_at) : new Date().toLocaleString();
+        const leadName = data?.lead ? `${data.lead.first_name || ''} ${data.lead.last_name || ''}`.trim() : '';
+
+        html = `
+        <div style="background:linear-gradient(135deg,#f0fff4 0%,#e6ffed 100%);
+                    border:2px solid #28a745;border-radius:12px;padding:0;overflow:hidden;
+                    box-shadow:0 4px 18px rgba(40,167,69,0.12);">
+
+            <!-- Header Banner -->
+            <div style="background:linear-gradient(135deg,#007bff,#6f42c1);
+                        padding:1rem 1.5rem;display:flex;align-items:center;gap:0.75rem;">
+                <div style="width:42px;height:42px;background:rgba(255,255,255,0.25);border-radius:50%;
+                            display:flex;align-items:center;justify-content:center;font-size:1.4rem;">🎉</div>
+                <div>
+                    <div style="color:#fff;font-size:1.1rem;font-weight:700;">Lead Converted Successfully!</div>
+                    <div style="color:rgba(255,255,255,0.85);font-size:0.8rem;">Converted at ${convTS}</div>
+                </div>
+            </div>
+
+            <div style="padding:1.25rem 1.5rem;">
+
+            <!-- Converted Lead -->
+            ${data?.lead ? (() => {
+                const l = data.lead;
+                const fn = `${l.first_name||''} ${l.last_name||''}`.trim();
+                return `<div style="background:#fff;border:1px solid #c3e6cb;border-radius:8px;padding:1rem;margin-bottom:1rem;">
+                    <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#28a745;margin-bottom:.6rem;">🧑 Converted Lead</div>
+                    <table style="width:100%;border-collapse:collapse;font-size:0.875rem;">
+                        ${fn ? `<tr><td style="padding:.3rem .5rem;color:#6c757d;width:40%;">Name</td><td style="padding:.3rem .5rem;font-weight:600;">${escapeHTML(fn)}</td></tr>` : ''}
+                        ${l.company ? `<tr><td style="padding:.3rem .5rem;color:#6c757d;">Company</td><td style="padding:.3rem .5rem;">${escapeHTML(l.company)}</td></tr>` : ''}
+                        ${l.email ? `<tr><td style="padding:.3rem .5rem;color:#6c757d;">Email</td><td style="padding:.3rem .5rem;">${escapeHTML(l.email)}</td></tr>` : ''}
+                        <tr><td style="padding:.3rem .5rem;color:#6c757d;">Status</td><td style="padding:.3rem .5rem;"><span class="status-badge converted">✔ CONVERTED</span></td></tr>
+                        ${l.qualification_reason ? `<tr><td style="padding:.3rem .5rem;color:#6c757d;">Qualification</td><td style="padding:.3rem .5rem;">${escapeHTML(l.qualification_reason)}</td></tr>` : ''}
+                    </table>
+                </div>`;
+            })() : ''}
+
+            <!-- New Account -->
+            ${account ? `<div style="background:#fff;border:1px solid #b8daff;border-radius:8px;padding:1rem;margin-bottom:1rem;">
+                <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#004085;margin-bottom:.6rem;">🏢 New Account Created</div>
+                <table style="width:100%;border-collapse:collapse;font-size:0.875rem;">
+                    ${account.account_name ? `<tr><td style="padding:.3rem .5rem;color:#6c757d;width:40%;">Account Name</td><td style="padding:.3rem .5rem;font-weight:600;">${escapeHTML(account.account_name)}</td></tr>` : ''}
+                    <tr><td style="padding:.3rem .5rem;color:#6c757d;">Account ID</td><td style="padding:.3rem .5rem;font-family:monospace;font-size:0.78rem;">${accountId}</td></tr>
+                    ${account.status ? `<tr><td style="padding:.3rem .5rem;color:#6c757d;">Status</td><td style="padding:.3rem .5rem;">${escapeHTML(account.status)}</td></tr>` : ''}
+                    ${account.industry ? `<tr><td style="padding:.3rem .5rem;color:#6c757d;">Industry</td><td style="padding:.3rem .5rem;">${escapeHTML(account.industry)}</td></tr>` : ''}
+                </table>
+                ${address ? `<div style="margin-top:.6rem;padding:.5rem .75rem;background:#f0f7ff;border-radius:6px;font-size:0.82rem;color:#495057;">
+                    📍 ${[address.line1, address.line2, address.city, address.province, address.postal_code, address.country].filter(Boolean).join(', ')}
+                </div>` : ''}
+            </div>` : ''}
+
+            <!-- New Contact -->
+            ${contact ? `<div style="background:#fff;border:1px solid #d4edda;border-radius:8px;padding:1rem;margin-bottom:1rem;">
+                <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#155724;margin-bottom:.6rem;">👤 New Contact Created</div>
+                <table style="width:100%;border-collapse:collapse;font-size:0.875rem;">
+                    ${(contact.first_name||contact.last_name) ? `<tr><td style="padding:.3rem .5rem;color:#6c757d;width:40%;">Name</td><td style="padding:.3rem .5rem;font-weight:600;">${escapeHTML((contact.first_name||'')+' '+(contact.last_name||'')).trim()}</td></tr>` : ''}
+                    <tr><td style="padding:.3rem .5rem;color:#6c757d;">Contact ID</td><td style="padding:.3rem .5rem;font-family:monospace;font-size:0.78rem;">${contactId}</td></tr>
+                    ${contact.email ? `<tr><td style="padding:.3rem .5rem;color:#6c757d;">Email</td><td style="padding:.3rem .5rem;">${escapeHTML(contact.email)}</td></tr>` : ''}
+                    ${contact.phone ? `<tr><td style="padding:.3rem .5rem;color:#6c757d;">Phone</td><td style="padding:.3rem .5rem;">${escapeHTML(contact.phone)}</td></tr>` : ''}
+                    ${contact.status ? `<tr><td style="padding:.3rem .5rem;color:#6c757d;">Status</td><td style="padding:.3rem .5rem;">${escapeHTML(contact.status)}</td></tr>` : ''}
+                </table>
+            </div>` : ''}
+
+            <!-- New Opportunity -->
+            ${opportunity ? `<div style="background:#fff;border:1px solid #ffeeba;border-radius:8px;padding:1rem;margin-bottom:1rem;">
+                <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#856404;margin-bottom:.6rem;">💼 New Opportunity Created</div>
+                <table style="width:100%;border-collapse:collapse;font-size:0.875rem;">
+                    ${opportunity.name ? `<tr><td style="padding:.3rem .5rem;color:#6c757d;width:40%;">Name</td><td style="padding:.3rem .5rem;font-weight:600;">${escapeHTML(opportunity.name)}</td></tr>` : ''}
+                    <tr><td style="padding:.3rem .5rem;color:#6c757d;">Opportunity ID</td><td style="padding:.3rem .5rem;font-family:monospace;font-size:0.78rem;">${opportunityId}</td></tr>
+                    ${opportunity.stage ? `<tr><td style="padding:.3rem .5rem;color:#6c757d;">Stage</td><td style="padding:.3rem .5rem;">${escapeHTML(opportunity.stage)}</td></tr>` : ''}
+                    ${opportunity.status ? `<tr><td style="padding:.3rem .5rem;color:#6c757d;">Status</td><td style="padding:.3rem .5rem;">${escapeHTML(opportunity.status)}</td></tr>` : ''}
+                    ${opportunity.lead_source ? `<tr><td style="padding:.3rem .5rem;color:#6c757d;">Lead Source</td><td style="padding:.3rem .5rem;">${escapeHTML(opportunity.lead_source)}</td></tr>` : ''}
+                    ${opportunity.amount!=null ? `<tr><td style="padding:.3rem .5rem;color:#6c757d;">Amount</td><td style="padding:.3rem .5rem;">${opportunity.amount}</td></tr>` : ''}
+                </table>
+            </div>` : ''}
+
+            <div class="action-buttons">
+                <button class="unified-action-btn" onclick="sendDirectRequest('list leads:',{pageSize:50})">📋 View All Leads</button>
+                <button class="unified-action-btn" onclick="sendDirectRequest('pipeline leads:',{})">📈 Pipeline</button>
+                <button class="unified-action-btn" onclick="goHome()">🏠 Back Home</button>
+            </div>
+
+            </div>
+        </div>`;
+        return html;
+    }
+    
+    // === ENTITY VIEW FUNCTIONS (for post-conversion navigation) ===
+    function viewAccount(accountId) {
+        if (accountId && accountId.length === 36) {
+            // TODO: Navigate to Account Management page or show account details
+            sendRequest(`Show account with ID ${accountId}`);
+        } else {
+            console.error('Invalid account ID:', accountId);
+            alert('Invalid Account ID');
+        }
+    }
+    
+    function viewContact(contactId) {
+        if (contactId && contactId.length === 36) {
+            // TODO: Navigate to Contact Management page or show contact details
+            sendRequest(`Show contact with ID ${contactId}`);
+        } else {
+            console.error('Invalid contact ID:', contactId);
+            alert('Invalid Contact ID');
+        }
+    }
+    
+    function viewOpportunity(opportunityId) {
+        if (opportunityId && opportunityId.length === 36) {
+            // TODO: Navigate to Opportunity Management page or show opportunity details
+            sendRequest(`Show opportunity with ID ${opportunityId}`);
+        } else {
+            console.error('Invalid opportunity ID:', opportunityId);
+            alert('Invalid Opportunity ID');
+        }
+    }
+    
+    // === PIPELINE MODE RENDERER (v4.0 - Uses data object directly) ===
+    function buildPipelineModeHTML(text, data) {
+        let html = `<div class="audit-record">`;
+        html += `<h3 style="color: #008cb4;">📈 Lead Pipeline Summary</h3>`;
+        
+        // v4.1: Use pipeline data from data object if available
+        const pipeline = data?.pipeline || {};
+
+        // Normalise a pipeline field: accepts both new array [{name,count}]
+        // and legacy plain-object {key: count} formats.
+        const toRows = (field) => {
+            if (!field) return [];
+            if (Array.isArray(field)) return field;                          // new format
+            return Object.entries(field).map(([name, count]) => ({name, count})); // legacy
+        };
+
+        // Create pipeline stats cards for key metrics
+        html += `<div class="pipeline-grid">`;
+
+        if (pipeline.conversion_rate !== undefined) {
+            html += `<div class="pipeline-card">
+                <div class="label">Conversion Rate</div>
+                <div class="value">${pipeline.conversion_rate}%</div>
+            </div>`;
+        }
+
+        if (pipeline.avg_score !== undefined) {
+            html += `<div class="pipeline-card">
+                <div class="label">Average Score</div>
+                <div class="value">${pipeline.avg_score}</div>
+            </div>`;
+        }
+
+        // Count total leads from by_status (works for both array and object)
+        const statusRows = toRows(pipeline.by_status);
+        if (statusRows.length > 0) {
+            const totalLeads = statusRows.reduce((sum, row) => sum + (row.count || 0), 0);
+            html += `<div class="pipeline-card">
+                <div class="label">Total Leads</div>
+                <div class="value">${totalLeads}</div>
+            </div>`;
+        }
+
+        // Dedupe stats
+        if (pipeline.dedupe_stats) {
+            if (pipeline.dedupe_stats.dedupe_groups !== undefined) {
+                html += `<div class="pipeline-card">
+                    <div class="label">Dedupe Groups</div>
+                    <div class="value">${pipeline.dedupe_stats.dedupe_groups}</div>
+                </div>`;
+            }
+            if (pipeline.dedupe_stats.merged_leads !== undefined) {
+                html += `<div class="pipeline-card">
+                    <div class="label">Merged Leads</div>
+                    <div class="value">${pipeline.dedupe_stats.merged_leads}</div>
+                </div>`;
+            }
+        }
+
+        html += `</div>`;
+
+        // By Status Section
+        if (statusRows.length > 0) {
+            html += `<div class="pipeline-section">
+                <h4>📊 By Status</h4>
+                <table class="summary-table"><tbody>`;
+            statusRows.forEach(({ name, count }) => {
+                const statusLower = (name || '').toLowerCase();
+                html += `<tr>
+                    <td style="width: 150px;"><span class="status-badge ${statusLower}">${(name || '').toUpperCase()}</span></td>
+                    <td style="text-align: right;"><strong>${count}</strong></td>
+                </tr>`;
+            });
+            html += `</tbody></table></div>`;
+        }
+
+        // By Rating Section
+        const ratingRows = toRows(pipeline.by_rating);
+        if (ratingRows.length > 0) {
+            html += `<div class="pipeline-section">
+                <h4>🔥 By Rating</h4>
+                <table class="summary-table"><tbody>`;
+            ratingRows.forEach(({ name, count }) => {
+                const ratingLower = (name || '').toLowerCase();
+                const ratingIcon = ratingLower === 'hot' ? '🔥' : (ratingLower === 'warm' ? '☀️' : '❄️');
+                html += `<tr>
+                    <td style="width: 150px;"><span class="rating-badge ${ratingLower}">${ratingIcon} ${name}</span></td>
+                    <td style="text-align: right;"><strong>${count}</strong></td>
+                </tr>`;
+            });
+            html += `</tbody></table></div>`;
+        }
+
+        // By Source Section
+        const sourceRows = toRows(pipeline.by_source);
+        if (sourceRows.length > 0) {
+            html += `<div class="pipeline-section">
+                <h4>📌 By Source</h4>
+                <table class="summary-table"><tbody>`;
+            sourceRows.forEach(({ name, count }) => {
+                html += `<tr>
+                    <td style="width: 150px;">${escapeHTML(name || 'unknown')}</td>
+                    <td style="text-align: right;"><strong>${count}</strong></td>
+                </tr>`;
+            });
+            html += `</tbody></table></div>`;
+        }
+        
+        // Fallback: if no pipeline data, show raw text
+        if (!pipeline.by_status && !pipeline.by_rating && !pipeline.by_source) {
+            html += `<div style="margin:0.75rem 0;">${renderMarkdown(text)}</div>`;
+        }
+        
+        html += `<div class="action-buttons">
+            <button class="unified-action-btn" onclick="sendDirectRequest('list leads:', {})">📋 View All Leads</button>
+            <button class="unified-action-btn" onclick="sendDirectRequest('list leads:', { rating: 'hot' })">🔥 Hot Leads</button>
+            <button class="unified-action-btn" onclick="sendDirectRequest('list leads:', { status: 'qualified' })">⭐ Qualified</button>
+            <button class="unified-action-btn" onclick="goHome()">🏠 Back Home</button>
+        </div>`;
+        
+        html += `</div>`;
+        return html;
+    }
+    
+    // === DUPLICATES MODE RENDERER ===
+    function buildDuplicatesModeHTML(text, data) {
+        let html = `<div class="warning-record">`;
+        html += `<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                    <h3 style="color: #856404; margin: 0;">⚠️ Duplicate Leads Report</h3>
+                    <button class="unified-action-btn" onclick="goHome()">🏠 Back Home</button>
+                 </div>`;
+        html += `<div style="margin:0.75rem 0;">${renderMarkdown(text)}</div>`;
+        
+        html += `<div class="action-buttons">
+            <button class="unified-action-btn" onclick="sendRequest('Merge duplicate leads')">🔀 Merge Duplicates</button>
+            <button class="unified-action-btn" onclick="sendRequest('Show all leads')">📋 View All Leads</button>
+            <button class="unified-action-btn" onclick="goHome()">🏠 Back Home</button>
+        </div>`;
+        
+        html += `</div>`;
+        return html;
+    }
+    
+    // === ARCHIVE CONFIRMATION RENDERER ===
+    function buildArchiveConfirmationHTML(text, data) {
+        const isRestore = text.toLowerCase().includes('restore');
+        
+        let html = `<div class="success-record">`;
+        html += `<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                    <h3 style="color: #155724; margin: 0;">✅ Lead ${isRestore ? 'Restored' : 'Archived'} Successfully</h3>
+                    <button class="unified-action-btn" onclick="goHome()">🏠 Back Home</button>
+                 </div>`;
+        html += `<div style="margin:0.75rem 0;">${renderMarkdown(text)}</div>`;
+        
+        html += `<div class="action-buttons">
+            <button class="unified-action-btn" onclick="sendRequest('Show all leads')">📋 View All Leads</button>
+            <button class="unified-action-btn" onclick="goHome()">🏠 Back Home</button>
+        </div>`;
+        
+        html += `</div>`;
+        return html;
+    }
+    
+    // === FALLBACK RENDERER ===
+    function buildFallbackHTML(text, data) {
+        // Try to detect the type from content
+        if (text.includes('LEAD LIST') || text.includes('[LIST]')) {
+            return buildListModeHTML(text, data);
+        }
+        if (text.includes('LEAD DETAIL') || text.includes('Lead Details')) {
+            return buildGetModeHTML(text, data);
+        }
+        if (text.includes('CREATED SUCCESSFULLY') || text.includes('Lead Created')) {
+            return buildCreateConfirmationHTML(text, data);
+        }
+        if (text.includes('PIPELINE') || text.includes('Pipeline Summary') || text.includes('Pipeline Analysis')) {
+            return buildPipelineModeHTML(text, data);
+        }
+        if (text.includes('QUALIFIED') || text.includes('Lead Qualified')) {
+            return buildQualifyConfirmationHTML(text, data);
+        }
+        if (text.includes('CONVERTED') || text.includes('Lead Converted')) {
+            return buildConvertConfirmationHTML(text, data);
+        }
+        if (text.includes('DUPLICATE')) {
+            return buildDuplicatesModeHTML(text, data);
+        }
+        
+        // True fallback - display as formatted text
+        return `<div class="audit-record">${renderMarkdown(text)}</div>`;
+    }
+    
+    // === CREATE LEAD FORM (v5 — full width, address fields, Created By dropdown) ===
+    function showCreateLeadForm() {
+        hideQuickUI();
+        const responseArea = document.getElementById('responseArea');
+        responseArea.innerHTML = `
+            <div class="lead-form fade-in">
+                <h3 style="color: #008cb4; margin-bottom: 1.5rem;">➕ Create New Lead</h3>
+
+                <!-- Name row -->
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="create-first-name">First Name *</label>
+                        <input type="text" id="create-first-name" placeholder="Enter first name">
+                    </div>
+                    <div class="form-group">
+                        <label for="create-last-name">Last Name</label>
+                        <input type="text" id="create-last-name" placeholder="Enter last name">
+                    </div>
+                    <div class="form-group">
+                        <label for="create-company">Company</label>
+                        <input type="text" id="create-company" placeholder="Enter company name">
+                    </div>
+                </div>
+
+                <!-- Contact row -->
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="create-email">Email</label>
+                        <input type="email" id="create-email" placeholder="email@example.com">
+                    </div>
+                    <div class="form-group">
+                        <label for="create-phone">Phone</label>
+                        <input type="tel" id="create-phone" placeholder="+1 (555) 123-4567">
+                    </div>
+                </div>
+
+                <!-- Lead attributes row -->
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="create-source">Source</label>
+                        <select id="create-source">
+                            <option value="">-- Select Source --</option>
+                            ${SOURCES.map(s => `<option value="${s}">${s}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="create-rating">Rating</label>
+                        <select id="create-rating">
+                            <option value="">-- Select Rating --</option>
+                            ${RATINGS.map(r => `<option value="${r}">${r}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="create-score">Score (0–100)</label>
+                        <input type="number" id="create-score" min="0" max="100" placeholder="0-100">
+                    </div>
+                </div>
+
+                <!-- Address section -->
+                <h4 style="color: #008cb4; margin: 1.25rem 0 0.75rem 0; border-bottom: 1px solid #e0e6ed; padding-bottom: 0.4rem;">📍 Address</h4>
+                <div class="form-row">
+                    <div class="form-group" style="flex: 2;">
+                        <label for="create-address-line1">Address Line 1</label>
+                        <input type="text" id="create-address-line1" placeholder="Street address">
+                    </div>
+                    <div class="form-group">
+                        <label for="create-address-line2">Address Line 2</label>
+                        <input type="text" id="create-address-line2" placeholder="Unit, Suite…">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="create-city">City</label>
+                        <input type="text" id="create-city" placeholder="City">
+                    </div>
+                    <div class="form-group">
+                        <label for="create-province">Province / State</label>
+                        <input type="text" id="create-province" placeholder="ON">
+                    </div>
+                    <div class="form-group">
+                        <label for="create-postal-code">Postal Code</label>
+                        <input type="text" id="create-postal-code" placeholder="M5V 3C6">
+                    </div>
+                    <div class="form-group">
+                        <label for="create-country">Country</label>
+                        <input type="text" id="create-country" placeholder="Canada" value="Canada">
+                    </div>
+                </div>
+
+                <!-- Created By dropdown -->
+                <h4 style="color: #008cb4; margin: 1.25rem 0 0.75rem 0; border-bottom: 1px solid #e0e6ed; padding-bottom: 0.4rem;">👤 Created By</h4>
+                <div class="form-row">
+                    <div class="form-group employee-select-wrap">
+                        <label for="create-created-by">Created By (Employee)</label>
+                        <select id="create-created-by">
+                            <option value="">Loading employees…</option>
+                        </select>
+                        <input type="hidden" id="create-created-by-id">
+                    </div>
+                </div>
+
+                <div class="action-buttons" style="border-top: 1px solid #e0e6ed; padding-top: 1rem; margin-top: 1rem;">
+                    <button class="unified-action-btn" onclick="submitCreateLead()">➕ Create Lead</button>
+                    <button class="unified-action-btn" onclick="goHome()">🏠 Back Home</button>
+                </div>
+            </div>
+        `;
+        // Load employees into dropdown
+        loadEmployees('create-created-by');
+    }
+    
+    // === UPDATE LEAD FORM (v5 — search bar at top, full width, address fields, Updated By dropdown) ===
+    function showUpdateLeadForm(lead) {
+        hideQuickUI();
+        const responseArea = document.getElementById('responseArea');
+        const leadId = lead?.id || lead?.lead_id || '';
+        responseArea.innerHTML = `
+            <div class="lead-form fade-in">
+                <h3 style="color: #008cb4; margin-bottom: 0.75rem;">⚙️ Update Lead</h3>
+
+                <!-- Unified Google-style lead search (Opportunity v18 parity) -->
+                <div class="gs-search-wrap" id="update-lead-search-wrap" style="margin-bottom: 1.25rem;">
+                    <div class="uni-search-row">
+                        <span class="gs-search-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="11" cy="11" r="8"/>
+                                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                            </svg>
+                        </span>
+                        <input class="gs-search-field" id="update-form-search"
+                               type="text" autocomplete="off" spellcheck="false"
+                               placeholder="Search for a lead to update…">
+                        <button class="gs-clear-btn" type="button">×</button>
+                    </div>
+                    <div class="gs-dropdown"></div>
+                    <div class="gs-selection-pill" style="display:none;"></div>
+                    <div class="gs-filter-label"></div>
+                    <input type="hidden" id="update-form-search-id">
+                </div>
+
+                <!-- Lead ID (read-only display + hidden) -->
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label for="update-lead-id">Lead ID</label>
+                    <input type="text" id="update-lead-id" value="${escapeHTML(leadId)}" placeholder="Select a lead above or paste UUID" style="font-family: monospace; font-size: 0.85rem; color: #888;">
+                </div>
+
+                <!-- Name + Company row -->
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="update-first-name">First Name</label>
+                        <input type="text" id="update-first-name" value="${escapeHTML(lead?.first_name || lead?.name?.split(' ')[0] || '')}" placeholder="First name">
+                    </div>
+                    <div class="form-group">
+                        <label for="update-last-name">Last Name</label>
+                        <input type="text" id="update-last-name" value="${escapeHTML(lead?.last_name || lead?.name?.split(' ').slice(1).join(' ') || '')}" placeholder="Last name">
+                    </div>
+                    <div class="form-group">
+                        <label for="update-company">Company</label>
+                        <input type="text" id="update-company" value="${escapeHTML(lead?.company || '')}" placeholder="Company name">
+                    </div>
+                </div>
+
+                <!-- Contact row -->
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="update-email">Email</label>
+                        <input type="email" id="update-email" value="${escapeHTML(lead?.email || '')}" placeholder="email@example.com">
+                    </div>
+                    <div class="form-group">
+                        <label for="update-phone">Phone</label>
+                        <input type="tel" id="update-phone" value="${escapeHTML(lead?.phone || '')}" placeholder="+1 (555) 123-4567">
+                    </div>
+                </div>
+
+                <!-- Lead attributes -->
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="update-source">Source</label>
+                        <select id="update-source">
+                            <option value="">-- Select Source --</option>
+                            ${SOURCES.map(s => `<option value="${s}" ${lead?.source === s ? 'selected' : ''}>${s}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="update-rating">Rating</label>
+                        <select id="update-rating">
+                            <option value="">-- Select Rating --</option>
+                            ${RATINGS.map(r => `<option value="${r}" ${lead?.rating === r ? 'selected' : ''}>${r}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="update-score">Score (0–100)</label>
+                        <input type="number" id="update-score" min="0" max="100" value="${escapeHTML(String(lead?.score ?? ''))}" placeholder="0-100">
+                    </div>
+                </div>
+
+                <!-- Address section -->
+                <h4 style="color: #008cb4; margin: 1.25rem 0 0.75rem 0; border-bottom: 1px solid #e0e6ed; padding-bottom: 0.4rem;">📍 Address</h4>
+                <div class="form-row">
+                    <div class="form-group" style="flex: 2;">
+                        <label for="update-address-line1">Address Line 1</label>
+                        <input type="text" id="update-address-line1" value="${escapeHTML(lead?.address_line1 || '')}" placeholder="Street address">
+                    </div>
+                    <div class="form-group">
+                        <label for="update-address-line2">Address Line 2</label>
+                        <input type="text" id="update-address-line2" value="${escapeHTML(lead?.address_line2 || '')}" placeholder="Unit, Suite…">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="update-city">City</label>
+                        <input type="text" id="update-city" value="${escapeHTML(lead?.city || '')}" placeholder="City">
+                    </div>
+                    <div class="form-group">
+                        <label for="update-province">Province / State</label>
+                        <input type="text" id="update-province" value="${escapeHTML(lead?.province || '')}" placeholder="ON">
+                    </div>
+                    <div class="form-group">
+                        <label for="update-postal-code">Postal Code</label>
+                        <input type="text" id="update-postal-code" value="${escapeHTML(lead?.postal_code || '')}" placeholder="M5V 3C6">
+                    </div>
+                    <div class="form-group">
+                        <label for="update-country">Country</label>
+                        <input type="text" id="update-country" value="${escapeHTML(lead?.country || 'Canada')}" placeholder="Canada">
+                    </div>
+                </div>
+
+                <!-- Updated By dropdown -->
+                <h4 style="color: #008cb4; margin: 1.25rem 0 0.75rem 0; border-bottom: 1px solid #e0e6ed; padding-bottom: 0.4rem;">👤 Updated By</h4>
+                <div class="form-row">
+                    <div class="form-group employee-select-wrap">
+                        <label for="update-updated-by">Updated By (Employee)</label>
+                        <select id="update-updated-by">
+                            <option value="">Loading employees…</option>
+                        </select>
+                        <input type="hidden" id="update-updated-by-id">
+                    </div>
+                </div>
+
+                <div class="action-buttons" style="border-top: 1px solid #e0e6ed; padding-top: 1rem; margin-top: 1rem;">
+                    <button class="unified-action-btn" onclick="submitUpdateLead()">💾 Update Lead</button>
+                    <button class="unified-action-btn" onclick="goHome()">🏠 Back Home</button>
+                </div>
+            </div>
+        `;
+        // Load employees into dropdown
+        loadEmployees('update-updated-by');
+        // Wire unified search bar
+        initUpdateSearch();
+    }
+    
+    function goBackToList() {
+        sendDirectRequest('list leads:', { pageSize: 50 });
+    }
+    
+    function goHome() {
+        const responseArea = document.getElementById('responseArea');
+        responseArea.innerHTML = buildHomePageHTML();
+        attachQuickActionHandlers();
+        showHeader();
+        initHomeSearch();
+    }
+    
+    function submitUpdateLead() {
+        const leadId       = document.getElementById('update-lead-id').value.trim();
+        const firstName    = document.getElementById('update-first-name').value.trim();
+        const lastName     = document.getElementById('update-last-name').value.trim();
+        const company      = document.getElementById('update-company').value.trim();
+        const email        = document.getElementById('update-email').value.trim();
+        const phone        = document.getElementById('update-phone').value.trim();
+        const source       = document.getElementById('update-source').value;
+        const rating       = document.getElementById('update-rating').value;
+        const score        = document.getElementById('update-score').value;
+        const addressLine1 = document.getElementById('update-address-line1').value.trim();
+        const addressLine2 = document.getElementById('update-address-line2').value.trim();
+        const city         = document.getElementById('update-city').value.trim();
+        const province     = document.getElementById('update-province').value.trim();
+        const postalCode   = document.getElementById('update-postal-code').value.trim();
+        const country      = document.getElementById('update-country').value.trim();
+        const updatedBy    = document.getElementById('update-updated-by').value;
+
+        if (!leadId) {
+            alert('Please search for and select a lead to update, or enter a Lead ID.');
+            return;
+        }
+
+        // Build structured params — only include non-empty values
+        const params = { leadId };
+        if (firstName)    params.firstName    = firstName;
+        if (lastName)     params.lastName     = lastName;
+        if (company)      params.company      = company;
+        if (email)        params.email        = email;
+        if (phone)        params.phone        = phone;
+        if (source)       params.source       = source;
+        if (rating)       params.rating       = rating;
+        if (score !== '') params.score        = parseInt(score, 10);
+        if (addressLine1) params.addressLine1 = addressLine1;
+        if (addressLine2) params.addressLine2 = addressLine2;
+        if (city)         params.city         = city;
+        if (province)     params.province     = province;
+        if (postalCode)   params.postalCode   = postalCode;
+        if (country)      params.country      = country;
+        if (updatedBy)    params.updatedBy    = updatedBy;
+
+        sendDirectRequest('update lead:', params);
+    }
+    
+    function submitCreateLead() {
+        const firstName    = document.getElementById('create-first-name').value.trim();
+        const lastName     = document.getElementById('create-last-name').value.trim();
+        const company      = document.getElementById('create-company').value.trim();
+        const email        = document.getElementById('create-email').value.trim();
+        const phone        = document.getElementById('create-phone').value.trim();
+        const source       = document.getElementById('create-source').value;
+        const rating       = document.getElementById('create-rating').value;
+        const score        = document.getElementById('create-score').value;
+        const addressLine1 = document.getElementById('create-address-line1').value.trim();
+        const addressLine2 = document.getElementById('create-address-line2').value.trim();
+        const city         = document.getElementById('create-city').value.trim();
+        const province     = document.getElementById('create-province').value.trim();
+        const postalCode   = document.getElementById('create-postal-code').value.trim();
+        const country      = document.getElementById('create-country').value.trim();
+        const createdBy    = document.getElementById('create-created-by').value;
+
+        if (!firstName && !lastName) {
+            alert('First name or last name is required!');
+            return;
+        }
+
+        // Build structured params — always include name fields
+        const params = { firstName, lastName };
+        if (company)      params.company      = company;
+        if (email)        params.email        = email;
+        if (phone)        params.phone        = phone;
+        if (source)       params.source       = source;
+        if (rating)       params.rating       = rating;
+        if (score !== '') params.score        = parseInt(score, 10);
+        if (addressLine1) params.addressLine1 = addressLine1;
+        if (addressLine2) params.addressLine2 = addressLine2;
+        if (city)         params.city         = city;
+        if (province)     params.province     = province;
+        if (postalCode)   params.postalCode   = postalCode;
+        if (country)      params.country      = country;
+        if (createdBy)    params.createdBy    = createdBy;
+
+        sendDirectRequest('create lead:', params);
+    }
+    
+    function escapeHTML(s) {
+        return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    // ======================================================================
+    // EMPLOYEE DROPDOWN — loads employees for Created By / Updated By
+    // Calls "get employees:" → pre-router routes to sp_leads mode get_employees
+    // ======================================================================
+    async function loadEmployees(selectId) {
+        const sel = document.getElementById(selectId);
+        if (!sel) return;
+        try {
+            const res = await fetch(API_ENDPOINT, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chatInput: { message: 'get employees:' }, sessionId })
+            });
+            const data = await res.json();
+            // Format Response should return employees[] array
+            const raw = Array.isArray(data) ? data[0] : data;
+            const employees = raw?.employees || [];
+            sel.innerHTML = '<option value="">-- Select Employee --</option>';
+            if (employees.length === 0) {
+                sel.innerHTML += '<option value="" disabled>No employees found</option>';
+                return;
+            }
+            employees.forEach(emp => {
+                const name = `${emp.first_name || ''} ${emp.last_name || ''}`.trim();
+                const uuid = emp.employee_uuid || emp.employee_id || '';
+                sel.innerHTML += `<option value="${escapeHTML(uuid)}">${escapeHTML(name)}</option>`;
+            });
+        } catch (err) {
+            sel.innerHTML = '<option value="">-- Could not load employees --</option>';
+            console.warn('loadEmployees error:', err);
+        }
+    }
+
+    // ======================================================================
+    // HOME PAGE GOOGLE-STYLE SEARCH — calls MODE list directly
+    // ======================================================================
+    // ======================================================================
+    // UNIFIED TYPEAHEAD ENGINE  (ported from Opportunity v18)
+    // Powers both the Home Page search and the Update Lead Form search.
+    // ======================================================================
+    let _typeaheadTimers = {};
+
+    function createTypeahead({ containerId, inputId, hiddenId,
+                                iconChar = '🔍', labelFn, subFn, onSelect, fetchFn }) {
+        const wrap     = document.getElementById(containerId);
+        const field    = document.getElementById(inputId);
+        const hiddenEl = document.getElementById(hiddenId);
+        if (!wrap || !field || !hiddenEl) return;
+
+        const dropdown = wrap.querySelector('.gs-dropdown');
+        const clearBtn = wrap.querySelector('.gs-clear-btn');
+        const pillEl   = wrap.querySelector('.gs-selection-pill');
+        const filterEl = wrap.querySelector('.gs-filter-label');
+
+        function showDropdown(html) { dropdown.innerHTML = html; dropdown.classList.add('open'); }
+        function hideDropdown()     { dropdown.classList.remove('open'); }
+
+        function selectItem(item) {
+            hiddenEl.value = item.lead_id || '';
+            field.value    = '';
+            if (clearBtn) clearBtn.classList.remove('visible');
+            hideDropdown();
+            const label = labelFn(item);
+            if (pillEl) {
+                pillEl.innerHTML = `<span>${escapeHTML(label)}</span>
+                    <button class="gs-pill-dismiss" title="Clear" onclick="clearTypeahead('${containerId}')">×</button>`;
+                pillEl.style.display = 'inline-flex';
+            }
+            if (filterEl) filterEl.textContent = 'Selected: ' + label;
+            if (onSelect) onSelect(item);
+        }
+
+        field.addEventListener('input', function () {
+            const q = field.value.trim();
+            if (clearBtn) clearBtn.classList.toggle('visible', q.length > 0);
+            clearTimeout(_typeaheadTimers[containerId]);
+            if (q.length === 0) { hideDropdown(); return; }
+            _typeaheadTimers[containerId] = setTimeout(async () => {
+                showDropdown(`<div class="gs-spinner">⏳ Searching…</div>`);
+                try {
+                    const items = await fetchFn(q);
+                    if (!items.length) {
+                        showDropdown(`<div class="gs-no-results">No results for "${escapeHTML(q)}"</div>`);
+                        return;
+                    }
+                    const html = items.map((item, idx) => `
+                        <div class="gs-dropdown-item" data-idx="${idx}">
+                            <span class="gs-item-icon">${iconChar}</span>
+                            <div>
+                                <div class="gs-item-main">${escapeHTML(labelFn(item))}</div>
+                                <div class="gs-item-sub">${escapeHTML(subFn(item))}</div>
+                            </div>
+                        </div>`).join('');
+                    showDropdown(html);
+                    dropdown._items = items;
+                    dropdown.querySelectorAll('.gs-dropdown-item').forEach(el => {
+                        el.addEventListener('click', () => {
+                            selectItem(dropdown._items[parseInt(el.dataset.idx, 10)]);
+                        });
+                    });
+                } catch (err) {
+                    showDropdown(`<div class="gs-no-results">⚠️ Search failed: ${escapeHTML(err.message)}</div>`);
+                }
+            }, 280);
+        });
+
+        field.addEventListener('blur', () => setTimeout(hideDropdown, 180));
+    }
+
+    function clearTypeahead(containerId) {
+        const wrap = document.getElementById(containerId);
+        if (!wrap) return;
+        const pillEl   = wrap.querySelector('.gs-selection-pill');
+        const filterEl = wrap.querySelector('.gs-filter-label');
+        wrap.querySelectorAll('input[type="hidden"]').forEach(h => { h.value = ''; });
+        if (pillEl)   { pillEl.style.display = 'none'; pillEl.innerHTML = ''; }
+        if (filterEl) { filterEl.textContent = ''; }
+    }
+
+    // Shared fetch helper — queries the leads API and returns the leads array
+    async function fetchLeadsTypeahead(query) {
+        const res = await fetch(API_ENDPOINT, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chatInput: { message: 'list leads:', search: query, pageSize: 8 }, sessionId })
+        });
+        const raw  = await res.json();
+        const data = Array.isArray(raw) ? raw[0] : raw;
+        return data?.leads || [];
+    }
+
+    // Common label / sub formatters for lead results
+    function leadLabel(l) {
+        return `${l.first_name || ''} ${l.last_name || ''}`.trim() || 'Unknown';
+    }
+    function leadSub(l) {
+        const ratingIcon = (l.rating || '').toLowerCase() === 'hot'  ? '🔥'
+                         : (l.rating || '').toLowerCase() === 'warm' ? '☀️' : '❄️';
+        const addr = [l.city, l.province].filter(Boolean).join(', ');
+        return [l.company, l.email, addr ? '📍' + addr : '', ratingIcon].filter(Boolean).join('  ·  ');
+    }
+
+    // === Home Page Search ===
+    function initHomeSearch() {
+        createTypeahead({
+            containerId: 'home-find-wrap',
+            inputId:     'home-find-input',
+            hiddenId:    'home-find-id',
+            iconChar:    '🧑',
+            labelFn:     leadLabel,
+            subFn:       leadSub,
+            fetchFn:     fetchLeadsTypeahead,
+            onSelect:    l => sendDirectRequest('get lead:', { leadId: l.lead_id })
+        });
+    }
+
+    // === Update Lead Form Search ===
+    function initUpdateSearch() {
+        createTypeahead({
+            containerId: 'update-lead-search-wrap',
+            inputId:     'update-form-search',
+            hiddenId:    'update-form-search-id',
+            iconChar:    '🧑',
+            labelFn:     leadLabel,
+            subFn:       l => {
+                const addr = [l.city, l.province].filter(Boolean).join(', ');
+                return [l.company, l.email, addr ? '📍' + addr : ''].filter(Boolean).join('  ·  ');
+            },
+            fetchFn:     fetchLeadsTypeahead,
+            onSelect:    l => populateUpdateForm(l)
+        });
+    }
+
+    // Fire on initial page load
+    initHomeSearch();
+
+    function populateUpdateForm(lead) {
+        const ta = document.getElementById('update-form-typeahead');
+        if (ta) ta.classList.remove('active');
+        const searchInput = document.getElementById('update-form-search');
+        const fullName = `${lead.first_name || ''} ${lead.last_name || ''}`.trim();
+        if (searchInput) searchInput.value = fullName;
+
+        // Populate all form fields with the selected lead's data
+        const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+        set('update-lead-id',       lead.lead_id || '');
+        set('update-first-name',    lead.first_name || '');
+        set('update-last-name',     lead.last_name  || '');
+        set('update-company',       lead.company    || '');
+        set('update-email',         lead.email      || '');
+        set('update-phone',         lead.phone      || '');
+        set('update-score',         lead.score ?? '');
+        set('update-address-line1', lead.address_line1 || '');
+        set('update-address-line2', lead.address_line2 || '');
+        set('update-city',          lead.city       || '');
+        set('update-province',      lead.province   || '');
+        set('update-postal-code',   lead.postal_code || '');
+        set('update-country',       lead.country    || '');
+
+        // Source and Rating selects
+        const srcEl = document.getElementById('update-source');
+        if (srcEl && lead.source) srcEl.value = lead.source;
+        const rateEl = document.getElementById('update-rating');
+        if (rateEl && lead.rating) rateEl.value = lead.rating;
+    }
+
+    // === Voice Input ===
+    let recognition = null;
+    let isListening = false;
+    let voiceInputBaseline = '';
+    let voiceFinalTranscript = '';
+    
+    function toggleVoiceInput() {
+        if (isListening) {
+            stopVoiceInput();
+        } else {
+            startVoiceInput();
+        }
+    }
+    
+    function startVoiceInput() {
+        if (!recognition) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            
+            if (!SpeechRecognition) {
+                alert('Speech recognition is not supported in your browser. Please use Chrome, Edge, or Safari.');
+                return;
+            }
+            
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'en-US';
+            
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                let newFinalTranscript = '';
+                
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        newFinalTranscript += transcript + ' ';
+                    } else {
+                        interimTranscript += transcript;
+                    }
+                }
+                
+                if (newFinalTranscript) {
+                    voiceFinalTranscript += newFinalTranscript;
+                }
+                
+                const input = document.getElementById('message');
+                input.value = voiceInputBaseline + voiceFinalTranscript + interimTranscript;
+            };
+            
+            recognition.onerror = (event) => {
+                console.error('Speech recognition error:', event.error);
+                if (event.error === 'not-allowed' || event.error === 'permission-denied') {
+                    alert('Microphone permission denied. Please allow microphone access in your browser settings.');
+                }
+                stopVoiceInput();
+            };
+            
+            recognition.onend = () => {
+                if (isListening) {
+                    try {
+                        recognition.start();
+                    } catch (e) {
+                        console.log('Recognition restart failed');
+                        stopVoiceInput();
+                    }
+                }
+            };
+        }
+        
+        const input = document.getElementById('message');
+        voiceInputBaseline = input.value;
+        voiceFinalTranscript = '';
+        
+        try {
+            recognition.start();
+            isListening = true;
+            
+            document.getElementById('voiceBtn').classList.add('listening');
+            document.getElementById('voiceStatus').classList.add('active');
+            
+            // Auto-stop on textarea interaction
+            const handleTextareaClick = () => {
+                if (isListening) stopVoiceInput();
+            };
+            const handleTextareaInput = () => {
+                if (isListening) stopVoiceInput();
+            };
+            
+            input.addEventListener('click', handleTextareaClick, { once: true });
+            input.addEventListener('input', handleTextareaInput, { once: true });
+            input.addEventListener('keydown', handleTextareaInput, { once: true });
+            
+            input._voiceClickHandler = handleTextareaClick;
+            input._voiceInputHandler = handleTextareaInput;
+            
+            console.log('🎤 Voice input started');
+            
+        } catch (error) {
+            console.error('Error starting voice input:', error);
+        }
+    }
+    
+    function stopVoiceInput() {
+        if (recognition) {
+            try {
+                recognition.stop();
+            } catch (e) {
+                console.log('Recognition already stopped');
+            }
+        }
+        
+        isListening = false;
+        
+        document.getElementById('voiceBtn').classList.remove('listening');
+        document.getElementById('voiceStatus').classList.remove('active');
+        
+        // Clean up event listeners
+        const input = document.getElementById('message');
+        if (input._voiceClickHandler) {
+            input.removeEventListener('click', input._voiceClickHandler);
+            input.removeEventListener('input', input._voiceInputHandler);
+            input.removeEventListener('keydown', input._voiceInputHandler);
+            delete input._voiceClickHandler;
+            delete input._voiceInputHandler;
+        }
+        
+        voiceInputBaseline = '';
+        voiceFinalTranscript = '';
+        
+        console.log('🎤 Voice input stopped');
+    }
+
+</script>
+
+</body>
+</html>
