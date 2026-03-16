@@ -72,7 +72,7 @@
       - inventory_summary, low_stock, price_history, price_matrix
       
       BACKEND: n8n Workflow + PostgreSQL 17
-      const WEBHOOK_URL = 'http://localhost:8000/prod-chat';
+      const WEBHOOK_URL = 'https://orbitcrm-production.up.railway.app/prod-chat';
     -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1983,7 +1983,7 @@
     }
 
     // === Global State ===
-    const WEBHOOK_URL = 'http://localhost:8000/prod-chat';
+    const WEBHOOK_URL = 'https://orbitcrm-production.up.railway.app/prod-chat';
     let lastListHTML = "";
     let lastMode1Text = "";
     let lastProductRecords = [];

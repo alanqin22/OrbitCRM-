@@ -2992,7 +2992,7 @@
           const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 seconds
           
           // Call n8n webhook
-          const response = await fetch('http://localhost:8000/order-chat', {
+          const response = await fetch('https://orbitcrm-production.up.railway.app/order-chat', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -3051,7 +3051,7 @@
       // ── processDirectQuery — v1.20 ────────────────────────────────────────
       // Sends a structured SP params object directly to the pre-router via
       // batchData.context = 'direct_query', bypassing the AI Agent entirely.
-      const _WEBHOOK_URL = 'http://localhost:8000/order-chat';
+      const _WEBHOOK_URL = 'https://orbitcrm-production.up.railway.app/order-chat';
 
       async function processDirectQuery(params) {
         // Sanitize all UUID-typed fields before sending

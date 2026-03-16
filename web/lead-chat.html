@@ -33,7 +33,7 @@
       - pipeline: Lead pipeline summary
       
       BACKEND: n8n Workflow + PostgreSQL 17
-      API ENDPOINT: http://localhost:8000/leads-chat'
+      API ENDPOINT: https://orbitcrm-production.up.railway.app/leads-chat'
       
       v4.2 CHANGES:
       - Issue #7: "View Qualified Leads" button (post-qualify confirmation) now calls
@@ -1032,7 +1032,7 @@
 
 <script>
     // === Configuration ===
-    const API_ENDPOINT = 'http://localhost:8000/leads-chat';
+    const API_ENDPOINT = 'https://orbitcrm-production.up.railway.app/leads-chat';
     
     // === Sample Lead Data (using ACTUAL lead_ids from database) ===
     // v4.1: Updated to use valid UUIDs for direct API calls with conversion tracking
