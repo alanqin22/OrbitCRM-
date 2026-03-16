@@ -29,7 +29,9 @@ router = APIRouter(prefix="", tags=["Activities"])
 # ============================================================================
 
 class ActivityChatInput(BaseModel):
-    message: str = ""
+    message:      Optional[str]  = None   # optional — AI chat path only
+    mode:         Optional[str]  = None   # direct SP route
+    routerAction: Optional[bool] = None   # True → bypass AI agent
 
     pageNumber:       Optional[int]  = None
     pageSize:         Optional[int]  = None
@@ -95,14 +97,14 @@ async def activity_chat(req: ActivityChatRequest):
     logger.info("=== New Activity Chat Request ===")
     session_id = (req.sessionId or "default-session").strip()
     ci         = req.chatInput or ActivityChatInput(message=req.message or "")
-    logger.info(f"Session: {session_id}  Message: {ci.message[:120]!r}")
+    logger.info(f"Session: {session_id}  Message: {(ci.message or "")[:120]!r}")
 
     # body carries legacy top-level message (for pre-router CASE check)
     body: dict = {}
     if req.message:
         body["message"] = req.message
 
-    chat_input: Dict[str, Any] = ci.model_dump()
+    chat_input: Dict[str, Any] = ci.model_dump(exclude_none=True)
 
     try:
         graph_app = get_graph()
@@ -111,7 +113,7 @@ async def activity_chat(req: ActivityChatRequest):
             "session_id":      session_id,
             "body":            body,
             "chat_input":      chat_input,
-            "user_input":      ci.message,
+            "user_input":      ci.message or "",
             "current_message": ci.message,
             "router_action":   False,
             "ai_output":       None,

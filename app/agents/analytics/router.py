@@ -31,7 +31,9 @@ router = APIRouter(prefix="", tags=["Analytics"])
 
 class AnalyticsChatInput(BaseModel):
     """chatInput — 'analytics report:' prefix + reportType + date/filter params."""
-    message:    str           = ""
+    message:      Optional[str]  = None   # optional — AI chat path only
+    mode:         Optional[str]  = None   # direct SP route
+    routerAction: Optional[bool] = None   # True → bypass AI agent
     reportType: Optional[str] = None   # full_dashboard | forecast_summary | pipeline_summary | ...
     startDate:  Optional[str] = None
     endDate:    Optional[str] = None
@@ -83,13 +85,13 @@ async def analytics_chat(req: AnalyticsChatRequest):
     logger.info("=== New Analytics Chat Request ===")
     session_id = (req.sessionId or "default-session").strip()
     ci         = req.chatInput or AnalyticsChatInput(message=req.message or "")
-    logger.info(f"Session: {session_id}  Message: {ci.message[:80]!r}  reportType: {ci.reportType}")
+    logger.info(f"Session: {session_id}  Message: {(ci.message or "")[:80]!r}  reportType: {ci.reportType}")
 
     body: dict = {}
     if req.message:
         body["message"] = req.message
 
-    chat_input: Dict[str, Any] = ci.model_dump()
+    chat_input: Dict[str, Any] = ci.model_dump(exclude_none=True)
 
     try:
         graph_app = get_graph()
@@ -98,7 +100,7 @@ async def analytics_chat(req: AnalyticsChatRequest):
             "session_id":      session_id,
             "body":            body,
             "chat_input":      chat_input,
-            "user_input":      ci.message,
+            "user_input":      ci.message or "",
             "current_message": ci.message,
             "router_action":   False,
             "ai_output":       None,

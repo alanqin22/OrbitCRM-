@@ -47,9 +47,7 @@ _REPORT_MODE_MAP = {
 # ============================================================================
 
 class AccountingChatInput(BaseModel):
-    message:      Optional[str]  = None   # optional — AI chat path only
-    mode:         Optional[str]  = None   # direct SP route
-    routerAction: Optional[bool] = None   # True → bypass AI agent
+    message: str
 
     # Legacy preprocessor fields
     city:       Optional[str] = None
@@ -130,11 +128,11 @@ async def accounting_chat(req: AccountingChatRequest):
     logger.info("=== New Accounting Chat Request (v7) ===")
     session_id = (req.sessionId or "default-session").strip()
     ci = req.chatInput
-    logger.info(f"Session: {session_id}  Message: {(ci.message or "")[:100]}")
+    logger.info(f"Session: {session_id}  Message: {ci.message[:100]}")
 
     # Build full chat_input dict (all fields, None-safe) — pre-router reads by key
     chat_input: Dict[str, Any] = {
-        "message":    ci.message or "",
+        "message":    ci.message,
         "city":       ci.city,
         "pageSize":   ci.pageSize,
         "pageNumber": ci.pageNumber,
@@ -171,7 +169,7 @@ async def accounting_chat(req: AccountingChatRequest):
         initial_state: AgentState = {
             "session_id":      session_id,
             "chat_input":      chat_input,
-            "user_input":      ci.message or "",
+            "user_input":      ci.message,
             "router_action":   False,
             "ai_output":       None,
             "parsed_json":     None,

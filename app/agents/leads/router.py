@@ -28,7 +28,9 @@ router = APIRouter(prefix="", tags=["Leads"])
 
 class LeadChatInput(BaseModel):
     """chatInput envelope — message prefix + all SP params."""
-    message: str = ""
+    message:      Optional[str]  = None   # optional — AI chat path only
+    mode:         Optional[str]  = None   # direct SP route
+    routerAction: Optional[bool] = None   # True → bypass AI agent
 
     # Pagination / search / filters
     pageNumber:     Optional[int]  = None
@@ -124,13 +126,13 @@ async def _handle_lead_chat(req: LeadChatRequest) -> LeadChatResponse:
     """Shared handler for /lead-chat and /leads-chat."""
     session_id = (req.sessionId or "default-session").strip()
     ci         = req.chatInput or LeadChatInput(message=req.message or "")
-    logger.info(f"Session: {session_id}  Message: {ci.message[:120]!r}")
+    logger.info(f"Session: {session_id}  Message: {(ci.message or "")[:120]!r}")
 
     body: dict = {}
     if req.message:
         body["message"] = req.message
 
-    chat_input: Dict[str, Any] = ci.model_dump()
+    chat_input: Dict[str, Any] = ci.model_dump(exclude_none=True)
 
     try:
         graph_app = get_graph()
@@ -139,7 +141,7 @@ async def _handle_lead_chat(req: LeadChatRequest) -> LeadChatResponse:
             "session_id":      session_id,
             "body":            body,
             "chat_input":      chat_input,
-            "user_input":      ci.message,
+            "user_input":      ci.message or "",
             "current_message": ci.message,
             "router_action":   False,
             "ai_output":       None,

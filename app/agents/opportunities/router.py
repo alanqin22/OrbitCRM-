@@ -31,7 +31,9 @@ router = APIRouter(prefix="", tags=["Opportunities"])
 
 class OpportunityChatInput(BaseModel):
     """chatInput — NL message plus optional legacy fields."""
-    message:    str           = ""
+    message:      Optional[str]  = None   # optional — AI chat path only
+    mode:         Optional[str]  = None   # direct SP route
+    routerAction: Optional[bool] = None   # True → bypass AI agent
     city:       Optional[str] = None
     pageSize:   Optional[int] = None
     pageNumber: Optional[int] = None
@@ -144,11 +146,11 @@ async def opportunity_chat(req: OpportunityChatRequest):
     ci         = req.chatInput or OpportunityChatInput(message="")
     body       = _build_body(req)
 
-    logger.info(f"Session: {session_id}  Message: {ci.message[:120]!r}")
+    logger.info(f"Session: {session_id}  Message: {(ci.message or "")[:120]!r}")
     if body.get("mode"):
         logger.info(f"Direct body mode: {body['mode']}")
 
-    chat_input: Dict[str, Any] = ci.model_dump()
+    chat_input: Dict[str, Any] = ci.model_dump(exclude_none=True)
 
     try:
         graph_app = get_graph()
@@ -157,7 +159,7 @@ async def opportunity_chat(req: OpportunityChatRequest):
             "session_id":      session_id,
             "body":            body,
             "chat_input":      chat_input,
-            "user_input":      ci.message,
+            "user_input":      ci.message or "",
             "router_action":   False,
             "ai_output":       None,
             "parsed_json":     None,

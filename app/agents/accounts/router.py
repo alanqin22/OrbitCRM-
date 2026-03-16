@@ -36,7 +36,9 @@ router = APIRouter(prefix="", tags=["Accounts"])
 
 class AccountChatInput(BaseModel):
     """All chatInput fields used by the Account pre-router and HTML forms."""
-    message: str
+    message:      Optional[str]  = None   # optional — AI chat path only
+    mode:         Optional[str]  = None   # direct SP route
+    routerAction: Optional[bool] = None   # True → bypass AI agent
 
     # ── Legacy preprocessor ──────────────────────────────────────────────────
     city:       Optional[str] = None
@@ -144,10 +146,10 @@ async def account_chat(req: AccountChatRequest):
     logger.info("=== New Account Chat Request ===")
     session_id = (req.sessionId or "default-session").strip()
     ci = req.chatInput
-    logger.info(f"Session: {session_id}  Message: {ci.message[:100]}")
+    logger.info(f"Session: {session_id}  Message: {(ci.message or "")[:100]}")
 
-    chat_input: Dict[str, Any] = ci.model_dump(exclude_none=False)
-    chat_input["message"] = ci.message
+    chat_input: Dict[str, Any] = ci.model_dump(exclude_none=True)
+    chat_input["message"] = ci.message or ""
 
     try:
         graph_app = get_graph()
@@ -155,7 +157,7 @@ async def account_chat(req: AccountChatRequest):
         initial_state: AgentState = {
             "session_id":      session_id,
             "chat_input":      chat_input,
-            "user_input":      ci.message,
+            "user_input":      ci.message or "",
             "router_action":   False,
             "ai_output":       None,
             "parsed_json":     None,

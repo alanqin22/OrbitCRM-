@@ -87,6 +87,8 @@ class BatchData(BaseModel):
 
 class OrderChatInput(BaseModel):
     message:   Optional[str]       = None
+    mode:         Optional[str]  = None   # direct SP route
+    routerAction: Optional[bool] = None   # True → bypass AI agent
     batchData: Optional[BatchData] = None
 
 
