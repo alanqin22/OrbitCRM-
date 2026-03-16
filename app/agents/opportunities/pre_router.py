@@ -165,6 +165,16 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
     """
     logger.info('=== Opportunity Pre-Router v3.1 ===')
 
+
+    # ── routerAction short-circuit (v3.1) ───────────────────────────────────
+    _SKIP = {'routerAction', 'message', 'sessionId', 'chatInput',
+             'originalBody', 'webhookUrl', 'executionMode',
+             'currentMessage', 'chatHistory'}
+    if chat_input.get('routerAction') and chat_input.get('mode'):
+        _params = {k: v for k, v in chat_input.items()
+                   if k not in _SKIP and v is not None}
+        logger.info(f'→ routerAction SHORT-CIRCUIT: mode={_params.get("mode")}')
+        return {'router_action': True, 'params': _params}
     # ── CASE 1: Structured body with a known mode ──────────────────────────
     # HTML forms and programmatic callers send { mode: 'create', ... }
     # directly in the request body.

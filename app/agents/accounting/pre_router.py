@@ -122,6 +122,19 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
     logger.info('=== Accounting Pre-Router v3.4 ===')
     logger.info(f'Message: {raw}')
 
+    # ── routerAction short-circuit (v3.1) ───────────────────────────────────
+    # HTML direct-SP calls send routerAction=True + mode in chatInput with no
+    # message text.  Detect this here before message-pattern matching so we
+    # never fall through to the AI Agent (which needs Ollama / OpenAI).
+    _SKIP = {'routerAction', 'message', 'sessionId', 'chatInput',
+             'originalBody', 'webhookUrl', 'executionMode',
+             'currentMessage', 'chatHistory'}
+    if chat_input.get('routerAction') and chat_input.get('mode'):
+        _params = {k: v for k, v in chat_input.items()
+                   if k not in _SKIP and v is not None}
+        logger.info(f'→ routerAction SHORT-CIRCUIT: mode={_params.get("mode")}')
+        return {'router_action': True, 'params': _params}
+
     def routed(params: dict) -> dict:
         logger.info(f'→ ROUTED: mode={params.get("mode")} params={str(params)[:200]}')
         return {'router_action': True, 'params': params}
