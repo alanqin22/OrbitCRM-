@@ -163,6 +163,9 @@ async def accounting_chat(req: AccountingChatRequest):
         "listingType": ci.listingType,
         "startDate":   ci.startDate,
         "endDate":     ci.endDate,
+        # ── Routing control (must be forwarded so pre_router short-circuit fires) ──
+        "mode":         ci.mode,
+        "routerAction": ci.routerAction,
     }
 
     try:
