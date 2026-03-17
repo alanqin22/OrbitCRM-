@@ -3427,6 +3427,24 @@
         // === SUMMARY MODE (v4.5) — parses card-based output from Format Response v4x ===
         // SP v3e returns: Totals (metrics), Top Accounts (ranking), Role/Status/Owner (bar)
         // Format code outputs: ### SectionTitle followed by markdown pipe tables
+
+        // ── renderSparkline ───────────────────────────────────────────────────
+        // Converts Unicode block chars (▁▂▃▄▅▆▇█ U+2581-2588) to CSS mini-bars.
+        // Font-independent — works over file:// and https:// equally.
+        function renderSparkline(s) {
+            if (!s) return '';
+            const bars = Array.from(String(s)).map(c => {
+                const code = c.charCodeAt(0);
+                if (code >= 0x2581 && code <= 0x2588) {
+                    const pct = Math.round(((code - 0x2580) / 8) * 100);
+                    return `<span style="display:inline-block;width:5px;height:12px;vertical-align:bottom;margin:0 0.5px;position:relative;">` +
+                           `<span style="display:block;width:100%;height:${pct}%;background:#5856d6;border-radius:1px 1px 0 0;position:absolute;bottom:0;"></span></span>`;
+                }
+                return escapeHTML(c);
+            });
+            return `<span style="display:inline-flex;align-items:flex-end;height:12px;gap:0;">${bars.join('')}</span>`;
+        }
+
         function buildSummaryModeHTML(text, data) {
             const cleanText = stripMarkers(text);
 
@@ -3541,7 +3559,7 @@
                     <div class="metric-card">
                         <div class="metric-label">${escapeHTML(label)}</div>
                         <div class="metric-value">${escapeHTML(value)}</div>
-                        <div class="metric-sparkline">${escapeHTML(spark)}</div>
+                        <div class="metric-sparkline">${renderSparkline(spark)}</div>
                         <div class="metric-footer">
                             <span class="metric-trend ${tc}">${escapeHTML(trend)}</span>
                             ${chg ? `<span class="metric-change ${cc}">${escapeHTML(chg)}</span>` : ''}
@@ -3572,7 +3590,7 @@
                             if (col === 'Rank') cell = rankCell(val);
                             else if (col === 'Trend') cell = `<span class="${trendClass(val)}">${escapeHTML(val)}</span>`;
                             else if (col === 'Δ%') cell = `<span class="${changeClass(val)}">${escapeHTML(val)}</span>`;
-                            else if (col === 'Sparkline') cell = `<span class="sparkline-cell">${escapeHTML(val)}</span>`;
+                            else if (col === 'Sparkline') cell = renderSparkline(val);
                             else cell = escapeHTML(val);
                             html += `<td>${cell}</td>`;
                         });
@@ -3600,7 +3618,7 @@
                             let cell = '';
                             if (col === 'Trend') cell = `<span class="${trendClass(val)}">${escapeHTML(val)}</span>`;
                             else if (col === 'Δ%') cell = `<span class="${changeClass(val)}">${escapeHTML(val)}</span>`;
-                            else if (col === 'Sparkline') cell = `<span class="sparkline-cell">${escapeHTML(val)}</span>`;
+                            else if (col === 'Sparkline') cell = renderSparkline(val);
                             else if (col === 'Severity') cell = severityBadge(val);
                             else if (col === 'Category') {
                                 const label = val === '(unset)' ? '<em style="color:#aaa;">(unset)</em>' : escapeHTML(val);
