@@ -3509,8 +3509,8 @@
             };
 
             // Display columns per card type (Forecast columns intentionally excluded for brevity)
-            const RANKING_COLS = ['Rank', 'Account', 'Value', 'Prev', 'Δ%', 'Trend', 'Sparkline', 'Score', '% of Total'];
-            const BAR_COLS = ['Category', 'Count', 'Prev', 'Δ%', 'Trend', 'Sparkline', 'Score', '% of Total', 'Severity'];
+            const RANKING_COLS = ['Rank', 'Account', 'Value', 'Prev', 'Δ%', 'Trend', 'Score', '% of Total'];
+            const BAR_COLS = ['Category', 'Count', 'Prev', 'Δ%', 'Trend', 'Score', '% of Total', 'Severity'];
 
             let html = `<div class="summary-container">`;
             html += `<h2>📊 Contact Statistics</h2>`;
@@ -3559,7 +3559,7 @@
                     <div class="metric-card">
                         <div class="metric-label">${escapeHTML(label)}</div>
                         <div class="metric-value">${escapeHTML(value)}</div>
-                        <div class="metric-sparkline">${renderSparkline(spark)}</div>
+                        
                         <div class="metric-footer">
                             <span class="metric-trend ${tc}">${escapeHTML(trend)}</span>
                             ${chg ? `<span class="metric-change ${cc}">${escapeHTML(chg)}</span>` : ''}
