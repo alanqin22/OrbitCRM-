@@ -29,6 +29,7 @@ class ProductData(BaseModel):
     """Structured product payload for product_direct_operation."""
     context:         Optional[str]   = None   # 'create_product' | 'update_product'
     product_id:      Optional[str]   = None
+    product_number:  Optional[int]   = None   # for price history by number
     name:            Optional[str]   = None
     sku:             Optional[str]   = None
     category_id:     Optional[str]   = None
