@@ -1,4 +1,15 @@
-"""Response formatter for Notifications — Python conversion of n8n Format Response v2.6.
+"""Response formatter for Notifications — Python conversion of n8n Format Response v2.7.
+
+CHANGELOG v2.7
+  - Added _clean_text() helper: normalises Unicode characters stored in remote
+    PostgreSQL notification fields (title, body) that render as '???' when
+    psycopg2 client_encoding mismatches the server.
+    Most common culprit: U+2192 RIGHT ARROW (→, bytes E2 86 92) stored in
+    titles like "contact → contact.updated" renders as "contact ??? contact.updated".
+    Translation table covers arrows, dashes, curly quotes, ellipsis, bullet,
+    common Latin-1 supplement chars.
+  - Applied to: title and body fields in list and inspect_notification modes.
+  - list mode: Inspect column right-aligned in markdown table (separator → '---:').
 
 CHANGELOG v2.6
   - list mode: Added "Read / Unread" column with [TOGGLE:uuid:status:emp_uuid] markers.
@@ -33,6 +44,59 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Unicode normalisation — remote PostgreSQL encoding fix
+# ---------------------------------------------------------------------------
+
+# Characters that remote PostgreSQL may store in notification title/body fields.
+# Each is a multi-byte UTF-8 sequence that renders as '???' per byte when
+# psycopg2 client_encoding doesn't match the server encoding.
+_UNICODE_NORMALISE = str.maketrans({
+    # Arrows  (most common in notification titles like "contact → contact.updated")
+    '\u2192': '->',   # RIGHT ARROW →       ← primary culprit (E2 86 92)
+    '\u2190': '<-',   # LEFT ARROW ←
+    '\u21d2': '=>',   # RIGHTWARDS DOUBLE ARROW ⇒
+    '\u21d0': '<=',   # LEFTWARDS DOUBLE ARROW ⇐
+    '\u2194': '<->',  # LEFT RIGHT ARROW ↔
+    # Hyphens and dashes
+    '\u00ad': '-',    # SOFT HYPHEN
+    '\u2010': '-',    # HYPHEN
+    '\u2011': '-',    # NON-BREAKING HYPHEN
+    '\u2012': '-',    # FIGURE DASH
+    '\u2013': '-',    # EN DASH
+    '\u2014': '-',    # EM DASH
+    '\u2015': '-',    # HORIZONTAL BAR
+    '\u2212': '-',    # MINUS SIGN
+    # Curly / smart quotes
+    '\u2018': "'",    # LEFT SINGLE QUOTATION MARK
+    '\u2019': "'",    # RIGHT SINGLE QUOTATION MARK
+    '\u201c': '"',    # LEFT DOUBLE QUOTATION MARK
+    '\u201d': '"',    # RIGHT DOUBLE QUOTATION MARK
+    # Other typographic chars
+    '\u2026': '...',  # HORIZONTAL ELLIPSIS
+    '\u2022': '*',    # BULLET
+    '\u00b7': '*',    # MIDDLE DOT
+    '\u00a0': ' ',    # NON-BREAKING SPACE
+    '\u2122': '(TM)', # TRADE MARK
+    '\u00ae': '(R)',  # REGISTERED SIGN
+    '\u00b0': 'deg',  # DEGREE SIGN
+})
+
+
+def _clean_text(value: Optional[str]) -> Optional[str]:
+    """Normalise Unicode characters in DB text fields to ASCII equivalents.
+
+    Remote PostgreSQL instances may store notification titles with Unicode
+    arrows and other typographic characters. When psycopg2 retrieves these
+    without correct client_encoding each UTF-8 byte renders as '?' in the
+    browser — e.g. U+2192 RIGHT ARROW (3 bytes E2 86 92) becomes '???' so
+    'contact → contact.updated' displays as 'contact ??? contact.updated'.
+    """
+    if not value:
+        return value
+    return str(value).translate(_UNICODE_NORMALISE)
 
 
 # ---------------------------------------------------------------------------
@@ -210,13 +274,13 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         if not notifications:
             out.append('**🎉 No notifications found!**')
         else:
-            # ENHANCED: "Read / Unread" toggle column + Inspect column
+            # ENHANCED: "Read / Unread" toggle column + Inspect column (right-aligned)
             out.append('| Icon | Title | Employee | Status | Created | Read / Unread | Inspect |')
-            out.append('|------|--------|----------|---------|----------|---------------|----------|')
+            out.append('|------|--------|----------|---------|----------|---------------|--------:|')
 
             for n in notifications:
                 icon    = _event_icon(n.get('event_type') or '')
-                title   = n.get('title') or 'Untitled'
+                title   = _clean_text(n.get('title') or 'Untitled')
                 created = _fmt_dt(n.get('created_at'))
 
                 # Determine read/unread status
@@ -312,8 +376,8 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         triggered_uuid = metadata.get('triggered_by_employee_uuid')
         triggered_name = _employee_name(triggered_uuid)
 
-        # Clean up template body (remove unresolved '?' placeholders)
-        raw_body   = template.get('body') or '_No body text_'
+        # Clean up template body (remove unresolved '?' placeholders, normalise Unicode)
+        raw_body   = _clean_text(template.get('body') or '_No body text_')
         clean_body = _clean_body(raw_body, event_type)
 
         # Header: Back to List button
@@ -321,7 +385,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         out.append('')
         out.append(f'## {event_icon} Template Preview')
         out.append('')
-        out.append(f'**Title:** {template.get("title") or "N/A"}')
+        out.append(f'**Title:** {_clean_text(template.get("title") or "N/A")}')
         out.append('')
         out.append(clean_body)
         out.append('')
