@@ -380,12 +380,54 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
 
     # ── SEND VERIFICATION  ────────────────────────────────────────────────────
     if mode == 'send_verification':
-        out.append('[EMAIL] **EMAIL VERIFICATION TOKEN GENERATED!**')
+        # sp_contacts may return fields at root level OR nested under
+        # 'verification', 'data', or 'result'. Try all paths.
+        v = (response.get('verification') or
+             response.get('data') or
+             response.get('result') or
+             response)
+
+        # Field name variants the SP might use
+        contact_id = (
+            v.get('contact_id') or
+            response.get('contact_id')
+        )
+        email = (
+            v.get('email') or
+            v.get('contact_email') or
+            response.get('email') or
+            response.get('contact_email')
+        )
+        token = (
+            v.get('token') or
+            v.get('verification_token') or
+            v.get('email_verification_token') or
+            response.get('token') or
+            response.get('verification_token') or
+            response.get('email_verification_token')
+        )
+        expires_at = (
+            v.get('expires_at') or
+            v.get('token_expires_at') or
+            v.get('expiry') or
+            response.get('expires_at') or
+            response.get('token_expires_at') or
+            response.get('expiry')
+        )
+
+        # Debug: log what the SP actually returned so you can see the structure
+        logger.info(
+            f'send_verification raw response keys: {list(response.keys())} '
+            f'| contact_id={contact_id} | email={email} | '
+            f'token_present={bool(token)} | expires_at={expires_at}'
+        )
+
+        out.append('[EMAIL] **VERIFICATION TOKEN**')   # ← "VERIFICATION TOKEN" triggers frontend extractModeFromText fallback
         out.append('')
-        out.append(f"**Contact ID:** {_fmt_uuid(response.get('contact_id'))}")
-        out.append(f"**Email:** {response.get('email') or 'N/A'}")
-        out.append(f"**Token:** `{response.get('token') or 'N/A'}`")
-        out.append(f"**Expires:** {_fmt_dt(response.get('expires_at'))}")
+        out.append(f"**Contact ID:** {_fmt_uuid(contact_id)}")
+        out.append(f"**Email:** {email or 'N/A'}")
+        out.append(f"**Token:** `{token or 'N/A'}`")
+        out.append(f"**Expires:** {_fmt_dt(expires_at)}")
         out.append('')
         out.append('_Send this token in a verification link._')
         out.append('')
@@ -393,10 +435,30 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
 
     # ── VERIFY EMAIL  ─────────────────────────────────────────────────────────
     if mode == 'verify_email':
+        v = (response.get('verification') or
+             response.get('data') or
+             response.get('result') or
+             response)
+
+        contact_id = v.get('contact_id') or response.get('contact_id')
+        is_verified = (
+            v.get('is_email_verified') or
+            v.get('email_verified') or
+            v.get('verified') or
+            response.get('is_email_verified') or
+            response.get('email_verified') or
+            response.get('verified')
+        )
+
+        logger.info(
+            f'verify_email raw response keys: {list(response.keys())} '
+            f'| contact_id={contact_id} | is_verified={is_verified}'
+        )
+
         out.append('[CHECK] **EMAIL VERIFIED SUCCESSFULLY!**')
         out.append('')
-        out.append(f"**Contact ID:** {_fmt_uuid(response.get('contact_id'))}")
-        out.append(f"**Verified:** {'Yes' if response.get('is_email_verified') else 'No'}")
+        out.append(f"**Contact ID:** {_fmt_uuid(contact_id)}")
+        out.append(f"**Verified:** {'Yes' if is_verified else 'No'}")
         out.append('')
         return '\n'.join(out)
 
