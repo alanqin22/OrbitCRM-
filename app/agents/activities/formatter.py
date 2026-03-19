@@ -1,4 +1,19 @@
-"""Response formatter for Activities — Python conversion of n8n Format Response v3.3.
+"""Response formatter for Activities — Python conversion of n8n Format Response v3.4.
+
+CHANGELOG v3.4
+  - Added _clean_text() helper: normalises Unicode typographic characters that
+    remote PostgreSQL may store in free-text fields (subject, description, notes,
+    summary) to plain ASCII equivalents. The root cause is that remote psycopg2
+    connections sometimes return multi-byte UTF-8 sequences without proper
+    decoding, causing each byte to render as '?' in the HTML. For example:
+      U+2013 EN DASH (e2 80 93)  "Payment complete – INV-000034" → "Payment complete ??? INV-000034"
+    _clean_text() translates the most common offenders:
+      - En/em dashes → ASCII hyphen-minus
+      - Curly quotes → straight quotes
+      - Ellipsis → three dots
+      - Bullet → asterisk
+    Applied to subject, description, notes, summary, and details fields in all
+    list/get/overdue/upcoming/timeline report modes.
 
 CHANGELOG v3.3
   - get_owners mode: emits BOTH markdown output AND owners[] JSON array
@@ -28,6 +43,60 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Unicode normalisation — remote PostgreSQL encoding fix
+# ---------------------------------------------------------------------------
+
+# Characters that remote PostgreSQL may store in free-text fields.
+# Each is a multi-byte UTF-8 sequence that renders as '???' per byte when
+# the psycopg2 connection client_encoding doesn't match the server encoding.
+# We normalise all of them to safe plain-ASCII equivalents.
+_UNICODE_NORMALISE = str.maketrans({
+    # Hyphens and dashes → ASCII hyphen-minus
+    '\u00ad': '-',   # SOFT HYPHEN
+    '\u2010': '-',   # HYPHEN
+    '\u2011': '-',   # NON-BREAKING HYPHEN
+    '\u2012': '-',   # FIGURE DASH
+    '\u2013': '-',   # EN DASH          ← most common: "Payment complete – INV-..."
+    '\u2014': '-',   # EM DASH
+    '\u2015': '-',   # HORIZONTAL BAR
+    '\u2212': '-',   # MINUS SIGN
+    '\ufe58': '-',   # SMALL EM DASH
+    '\ufe63': '-',   # SMALL HYPHEN-MINUS
+    '\uff0d': '-',   # FULLWIDTH HYPHEN-MINUS
+    # Curly / smart quotes → straight ASCII quotes
+    '\u2018': "'",   # LEFT SINGLE QUOTATION MARK
+    '\u2019': "'",   # RIGHT SINGLE QUOTATION MARK
+    '\u201a': "'",   # SINGLE LOW-9 QUOTATION MARK
+    '\u201b': "'",   # SINGLE HIGH-REVERSED-9 QUOTATION MARK
+    '\u201c': '"',   # LEFT DOUBLE QUOTATION MARK
+    '\u201d': '"',   # RIGHT DOUBLE QUOTATION MARK
+    '\u201e': '"',   # DOUBLE LOW-9 QUOTATION MARK
+    '\u201f': '"',   # DOUBLE HIGH-REVERSED-9 QUOTATION MARK
+    # Other common typographic chars
+    '\u2026': '...',  # HORIZONTAL ELLIPSIS
+    '\u2022': '*',    # BULLET
+    '\u00b7': '*',    # MIDDLE DOT
+    '\u2023': '*',    # TRIANGULAR BULLET
+    '\u00a0': ' ',    # NON-BREAKING SPACE
+})
+
+
+def _clean_text(value: Optional[str]) -> Optional[str]:
+    """Normalise Unicode typographic characters in DB text fields to ASCII.
+
+    Remote PostgreSQL instances may store en-dashes, curly quotes, ellipses
+    and other typographic characters in subject/description/notes fields.
+    When psycopg2 retrieves these without correct client_encoding, each UTF-8
+    byte renders as '?' in the browser — e.g. U+2013 EN DASH (3 bytes) becomes
+    '???' producing 'Payment complete ??? INV-000034' instead of
+    'Payment complete - INV-000034'.
+    """
+    if not value:
+        return value
+    return str(value).translate(_UNICODE_NORMALISE)
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +297,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                 t    = act.get('type') or 'N/A'
                 icon = _type_icon(t)
                 out.append(
-                    f'| {icon} {t} | **{act.get("subject") or "No subject"}** | '
+                    f'| {icon} {t} | **{_clean_text(act.get("subject")) or "No subject"}** | '
                     f'{act.get("owner_name") or act.get("owner_id") or "N/A"} | '
                     f'{_fmt_date(act.get("due_at"))} | '
                     f'{_fmt_dt(act.get("created_at"))} | '
@@ -241,7 +310,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
 
     # ── Activity Detail ───────────────────────────────────────────────────────
     elif report_mode == 'activity_detail' and activity:
-        out.append(f'**{activity.get("subject") or "No subject"}**')
+        out.append(f'**{_clean_text(activity.get("subject")) or "No subject"}**')
         out.append('')
 
         out.append('**📋 Activity Information**')
@@ -250,7 +319,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         out.append('|-------|-------|')
         t = activity.get('type') or 'N/A'
         out.append(f'| **Type** | {_type_icon(t)} {t} |')
-        out.append(f'| **Subject** | {activity.get("subject") or "N/A"} |')
+        out.append(f'| **Subject** | {_clean_text(activity.get("subject")) or "N/A"} |')
         out.append(f'| **Owner** | {activity.get("owner_name") or "N/A"} |')
         out.append(f'| **Owner ID** | {activity.get("owner_id") or "N/A"} |')
         out.append(f'| **Direction** | {activity.get("direction") or "N/A"} |')
@@ -295,7 +364,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
 
         out.append('**📝 Description**')
         out.append('')
-        out.append(activity.get('description') or '_No description provided_')
+        out.append(_clean_text(activity.get('description')) or '_No description provided_')
         out.append('')
 
         out.append('**🔑 Activity ID**')
@@ -313,7 +382,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         out.append(f'| **Activity ID** | {activity.get("activity_id") or "N/A"} |')
         t = activity.get('type') or 'N/A'
         out.append(f'| **Type** | {_type_icon(t)} {t} |')
-        out.append(f'| **Subject** | {activity.get("subject") or "N/A"} |')
+        out.append(f'| **Subject** | {_clean_text(activity.get("subject")) or "N/A"} |')
         if activity.get('related_type'):
             out.append(f'| **Related Type** | {activity["related_type"]} |')
         if activity.get('related_name'):
@@ -345,13 +414,13 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             event_icons = {'activity': '📝', 'order': '📦', 'invoice': '🧾', 'payment': '💰'}
             for idx, evt in enumerate(activities, 1):
                 ts      = _fmt_dt(evt.get('timestamp'))
-                summary = evt.get('summary') or evt.get('event_type') or 'N/A'
+                summary = _clean_text(evt.get('summary') or evt.get('event_type') or 'N/A')
                 icon    = event_icons.get(str(evt.get('event_type') or ''), '•')
                 details = ''
                 d = evt.get('details') or {}
                 etype = evt.get('event_type')
                 if etype == 'activity':
-                    details = d.get('subject') or ''
+                    details = _clean_text(d.get('subject') or '')
                 elif etype == 'order':
                     details = f"Order #{d.get('order_number') or 'N/A'}"
                 elif etype == 'invoice':
@@ -381,7 +450,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                 days_over   = act.get('days_overdue')
                 score       = act.get('activity_score')
                 out.append(
-                    f'| {icon} {t} | **{act.get("subject") or "No subject"}** | '
+                    f'| {icon} {t} | **{_clean_text(act.get("subject")) or "No subject"}** | '
                     f'{act.get("owner_name") or act.get("owner_id") or "N/A"} | '
                     f'{_fmt_date(act.get("due_at"))} | '
                     f'{days_over if days_over is not None else "N/A"} | '
@@ -408,7 +477,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                 days_until = act.get('days_until')
                 score      = act.get('activity_score')
                 out.append(
-                    f'| {icon} {t} | **{act.get("subject") or "No subject"}** | '
+                    f'| {icon} {t} | **{_clean_text(act.get("subject")) or "No subject"}** | '
                     f'{act.get("owner_name") or act.get("owner_id") or "N/A"} | '
                     f'{_fmt_date(act.get("due_at"))} | '
                     f'{days_until if days_until is not None else "N/A"} | '
