@@ -1,4 +1,13 @@
-"""Response formatter for Leads — Python conversion of n8n Format Response v4.5.
+"""Response formatter for Leads — Python conversion of n8n Format Response v4.6.
+
+CHANGELOG v4.6
+  - Added _clean_phone() helper: normalises Unicode hyphen variants (U+2011
+    NON-BREAKING HYPHEN and 10 others) to plain ASCII hyphen-minus (U+002D).
+    Remote PostgreSQL instances store phone numbers with U+2011 which encodes
+    as 3 UTF-8 bytes (E2 80 91); if the psycopg2 connection doesn't decode
+    the column correctly each byte renders as '?' in the HTML, producing
+    '+1 (905) 555???9912'. Applied to every phone field in _lead_dict (the
+    side-channel used by the HTML JS) and all markdown text output lines.
 
 CHANGELOG v4.5
   - convert mode: reads full account/contact/opportunity/address objects from
@@ -132,6 +141,37 @@ def _format_address(l: dict) -> Optional[str]:
     return ', '.join(parts) if parts else None
 
 
+# Unicode hyphen/dash codepoints that remote PostgreSQL may store in phone fields.
+# All are normalised to plain ASCII hyphen-minus (U+002D) so the HTML page renders
+# them correctly regardless of the remote DB's character encoding behaviour.
+_UNICODE_HYPHENS = str.maketrans({
+    '\u00ad': '-',   # SOFT HYPHEN
+    '\u2010': '-',   # HYPHEN
+    '\u2011': '-',   # NON-BREAKING HYPHEN  ← most common culprit (3-byte UTF-8: E2 80 91)
+    '\u2012': '-',   # FIGURE DASH
+    '\u2013': '-',   # EN DASH
+    '\u2014': '-',   # EM DASH
+    '\u2015': '-',   # HORIZONTAL BAR
+    '\u2212': '-',   # MINUS SIGN
+    '\ufe58': '-',   # SMALL EM DASH
+    '\ufe63': '-',   # SMALL HYPHEN-MINUS
+    '\uff0d': '-',   # FULLWIDTH HYPHEN-MINUS
+})
+
+def _clean_phone(phone: Optional[str]) -> Optional[str]:
+    """Normalise Unicode hyphens/dashes in phone strings to plain ASCII hyphen.
+
+    Remote PostgreSQL instances sometimes store phone numbers with U+2011
+    (NON-BREAKING HYPHEN) instead of U+002D (HYPHEN-MINUS). When the
+    psycopg2 connection doesn't fully decode the character, each of the
+    3 UTF-8 bytes (E2 80 91) renders as '?' in the HTML, producing
+    '+1 (905) 555???9912' instead of '+1 (905) 555-9912'.
+    """
+    if not phone:
+        return phone
+    return str(phone).translate(_UNICODE_HYPHENS)
+
+
 def _lead_dict(l: dict) -> dict:
     """Build the structured lead dict emitted in the side-channel."""
     return {
@@ -140,7 +180,7 @@ def _lead_dict(l: dict) -> dict:
         'last_name':             l.get('last_name'),
         'company':               l.get('company'),
         'email':                 l.get('email'),
-        'phone':                 l.get('phone'),
+        'phone':                 _clean_phone(l.get('phone')),
         'address_line1':         l.get('address_line1'),
         'address_line2':         l.get('address_line2'),
         'city':                  l.get('city'),
@@ -361,7 +401,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                 # Line 1: Name | Company | Email | Phone
                 out.append(
                     f"**{idx}. {full_name}** | {l.get('company') or 'N/A'} | "
-                    f"{l.get('email') or 'N/A'} | {l.get('phone') or 'N/A'}"
+                    f"{l.get('email') or 'N/A'} | {_clean_phone(l.get('phone')) or 'N/A'}"
                 )
 
                 # Line 2: Status | Rating | Score | Source | Owner
@@ -408,7 +448,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         if full_name: out.append(f'| **Name** | {full_name} |')
         if lead.get('company'):  out.append(f"| **Company** | {lead['company']} |")
         if lead.get('email'):    out.append(f"| **Email** | {lead['email']} |")
-        if lead.get('phone'):    out.append(f"| **Phone** | {lead['phone']} |")
+        if lead.get('phone'):    out.append(f"| **Phone** | {(_clean_phone(lead['phone']))} |")
 
         # Address block
         if lead.get('address_line1'):
@@ -507,7 +547,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                 if full_name:              out.append(f'| **Name** | {full_name} |')
                 if lead.get('company'):    out.append(f"| **Company** | {lead['company']} |")
                 if lead.get('email'):      out.append(f"| **Email** | {lead['email']} |")
-                if lead.get('phone'):      out.append(f"| **Phone** | {lead['phone']} |")
+                if lead.get('phone'):      out.append(f"| **Phone** | {(_clean_phone(lead['phone']))} |")
                 if lead.get('address_line1'):
                     addr2 = f", {lead['address_line2']}" if lead.get('address_line2') else ''
                     out.append(f"| **Address** | {lead['address_line1']}{addr2} |")
@@ -532,7 +572,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         if full_name:              out.append(f'| **Name** | {full_name} |')
         if lead.get('company'):    out.append(f"| **Company** | {lead['company']} |")
         if lead.get('email'):      out.append(f"| **Email** | {lead['email']} |")
-        if lead.get('phone'):      out.append(f"| **Phone** | {lead['phone']} |")
+        if lead.get('phone'):      out.append(f"| **Phone** | {(_clean_phone(lead['phone']))} |")
         if lead.get('address_line1'):
             addr2 = f", {lead['address_line2']}" if lead.get('address_line2') else ''
             out.append(f"| **Address** | {lead['address_line1']}{addr2} |")
@@ -578,7 +618,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             if full_name:               out.append(f'| Name | {full_name} |')
             if lead.get('company'):     out.append(f"| Company | {lead['company']} |")
             if lead.get('email'):       out.append(f"| Email | {lead['email']} |")
-            if lead.get('phone'):       out.append(f"| Phone | {lead['phone']} |")
+            if lead.get('phone'):       out.append(f"| Phone | {(_clean_phone(lead['phone']))} |")
             out.append('| Status | ✔ CONVERTED |')
             if lead.get('converted_at'):
                 out.append(f"| Converted At | {_fmt_dt(lead['converted_at'])} |")
@@ -596,7 +636,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             if acct.get('account_id'):   out.append(f"| Account ID | `{acct['account_id']}` |")
             if acct.get('status'):       out.append(f"| Status | {acct['status']} |")
             if acct.get('industry'):     out.append(f"| Industry | {acct['industry']} |")
-            if acct.get('phone'):        out.append(f"| Phone | {acct['phone']} |")
+            if acct.get('phone'):        out.append(f"| Phone | {(_clean_phone(acct['phone']))} |")
             if acct.get('email'):        out.append(f"| Email | {acct['email']} |")
             if acct.get('website'):      out.append(f"| Website | {acct['website']} |")
             if acct.get('created_at'):   out.append(f"| Created At | {_fmt_dt(acct['created_at'])} |")
@@ -627,7 +667,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             if c_name:                     out.append(f'| Name | {c_name} |')
             if cont.get('contact_id'):     out.append(f"| Contact ID | `{cont['contact_id']}` |")
             if cont.get('email'):          out.append(f"| Email | {cont['email']} |")
-            if cont.get('phone'):          out.append(f"| Phone | {cont['phone']} |")
+            if cont.get('phone'):          out.append(f"| Phone | {(_clean_phone(cont['phone']))} |")
             if cont.get('role'):           out.append(f"| Role | {cont['role']} |")
             if cont.get('status'):         out.append(f"| Status | {cont['status']} |")
             if cont.get('created_at'):     out.append(f"| Created At | {_fmt_dt(cont['created_at'])} |")

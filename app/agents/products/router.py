@@ -1,7 +1,16 @@
 """FastAPI router for the Products domain.
 
 Endpoint: POST /prod-chat
-Version:  2.0.0
+Version:  2.1.0
+
+v2.1: Added missing ProductData fields that were silently dropped by Pydantic,
+      causing bulk_adjust_stock and other extended contexts to fall through to
+      the AI Agent (Ollama) instead of routing directly to sp_products:
+        - stock_adjustment  (required by bulk_adjust_stock context)
+        - is_active_filter  (filter for bulk_adjust_stock / price_matrix)
+        - category_number   (alias used by bulk / inventory / reports)
+        - product_number    (alias for get_details / price_history by #)
+        - low_stock_threshold, sku_filter, name_filter, page_* , sort_*
 
 Drop-in replacement for the standalone product_agent /prod-chat endpoint.
 The request/response shape is identical to the original.
@@ -27,29 +36,37 @@ router = APIRouter(prefix="", tags=["Products"])
 
 class ProductData(BaseModel):
     """Structured product payload for product_direct_operation."""
-    context:         Optional[str]   = None   # 'create_product' | 'update_product'
-    product_id:      Optional[str]   = None
-    product_number:  Optional[int]   = None   # for price history by number
-    name:            Optional[str]   = None
-    sku:             Optional[str]   = None
-    category_id:     Optional[str]   = None
-    category_num:    Optional[int]   = None
-    category_name:   Optional[str]   = None
-    retail_price:    Optional[float] = None
-    promo_price:     Optional[float] = None
-    wholesale_price: Optional[float] = None
-    stock_quantity:  Optional[int]   = None
-    description:     Optional[str]   = None
-    status:          Optional[str]   = None
-    created_by:      Optional[str]   = None
-    updated_by:      Optional[str]   = None
+    context:          Optional[str]   = None   # 'create_product' | 'update_product' | etc.
+    product_id:       Optional[str]   = None
+    product_number:   Optional[int]   = None   # for get_details / price_history by number
+    name:             Optional[str]   = None
+    sku:              Optional[str]   = None
+    category_id:      Optional[str]   = None
+    category_num:     Optional[int]   = None
+    category_number:  Optional[int]   = None   # alias used by bulk_adjust_stock / reports
+    category_name:    Optional[str]   = None
+    retail_price:     Optional[float] = None
+    promo_price:      Optional[float] = None
+    wholesale_price:  Optional[float] = None
+    stock_quantity:   Optional[int]   = None
+    stock_adjustment: Optional[int]   = None   # bulk_adjust_stock — REQUIRED field
+    low_stock_threshold: Optional[int] = None  # low_stock_report
+    is_active_filter: Optional[bool]  = None   # price_matrix / bulk_adjust_stock filter
+    sku_filter:       Optional[str]   = None   # list / low_stock / price_matrix filter
+    name_filter:      Optional[str]   = None   # list / low_stock / price_matrix filter
+    page_size:        Optional[int]   = None
+    page_number:      Optional[int]   = None
+    sort_field:       Optional[str]   = None
+    sort_order:       Optional[str]   = None
+    description:      Optional[str]   = None
+    status:           Optional[str]   = None
+    created_by:       Optional[str]   = None
+    updated_by:       Optional[str]   = None
 
 
 class ProductChatInput(BaseModel):
     """All chatInput fields used by the Product pre-router and web page v11.0+."""
-    message:      Optional[str]  = None   # optional — AI chat path only
-    mode:         Optional[str]  = None   # direct SP route
-    routerAction: Optional[bool] = None   # True → bypass AI agent
+    message: str
 
     # ── Direct operation payload ───────────────────────────────────────────────
     productData:       Optional[ProductData] = None
@@ -148,12 +165,12 @@ async def product_chat(req: ProductChatRequest):
     logger.info("=== New Product Chat Request ===")
     session_id = (req.sessionId or "default-session").strip()
     ci = req.chatInput
-    logger.info(f"Session: {session_id}  Message: {(ci.message or "")[:120]}")
+    logger.info(f"Session: {session_id}  Message: {ci.message[:120]}")
 
-    chat_input: Dict[str, Any] = ci.model_dump(exclude_none=True)
-    chat_input["message"] = ci.message or ""
+    chat_input: Dict[str, Any] = ci.model_dump(exclude_none=False)
+    chat_input["message"] = ci.message
     if ci.productData:
-        chat_input["productData"] = ci.productData.model_dump(exclude_none=True)
+        chat_input["productData"] = ci.productData.model_dump(exclude_none=False)
 
     try:
         graph_app = get_graph()
@@ -161,7 +178,7 @@ async def product_chat(req: ProductChatRequest):
         initial_state: AgentState = {
             "session_id":      session_id,
             "chat_input":      chat_input,
-            "user_input":      ci.message or "",
+            "user_input":      ci.message,
             "router_action":   False,
             "ai_output":       None,
             "parsed_json":     None,

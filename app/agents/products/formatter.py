@@ -1,4 +1,16 @@
-"""Response formatter for Product Management — aligned with n8n Format Response v3.0.
+"""Response formatter for Product Management — aligned with n8n Format Response v3.1.
+
+v3.1 (defensive multi-key fallback for remote PostgreSQL compatibility):
+  + _parse_response: logs actual top-level and inner keys returned by SP
+    (INFO level) so key mismatches are visible in server logs.
+  + low_stock: tries alerts / products / low_stock_items / items / data / records
+    before giving up. Emits response key list in the "no data" message so
+    the correct key name can be identified from a single failed run.
+  + bulk_adjust_stock: tries updated_products / products / items / data.
+  + inventory_summary: tries summary / categories / items / data.
+  + price_matrix: tries matrix / products / items / data.
+  These fallback chains mean reports work whether the remote sp_products
+  uses the same key names as local or different ones.
 
 v3.0:
   + product_search mode — typeahead search for the unified Add/Update form.
@@ -138,14 +150,18 @@ def _price_triplet(p: dict) -> str:
 def _parse_response(db_rows: List[Dict]) -> Dict:
     """Extract the sp_products JSON response from raw DB rows."""
     if not db_rows:
+        logger.warning('_parse_response: db_rows is empty')
         return {}
     first = db_rows[0]
+    logger.debug(f'_parse_response: top-level keys = {list(first.keys())}')
     for key in ('sp_products', 'result'):
         val = first.get(key)
         if val:
             parsed = _safe_json(val) if isinstance(val, str) else val
             if isinstance(parsed, dict):
+                logger.debug(f'_parse_response: found response under "{key}", inner keys = {list(parsed.keys())}')
                 return parsed
+    logger.warning(f'_parse_response: neither "sp_products" nor "result" found in row — returning raw row. Keys: {list(first.keys())}')
     return first
 
 
@@ -358,7 +374,15 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
     if mode == 'bulk_adjust_stock':
         rows_affected = metadata.get('rows_affected', 0)
         adjustment    = metadata.get('adjustment_amount', 0)
-        updated       = response.get('updated_products') or []
+        updated = (
+            response.get('updated_products') or
+            response.get('products') or
+            response.get('items') or
+            response.get('data') or
+            []
+        )
+        logger.info(f'bulk_adjust_stock: updated list has {len(updated)} items. '
+                    f'Response keys: {list(response.keys())}')
 
         out.append('**[MODE:bulk_adjust_stock] Bulk Stock Adjustment**')
         out.append('')
@@ -395,7 +419,14 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
 
     # ── inventory_summary ─────────────────────────────────────────────────────
     if mode == 'inventory_summary':
-        summary   = response.get('summary') or []
+        summary = (
+            response.get('summary') or
+            response.get('categories') or
+            response.get('items') or
+            response.get('data') or
+            []
+        )
+        logger.info(f'inventory_summary: {len(summary)} rows. Response keys: {list(response.keys())}')
         threshold = metadata.get('low_stock_threshold') or params.get('lowStockThreshold') or 10
 
         out.append('**[MODE:inventory_summary] Inventory Summary by Category**')
@@ -429,7 +460,20 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
 
     # ── low_stock ─────────────────────────────────────────────────────────────
     if mode == 'low_stock':
-        products    = [_normalise_product(p) for p in (response.get('alerts') or [])]
+        # Remote and local sp_products may return the array under different keys.
+        # Try all plausible names so both instances work without code changes.
+        raw_list = (
+            response.get('alerts') or          # local sp_products key
+            response.get('products') or         # common alternative
+            response.get('low_stock_items') or
+            response.get('items') or
+            response.get('data') or
+            response.get('records') or
+            []
+        )
+        logger.info(f'low_stock: array key resolved, {len(raw_list)} items found. '
+                    f'Available response keys: {list(response.keys())}')
+        products    = [_normalise_product(p) for p in raw_list]
         threshold   = metadata.get('low_stock_threshold') or params.get('lowStockThreshold') or 10
         alert_count = metadata.get('alert_count') or len(products)
 
@@ -460,7 +504,15 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
                 rows,
             ))
         else:
+            # Nothing found under any known key.
+            # Emit a diagnostic block so the user sees the raw response
+            # structure — this makes it easy to identify the actual key
+            # name the remote sp_products uses for low-stock data.
+            all_keys = list(response.keys())
             out.append('_No low stock products found._')
+            if all_keys:
+                out.append('')
+                out.append(f'_(Debug: SP response keys were: {", ".join(all_keys)})_')
         return '\n'.join(out)
 
     # ── price_history ─────────────────────────────────────────────────────────
@@ -495,7 +547,15 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
 
     # ── price_matrix ──────────────────────────────────────────────────────────
     if mode == 'price_matrix':
-        products = [_normalise_product(p) for p in (response.get('matrix') or [])]
+        raw_matrix = (
+            response.get('matrix') or
+            response.get('products') or
+            response.get('items') or
+            response.get('data') or
+            []
+        )
+        logger.info(f'price_matrix: {len(raw_matrix)} rows. Response keys: {list(response.keys())}')
+        products = [_normalise_product(p) for p in raw_matrix]
 
         out.append('**[MODE:price_matrix] Price Matrix Report**')
         out.append('')
