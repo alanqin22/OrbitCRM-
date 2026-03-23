@@ -1,7 +1,12 @@
 """FastAPI router for the Products domain.
 
 Endpoint: POST /prod-chat
-Version:  2.1.0
+Version:  2.2.0
+
+v2.2: Added image_url field to ProductData so the product_direct_operation
+      create_product / update_product contexts can forward pd.image_url
+      through the pre-router (v2.1) → sql_builder (v4.3) → sp_products v3f,
+      which INSERTs / UPSERTs a row in product_image (sort_order = 1).
 
 v2.1: Added missing ProductData fields that were silently dropped by Pydantic,
       causing bulk_adjust_stock and other extended contexts to fall through to
@@ -60,6 +65,7 @@ class ProductData(BaseModel):
     sort_order:       Optional[str]   = None
     description:      Optional[str]   = None
     status:           Optional[str]   = None
+    image_url:        Optional[str]   = None   # v2.2 — forwarded as p_image_url to sp_products
     created_by:       Optional[str]   = None
     updated_by:       Optional[str]   = None
 
@@ -151,7 +157,7 @@ async def product_health():
     return {
         "status":  "healthy",
         "module":  "products",
-        "version": "2.0.0",
+        "version": "2.2.0",
         "graph_initialized": get_graph() is not None,
     }
 

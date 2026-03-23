@@ -1,10 +1,17 @@
-"""Product Pre-Router — Python equivalent of n8n Pre Router v2.0.
+"""Product Pre-Router — Python equivalent of n8n Pre Router v2.1.
 
 Mirrors the order_pre_router_v3.2 architecture.
 
 Inspects every incoming message and either ROUTES it directly to Build SQL
 Query (router_action=True) or PASSES it through to the AI Agent
 (router_action=False).
+
+CHANGES IN v2.1 — Image URL support
+
+  create_product and update_product contexts now forward pd.image_url
+  as imageUrl into the routed params object so sql_builder v4.3 can
+  pass it as p_image_url to sp_products v3f, which INSERTs / UPSERTs
+  a row in product_image (sort_order = 1).
 
 CHANGES IN v2.0 — Maximum Direct SP Routing
 
@@ -88,7 +95,7 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
     raw = (message or '').strip()
     msg = raw.lower()
 
-    logger.info('=== Product Pre-Router v2.0 ===')
+    logger.info('=== Product Pre-Router v2.1 ===')
     logger.info(f'Message: {raw[:120]}')
 
     # ── routerAction short-circuit (v3.1) ───────────────────────────────────
@@ -137,6 +144,7 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
                     'stockQuantity':  _to_num(pd.get('stock_quantity'), int),
                     'description':    pd.get('description') or None,
                     'status':         pd.get('status') or 'Active',
+                    'imageUrl':       pd.get('image_url') or None,   # NEW v2.1
                     'createdBy':      pd.get('created_by') or chat_input.get('sessionId') or None
                 }
                 return routed(params)
@@ -158,6 +166,7 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
                     'stockQuantity':  _to_num(pd.get('stock_quantity'), int),
                     'description':    pd.get('description') or None,
                     'status':         pd.get('status') or None,
+                    'imageUrl':       pd.get('image_url') or None,   # NEW v2.1
                     'updatedBy':      pd.get('updated_by') or chat_input.get('sessionId') or None
                 }
                 return routed(params)
@@ -261,7 +270,30 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
     # Fallback for voice input and manually typed messages that map 1-to-1 to
     # a deterministic SP mode. Order: most specific patterns checked first.
 
-    # ── search products: <query> / search products by name <query> ────────────
+    # ── show all products / list products (no filter) ───────────────────────
+    if re.match(r'^(show|list|display|get)\s+all\s+products?$', msg) or msg in ('list products', 'show products', 'all products'):
+        return routed({'mode': 'list', 'pageSize': 50, 'pageNumber': 1})
+
+    # ── list/show products in/by/for category [number] N ─────────────────────
+    # Catches: "list products in category 1", "show products for category number 2",
+    #          "list product in category number 1", "get products by category 5"
+    cat_list_match = re.match(
+        r'^(?:show|list|display|get)\s+products?\s+(?:in|by|for|from)?\s*(?:category\s*(?:number\s*|#\s*)?)?(\d+)',
+        msg, re.IGNORECASE
+    ) or re.match(
+        r'^(?:show|list|display|get)\s+products?\s+(?:in|by|for|from)\s+category\s*(?:number\s*|#\s*)?(\d+)',
+        msg, re.IGNORECASE
+    )
+    if cat_list_match:
+        return routed({'mode': 'list', 'categoryNumber': int(cat_list_match.group(1)), 'pageSize': 50, 'pageNumber': 1})
+
+    # Also catch the reverse word order: "list category [number] N products"
+    cat_rev_match = re.match(
+        r'^(?:show|list|display|get)\s+category\s*(?:number\s*|#\s*)?(\d+)\s+products?',
+        msg, re.IGNORECASE
+    )
+    if cat_rev_match:
+        return routed({'mode': 'list', 'categoryNumber': int(cat_rev_match.group(1)), 'pageSize': 50, 'pageNumber': 1})
     # Used by BOTH the home-page search bar AND the Create/Update form typeahead.
     # MODE:list is fast enough for both — product_search is retired (Option A).
     if msg.startswith('search products by name') or msg.startswith('search products:'):
