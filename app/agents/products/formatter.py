@@ -1,24 +1,31 @@
-"""Response formatter for Product Management — aligned with n8n Format Response v3.1.
+"""Response formatter for Product Management — aligned with n8n Format Response v3.3.
+
+v3.3 (gallery images in list mode):
+  + list mode: sp_products v3g now returns images[] per product via a
+    correlated subquery on product_image. normalise_product() maps
+    images[] from the SP response. The list output block now emits
+    Image-URL: (primary, sort_order = 1) and Image-URL-2 … Image-URL-N
+    lines per product so buildProductListHTML can parse gallery images
+    and pass them into renderProductRecord, matching the detail view.
+
+v3.2 (gallery in detail view):
+  + get_details mode: emits Image-URL-2 through Image-URL-N lines for
+    additional gallery images (sort_order > 1) from response.product.images[].
+    The HTML detail view renders an Amazon-style thumbnail strip.
 
 v3.1 (defensive multi-key fallback for remote PostgreSQL compatibility):
   + _parse_response: logs actual top-level and inner keys returned by SP
     (INFO level) so key mismatches are visible in server logs.
-  + low_stock: tries alerts / products / low_stock_items / items / data / records
-    before giving up. Emits response key list in the "no data" message so
-    the correct key name can be identified from a single failed run.
-  + bulk_adjust_stock: tries updated_products / products / items / data.
-  + inventory_summary: tries summary / categories / items / data.
-  + price_matrix: tries matrix / products / items / data.
-  These fallback chains mean reports work whether the remote sp_products
-  uses the same key names as local or different ones.
+  + Image support: primary_image_url + image_alt_text passed through
+    _normalise_product() and emitted as "Image-URL:" line in list,
+    get_details, add, create, and update output blocks.
+  + Defensive multi-key fallback chains for low_stock, bulk_adjust_stock,
+    inventory_summary, and price_matrix array keys.
 
 v3.0:
   + product_search mode — typeahead search for the unified Add/Update form.
-    Outputs a markdown table parseable by _pfRenderProductDropdown in the
-    HTML frontend.
   + Full UUIDs always emitted (never truncated).
-  + Markdown tables for: bulk_adjust_stock, inventory_summary, low_stock,
-    price_history, price_matrix.
+  + Markdown tables for bulk modes and reports.
   + Normalised product fields.
   + Price order: Retail → Promo → Wholesale (hide missing).
 
@@ -116,24 +123,42 @@ def _normalise_product(p: dict) -> dict:
     """Normalise stored-procedure product shape to a consistent internal shape."""
     if not p:
         return {}
+
+    # images[] — full gallery array keyed by sort_order (v3.2)
+    images = p.get('images') or []
+
+    # primary_image_url: prefer the explicit top-level field the SP returns,
+    # fall back to images[sort_order=1] so both SP shapes work without change.
+    primary_image_url = p.get('primary_image_url') or None
+    if not primary_image_url and images:
+        # Find sort_order=1 first; if missing, use the first element
+        sort1 = next((img for img in images
+                      if isinstance(img, dict) and img.get('sort_order') == 1), None)
+        candidate = sort1 or (images[0] if images else None)
+        if isinstance(candidate, dict):
+            primary_image_url = candidate.get('image_url') or None
+
     return {
-        'product_id':     p.get('product_id'),
-        'product_number': p.get('product_number'),
-        'product_name':   p.get('product_name'),
-        'sku':            p.get('sku'),
-        'category_name':  p.get('category_name'),
-        'category_id':    p.get('category_id'),
-        'category_number': p.get('category_number'),
-        'description':    p.get('description'),
-        'stock':          p.get('stock_quantity'),
-        'is_active':      p.get('is_active'),
-        'currency':       p.get('currency_code', 'USD'),
-        'wholesale':      p.get('wholesale_price'),
-        'retail':         p.get('retail_price'),
-        'promo':          p.get('promo_price'),
-        'created_at':     p.get('created_at'),
-        'updated_at':     p.get('updated_at'),
-        'prices':         p.get('prices'),           # for price_matrix
+        'product_id':        p.get('product_id'),
+        'product_number':    p.get('product_number'),
+        'product_name':      p.get('product_name'),
+        'sku':               p.get('sku'),
+        'category_name':     p.get('category_name'),
+        'category_id':       p.get('category_id'),
+        'category_number':   p.get('category_number'),
+        'description':       p.get('description'),
+        'stock':             p.get('stock_quantity'),
+        'is_active':         p.get('is_active'),
+        'currency':          p.get('currency_code', 'USD'),
+        'wholesale':         p.get('wholesale_price'),
+        'retail':            p.get('retail_price'),
+        'promo':             p.get('promo_price'),
+        'created_at':        p.get('created_at'),
+        'updated_at':        p.get('updated_at'),
+        'prices':            p.get('prices'),                # for price_matrix
+        'primary_image_url': primary_image_url,              # v3.1 + fallback
+        'image_alt_text':    p.get('image_alt_text') or None,  # v3.1
+        'images':            images,                         # v3.2 gallery
     }
 
 
@@ -165,7 +190,8 @@ def _parse_response(db_rows: List[Dict]) -> Dict:
     return first
 
 
-def _product_detail_block(out: List[str], p: dict, price_history: list, mode_label: str):
+def _product_detail_block(out: List[str], p: dict, price_history: list, mode_label: str,
+                          gallery_images: Optional[list] = None):
     """Emit the detail block used by get_details, add, create, update."""
     currency = p.get('currency', 'USD')
     out.append(f'{p.get("product_name", "N/A")}')
@@ -188,6 +214,16 @@ def _product_detail_block(out: List[str], p: dict, price_history: list, mode_lab
     out.append(f'Status: {"Active" if p.get("is_active") else "Inactive"}')
     out.append(f'Created: {_fmt_dt(p.get("created_at"))}')
     out.append(f'Updated: {_fmt_dt(p.get("updated_at"))}')
+    # Primary image — v3.1
+    if p.get('primary_image_url'):
+        out.append(f'Image-URL: {p["primary_image_url"]}')
+    # Additional gallery images (sort_order 2-N) — v3.2
+    if gallery_images:
+        for img in gallery_images:
+            so = img.get('sort_order') if isinstance(img, dict) else None
+            url = img.get('image_url') if isinstance(img, dict) else None
+            if so and so > 1 and url:
+                out.append(f'Image-URL-{so}: {url}')
     if price_history:
         out.append('')
         out.append('**Pricing History**')
@@ -219,7 +255,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
     response = _parse_response(db_rows)
     metadata = response.get('metadata', {})
 
-    logger.info(f'Format Response (sp_products v3.0) — mode={mode}')
+    logger.info(f'Format Response (sp_products v3.3) — mode={mode}')
 
     # ── Error short-circuit ───────────────────────────────────────────────────
     if metadata.get('status') == 'error' or (
@@ -316,25 +352,39 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
             out.append(f'   Status: {"Active" if p.get("is_active") else "Inactive"}')
             out.append(f'   Created: {_fmt_dt(p.get("created_at"))}')
             out.append(f'   Updated: {_fmt_dt(p.get("updated_at"))}')
+            # Primary image (sort_order = 1) — v3.1
+            if p.get('primary_image_url'):
+                out.append(f'   Image-URL: {p["primary_image_url"]}')
+            # Gallery images (sort_order 2-N) — v3.3
+            for img in (p.get('images') or []):
+                so  = img.get('sort_order') if isinstance(img, dict) else None
+                url = img.get('image_url')  if isinstance(img, dict) else None
+                if so and so > 1 and url:
+                    out.append(f'   Image-URL-{so}: {url}')
             out.append('')
         return '\n'.join(out)
 
     # ── get_details ───────────────────────────────────────────────────────────
     if mode == 'get_details':
-        p = _normalise_product(response.get('product')) if response.get('product') else {}
+        raw_product = response.get('product')
+        p = _normalise_product(raw_product) if raw_product else {}
         history = response.get('price_history') or []
+        # Capture full gallery array (sort_order 1-N) returned by sp_products — v3.2
+        gallery_images = (raw_product or {}).get('images') or []
         out.append('**[MODE:get_details] Product Details**')
         out.append('')
         if p:
-            _product_detail_block(out, p, history, 'get_details')
+            _product_detail_block(out, p, history, 'get_details',
+                                  gallery_images=gallery_images)
         else:
             out.append('_No product data returned._')
         return '\n'.join(out)
 
     # ── add ───────────────────────────────────────────────────────────────────
     if mode == 'add':
-        p = _normalise_product(response.get('product')) if response.get('product') else {}
-        history = (response.get('product') or {}).get('pricing_history') or []
+        raw_product = response.get('product')
+        p = _normalise_product(raw_product) if raw_product else {}
+        history = (raw_product or {}).get('pricing_history') or []
         out.append('**[MODE:add] Product Added Successfully**')
         out.append('')
         if p:
@@ -346,8 +396,9 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
 
     # ── create ────────────────────────────────────────────────────────────────
     if mode == 'create':
-        p = _normalise_product(response.get('product')) if response.get('product') else {}
-        history = (response.get('product') or {}).get('pricing_history') or []
+        raw_product = response.get('product')
+        p = _normalise_product(raw_product) if raw_product else {}
+        history = (raw_product or {}).get('pricing_history') or []
         out.append('**[MODE:create] Product Created Successfully**')
         out.append('')
         if p:
@@ -359,8 +410,9 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
 
     # ── update ────────────────────────────────────────────────────────────────
     if mode == 'update':
-        p = _normalise_product(response.get('product')) if response.get('product') else {}
-        history = (response.get('product') or {}).get('pricing_history') or []
+        raw_product = response.get('product')
+        p = _normalise_product(raw_product) if raw_product else {}
+        history = (raw_product or {}).get('pricing_history') or []
         out.append('**[MODE:update] Product Updated Successfully**')
         out.append('')
         if p:

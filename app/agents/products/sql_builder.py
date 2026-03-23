@@ -1,6 +1,14 @@
-"""SQL Query Builder for sp_products — aligned with n8n Build SQL Query v4.2.
+"""SQL Query Builder for sp_products — aligned with n8n Build SQL Query v4.3.
 
-CHANGES IN v4.2:
+CHANGES IN v4.3:
+  + p_image_url added to 'add', 'create', and 'update' cases.
+    Mapped from p.imageUrl (forwarded by pre_router v2.1 from pd.image_url).
+    sp_products v3f INSERTs / UPSERTs product_image (sort_order = 1) when
+    this parameter is non-NULL.
+  + 'image_url' added to _ALIAS_MAP so snake_case from AI Agent output
+    is correctly resolved to imageUrl before SQL generation.
+
+FROM v4.2:
   + No SQL generation changes required.  All 10 SP modes were already
     handled in v4.1.  This version documents the expanded routing surface:
 
@@ -113,6 +121,7 @@ _ALIAS_MAP = {
     'sort_order':       'sortOrder',
     'created_by':       'createdBy',
     'updated_by':       'updatedBy',
+    'image_url':        'imageUrl',        # v4.3
     'effective_from':   'effectiveFrom',
     'page_size':        'pageSize',
     'page_number':      'pageNumber',
@@ -186,6 +195,7 @@ def build_products_query(params: Dict[str, Any]) -> Tuple[str, Dict]:
   p_price_type      := {_esc(p.get('priceType'))},
   p_price_value     := {_num(p.get('priceValue'))},
   p_currency        := {_esc(p.get('currency') or 'USD')},
+  p_image_url       := {_esc(p['imageUrl']) if p.get('imageUrl') else 'NULL'},
   p_created_by      := {_esc(p.get('createdBy'))},
   p_payload         := NULL,
   p_effective_from  := NULL
@@ -209,6 +219,7 @@ def build_products_query(params: Dict[str, Any]) -> Tuple[str, Dict]:
   p_retail_price    := {_num(p.get('retailPrice'))},
   p_promo_price     := {_num(p.get('promoPrice'))},
   p_currency        := {_esc(p.get('currency') or 'USD')},
+  p_image_url       := {_esc(p['imageUrl']) if p.get('imageUrl') else 'NULL'},
   p_created_by      := {_esc(p.get('createdBy'))},
   p_payload         := NULL,
   p_effective_from  := NULL
@@ -228,6 +239,7 @@ def build_products_query(params: Dict[str, Any]) -> Tuple[str, Dict]:
         pp_val   = _num(p['promoPrice'])     if p.get('promoPrice')     is not None else 'NULL'
         pt_val   = f"{_esc(p['priceType'])}" if p.get('priceType') else 'NULL'
         pv_val   = _num(p['priceValue']) if p.get('priceValue') is not None else 'NULL'
+        img_val  = _esc(p['imageUrl']) if p.get('imageUrl') else 'NULL'  # v4.3
 
         sql = f"""SELECT sp_products(
   p_mode            := 'update',
@@ -248,6 +260,7 @@ def build_products_query(params: Dict[str, Any]) -> Tuple[str, Dict]:
   p_price_type      := {pt_val},
   p_price_value     := {pv_val},
   p_currency        := {_esc(p.get('currency') or 'USD')},
+  p_image_url       := {img_val},
   p_updated_by      := {_esc(p.get('updatedBy'))},
   p_payload         := NULL,
   p_effective_from  := NULL
@@ -348,7 +361,7 @@ def build_products_query(params: Dict[str, Any]) -> Tuple[str, Dict]:
     else:
         raise ValueError(f"Unknown mode: '{mode}'")
 
-    logger.info(f"Built sp_products query for mode='{mode}' (v4.2)")
+    logger.info(f"Built sp_products query for mode='{mode}' (v4.3)")
     logger.debug(f"SQL: {sql[:300]}")
 
     debug_info = {
