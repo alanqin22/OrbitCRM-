@@ -1,4 +1,4 @@
-"""Product Pre-Router — Python equivalent of n8n Pre Router v2.1.
+"""Product Pre-Router — Python equivalent of n8n Pre Router v2.2.
 
 Mirrors the order_pre_router_v3.2 architecture.
 
@@ -6,10 +6,16 @@ Inspects every incoming message and either ROUTES it directly to Build SQL
 Query (router_action=True) or PASSES it through to the AI Agent
 (router_action=False).
 
+CHANGES IN v2.2 — Amazon-style search bar: list_categories support
+
+  New context 'list_categories' routes to mode: 'list_categories'.
+  Used by product_v26+ HTML on page load to populate the category dropdown
+  in the Amazon-style search bar component via sp_products_list_categories().
+
 CHANGES IN v2.1 — Image URL support
 
   create_product and update_product contexts now forward pd.image_url
-  as imageUrl into the routed params object so sql_builder v4.3 can
+  as imageUrl into the routed params object so sql_builder v4.4 can
   pass it as p_image_url to sp_products v3f, which INSERTs / UPSERTs
   a row in product_image (sort_order = 1).
 
@@ -95,7 +101,7 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
     raw = (message or '').strip()
     msg = raw.lower()
 
-    logger.info('=== Product Pre-Router v2.1 ===')
+    logger.info('=== Product Pre-Router v2.2 ===')
     logger.info(f'Message: {raw[:120]}')
 
     # ── routerAction short-circuit (v3.1) ───────────────────────────────────
@@ -144,7 +150,7 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
                     'stockQuantity':  _to_num(pd.get('stock_quantity'), int),
                     'description':    pd.get('description') or None,
                     'status':         pd.get('status') or 'Active',
-                    'imageUrl':       pd.get('image_url') or None,   # NEW v2.1
+                    'imageUrl':       pd.get('image_url') or None,   # v2.1
                     'createdBy':      pd.get('created_by') or chat_input.get('sessionId') or None
                 }
                 return routed(params)
@@ -166,7 +172,7 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
                     'stockQuantity':  _to_num(pd.get('stock_quantity'), int),
                     'description':    pd.get('description') or None,
                     'status':         pd.get('status') or None,
-                    'imageUrl':       pd.get('image_url') or None,   # NEW v2.1
+                    'imageUrl':       pd.get('image_url') or None,   # v2.1
                     'updatedBy':      pd.get('updated_by') or chat_input.get('sessionId') or None
                 }
                 return routed(params)
@@ -264,6 +270,10 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
                 }
                 return routed(params)
 
+            # ── List Categories (NEW v2.2) — populates Amazon-style search dropdown
+            if context == 'list_categories':
+                return routed({'mode': 'list_categories'})
+
             logger.warning(f'product_direct_operation: unknown context: {context}')
 
     # ── Text-Pattern Routes ──────────────────────────────────────────────────
@@ -275,8 +285,6 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         return routed({'mode': 'list', 'pageSize': 50, 'pageNumber': 1})
 
     # ── list/show products in/by/for category [number] N ─────────────────────
-    # Catches: "list products in category 1", "show products for category number 2",
-    #          "list product in category number 1", "get products by category 5"
     cat_list_match = re.match(
         r'^(?:show|list|display|get)\s+products?\s+(?:in|by|for|from)?\s*(?:category\s*(?:number\s*|#\s*)?)?(\d+)',
         msg, re.IGNORECASE
@@ -294,6 +302,8 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
     )
     if cat_rev_match:
         return routed({'mode': 'list', 'categoryNumber': int(cat_rev_match.group(1)), 'pageSize': 50, 'pageNumber': 1})
+
+    # ── search products: <query> — unified MODE:list path ────────────────────
     # Used by BOTH the home-page search bar AND the Create/Update form typeahead.
     # MODE:list is fast enough for both — product_search is retired (Option A).
     if msg.startswith('search products by name') or msg.startswith('search products:'):

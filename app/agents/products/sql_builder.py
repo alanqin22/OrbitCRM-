@@ -1,4 +1,12 @@
-"""SQL Query Builder for sp_products — aligned with n8n Build SQL Query v4.3.
+"""SQL Query Builder for sp_products — aligned with n8n Build SQL Query v4.4.
+
+CHANGES IN v4.4:
+  + list_categories mode added.
+    Routes from pre_router v2.2 context 'list_categories'.
+    Calls sp_products_list_categories() helper directly — returns all active
+    categories with category_id, category_number, category_name, sorted
+    alphabetically. Used by product_v26+ HTML to populate the Amazon-style
+    category dropdown in the search bar.
 
 CHANGES IN v4.3:
   + p_image_url added to 'add', 'create', and 'update' cases.
@@ -131,6 +139,7 @@ VALID_MODES = {
     'add', 'create', 'update', 'get_details', 'list',
     'bulk_adjust_stock', 'inventory_summary', 'low_stock',
     'price_history', 'price_matrix', 'product_search',
+    'list_categories',   # v4.4 — Amazon-style search bar dropdown
 }
 
 
@@ -358,10 +367,16 @@ def build_products_query(params: Dict[str, Any]) -> Tuple[str, Dict]:
   p_search := {_esc(search)}
 );""".strip()
 
+    # ── list_categories (v4.4 — new) ─────────────────────────────────────────
+    # Returns all active categories for the Amazon-style search bar dropdown.
+    # Calls sp_products_list_categories() helper directly (see SQL patch).
+    elif mode == 'list_categories':
+        sql = 'SELECT sp_products_list_categories();'
+
     else:
         raise ValueError(f"Unknown mode: '{mode}'")
 
-    logger.info(f"Built sp_products query for mode='{mode}' (v4.3)")
+    logger.info(f"Built query for mode='{mode}' (sql_builder v4.4)")
     logger.debug(f"SQL: {sql[:300]}")
 
     debug_info = {

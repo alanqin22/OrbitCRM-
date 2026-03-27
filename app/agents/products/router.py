@@ -1,7 +1,14 @@
 """FastAPI router for the Products domain.
 
 Endpoint: POST /prod-chat
-Version:  2.2.0
+Version:  2.3.0
+
+v2.3: list_categories support (Amazon-style search bar dropdown)
+      + 'list_categories' added to _REPORT_MODE_MAP so the mode is
+        correctly reflected in ProductChatResponse.reportMode.
+      + ProductData.search field added so the list_products context
+        can forward pd.search through to the pre-router / sql_builder
+        (needed by the home-page and list-page category+text search).
 
 v2.2: Added image_url field to ProductData so the product_direct_operation
       create_product / update_product contexts can forward pd.image_url
@@ -59,6 +66,7 @@ class ProductData(BaseModel):
     is_active_filter: Optional[bool]  = None   # price_matrix / bulk_adjust_stock filter
     sku_filter:       Optional[str]   = None   # list / low_stock / price_matrix filter
     name_filter:      Optional[str]   = None   # list / low_stock / price_matrix filter
+    search:           Optional[str]   = None   # v2.3 — list_products text search query
     page_size:        Optional[int]   = None
     page_number:      Optional[int]   = None
     sort_field:       Optional[str]   = None
@@ -145,6 +153,7 @@ _REPORT_MODE_MAP = {
     "price_history":      "price_history",
     "price_matrix":       "price_matrix",
     "product_search":     "product_search",
+    "list_categories":    "list_categories",   # v2.3 — Amazon-style search bar dropdown
 }
 
 
@@ -157,7 +166,7 @@ async def product_health():
     return {
         "status":  "healthy",
         "module":  "products",
-        "version": "2.2.0",
+        "version": "2.3.0",
         "graph_initialized": get_graph() is not None,
     }
 
