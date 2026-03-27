@@ -1,4 +1,12 @@
-"""Response formatter for Product Management — aligned with n8n Format Response v3.3.
+"""Response formatter for Product Management — aligned with n8n Format Response v3.4.
+
+v3.4 (list_categories mode — Amazon-style search bar dropdown):
+  + list_categories mode: returns a machine-parseable output consumed by
+    the HTML frontend _loadCategories() to populate the category dropdown.
+    Output format: "[MODE:list_categories]\n[{...}]" (JSON array on line 2).
+    The frontend parses this response directly and never renders it into
+    responseBox. Handles both sp_products_list_categories() response key
+    and the generic 'result' / raw row fallback.
 
 v3.3 (gallery images in list mode):
   + list mode: sp_products v3g now returns images[] per product via a
@@ -29,16 +37,23 @@ v3.0:
   + Normalised product fields.
   + Price order: Retail → Promo → Wholesale (hide missing).
 
-All 10 modes supported:
+All 11 modes supported:
   list, get_details, add, create, update,
   bulk_adjust_stock, inventory_summary, low_stock,
-  price_history, price_matrix, product_search.
+  price_history, price_matrix, product_search,
+  list_categories.
 """
 
 import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote as _url_quote
+
+# Relative path prefix for product images.
+# Images live at  <web-root>/image/<category>/<product>/image_N.jpg
+# Using a relative path makes the site portable (local dev + any remote host).
+_IMAGE_BASE_URL = "image"
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +134,27 @@ def _md_table(headers: List[str], rows: List[List[str]]) -> str:
     return '\n'.join(lines)
 
 
+def _build_image_gallery(product_name: str, category_name: str) -> list:
+    """Construct 5 standard image-record dicts from the hemera.canspace.ca upload pattern.
+
+    Used as a fallback when sp_products returns no images[] for a product.
+    URLs follow the pattern uploaded by upload_cpanel.py:
+        {IMAGE_BASE_URL}/{category}/{product_name}/image_N.jpg
+    """
+    if not product_name or not category_name:
+        return []
+    cat_enc  = _url_quote(category_name,  safe='')
+    name_enc = _url_quote(product_name,   safe='')
+    return [
+        {
+            'sort_order': i,
+            'image_url':  f"{_IMAGE_BASE_URL}/{cat_enc}/{name_enc}/image_{i}.jpg",
+            'alt_text':   f"{product_name} - image {i}",
+        }
+        for i in range(1, 6)
+    ]
+
+
 def _normalise_product(p: dict) -> dict:
     """Normalise stored-procedure product shape to a consistent internal shape."""
     if not p:
@@ -127,11 +163,18 @@ def _normalise_product(p: dict) -> dict:
     # images[] — full gallery array keyed by sort_order (v3.2)
     images = p.get('images') or []
 
+    # If the SP returned no images[], construct them from the known upload pattern
+    # so the gallery works before (or instead of) running update_product_images.sql.
+    if not images:
+        images = _build_image_gallery(
+            p.get('product_name') or '',
+            p.get('category_name') or '',
+        )
+
     # primary_image_url: prefer the explicit top-level field the SP returns,
     # fall back to images[sort_order=1] so both SP shapes work without change.
     primary_image_url = p.get('primary_image_url') or None
     if not primary_image_url and images:
-        # Find sort_order=1 first; if missing, use the first element
         sort1 = next((img for img in images
                       if isinstance(img, dict) and img.get('sort_order') == 1), None)
         candidate = sort1 or (images[0] if images else None)
@@ -155,10 +198,10 @@ def _normalise_product(p: dict) -> dict:
         'promo':             p.get('promo_price'),
         'created_at':        p.get('created_at'),
         'updated_at':        p.get('updated_at'),
-        'prices':            p.get('prices'),                # for price_matrix
-        'primary_image_url': primary_image_url,              # v3.1 + fallback
-        'image_alt_text':    p.get('image_alt_text') or None,  # v3.1
-        'images':            images,                         # v3.2 gallery
+        'prices':            p.get('prices'),
+        'primary_image_url': primary_image_url,
+        'image_alt_text':    p.get('image_alt_text') or None,
+        'images':            images,
     }
 
 
@@ -173,20 +216,27 @@ def _price_triplet(p: dict) -> str:
 
 
 def _parse_response(db_rows: List[Dict]) -> Dict:
-    """Extract the sp_products JSON response from raw DB rows."""
+    """Extract the sp_products JSON response from raw DB rows.
+
+    v3.4: also handles sp_products_list_categories response key.
+    """
     if not db_rows:
         logger.warning('_parse_response: db_rows is empty')
         return {}
     first = db_rows[0]
     logger.debug(f'_parse_response: top-level keys = {list(first.keys())}')
-    for key in ('sp_products', 'result'):
+    # Check all known SP function result keys in priority order
+    for key in ('sp_products', 'sp_products_list_categories', 'result'):
         val = first.get(key)
         if val:
             parsed = _safe_json(val) if isinstance(val, str) else val
             if isinstance(parsed, dict):
                 logger.debug(f'_parse_response: found response under "{key}", inner keys = {list(parsed.keys())}')
                 return parsed
-    logger.warning(f'_parse_response: neither "sp_products" nor "result" found in row — returning raw row. Keys: {list(first.keys())}')
+    logger.warning(
+        f'_parse_response: no known SP key found in row — returning raw row. '
+        f'Keys: {list(first.keys())}'
+    )
     return first
 
 
@@ -255,7 +305,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
     response = _parse_response(db_rows)
     metadata = response.get('metadata', {})
 
-    logger.info(f'Format Response (sp_products v3.3) — mode={mode}')
+    logger.info(f'Format Response (sp_products v3.4) — mode={mode}')
 
     # ── Error short-circuit ───────────────────────────────────────────────────
     if metadata.get('status') == 'error' or (
@@ -272,6 +322,25 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
         )
 
     out: List[str] = []
+
+    # ── list_categories (v3.4) — machine-readable JSON for dropdown ──────────
+    # Never rendered to the user — the HTML _loadCategories() function parses
+    # [MODE:list_categories] from output and populates the category <select>.
+    if mode == 'list_categories':
+        cats = response.get('categories') or []
+        logger.info(f'list_categories: {len(cats)} categories returned')
+        # Normalise to the shape the HTML expects
+        normalised = [
+            {
+                'category_id':     str(c.get('category_id') or ''),
+                'category_number': c.get('category_number'),
+                'category_name':   c.get('category_name') or '',
+            }
+            for c in cats
+        ]
+        out.append('[MODE:list_categories]')
+        out.append(json.dumps(normalised))
+        return '\n'.join(out)
 
     # ── product_search — typeahead compact table ──────────────────────────────
     if mode == 'product_search':
@@ -369,7 +438,6 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
         raw_product = response.get('product')
         p = _normalise_product(raw_product) if raw_product else {}
         history = response.get('price_history') or []
-        # Capture full gallery array (sort_order 1-N) returned by sp_products — v3.2
         gallery_images = (raw_product or {}).get('images') or []
         out.append('**[MODE:get_details] Product Details**')
         out.append('')
@@ -512,11 +580,9 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
 
     # ── low_stock ─────────────────────────────────────────────────────────────
     if mode == 'low_stock':
-        # Remote and local sp_products may return the array under different keys.
-        # Try all plausible names so both instances work without code changes.
         raw_list = (
-            response.get('alerts') or          # local sp_products key
-            response.get('products') or         # common alternative
+            response.get('alerts') or
+            response.get('products') or
             response.get('low_stock_items') or
             response.get('items') or
             response.get('data') or
@@ -556,10 +622,6 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
                 rows,
             ))
         else:
-            # Nothing found under any known key.
-            # Emit a diagnostic block so the user sees the raw response
-            # structure — this makes it easy to identify the actual key
-            # name the remote sp_products uses for low-stock data.
             all_keys = list(response.keys())
             out.append('_No low stock products found._')
             if all_keys:
