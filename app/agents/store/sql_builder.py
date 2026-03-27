@@ -226,10 +226,9 @@ def build_store_query(params: Dict[str, Any]) -> Tuple[str, Dict]:
 ) AS result;""".strip()
 
         elif mode == "get_active_categories":
-            sql = f"""SELECT sp_store(
-  p_mode   := 'get_active_categories',
-  p_search := {_esc(p.get("search"))}
-) AS result;""".strip()
+            # sp_store is not yet installed on Railway; use sp_products_list_categories()
+            # which returns the same {metadata, categories:[]} envelope.
+            sql = "SELECT sp_products_list_categories() AS result;"
 
         elif mode == "get_invoice_by_order":
             sql = f"""SELECT sp_store(
