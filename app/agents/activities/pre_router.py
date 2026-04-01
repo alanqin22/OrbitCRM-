@@ -113,12 +113,14 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
         include_completed = chat_input.get('includeCompleted')
         if include_completed is None:
             include_completed = True
+        only_completed = _val(chat_input.get('onlyCompleted'))
         return _routed({
             'mode':             'list',
             'pageNumber':       _val(chat_input.get('pageNumber')) or 1,
             'pageSize':         _val(chat_input.get('pageSize'))   or 50,
             'search':           _val(chat_input.get('search')),
             'includeCompleted': include_completed,
+            'onlyCompleted':    only_completed,
         })
 
     # ── "overdue activities:" ────────────────────────────────────────────────
