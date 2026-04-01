@@ -62,6 +62,7 @@ VALID_PARAMS = {
     'completedAt',
     'completed',
     'complete',
+    'onlyCompleted',
 }
 
 JSONB_PARAMS = {'payload'}
@@ -93,8 +94,9 @@ VALID_CHANNELS   = {'phone', 'email', 'sms', 'voip', 'system', 'video'}
 
 # Explicit remapping: camelCase key → exact pg param name (overrides default conversion)
 PARAM_REMAP = {
-    'dueDate':     'p_due_at',
-    'completedAt': 'p_completed_at',
+    'dueDate':       'p_due_at',
+    'completedAt':   'p_completed_at',
+    'onlyCompleted': 'p_only_completed',
 }
 
 
