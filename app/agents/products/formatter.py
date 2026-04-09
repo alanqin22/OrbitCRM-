@@ -50,10 +50,9 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote as _url_quote
 
-# Relative path prefix for product images.
-# Images live at  <web-root>/image/<category>/<product>/image_N.jpg
-# Using a relative path makes the site portable (local dev + any remote host).
-_IMAGE_BASE_URL = "image"
+# Absolute base URL for product images on agentorc.ca.
+# Must be absolute so URLs work regardless of which page path renders them.
+_IMAGE_BASE_URL = "https://agentorc.ca/image"
 
 logger = logging.getLogger(__name__)
 
