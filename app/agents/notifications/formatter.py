@@ -285,7 +285,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
 
                 # Determine read/unread status
                 status     = n.get('status') or ''
-                is_unread  = status in ('sent', 'unread')
+                is_unread  = status in ('pending', 'sent', 'unread')
                 status_txt = '**🟢 Unread**' if is_unread else 'Read'
 
                 emp_uuid   = n.get('employee_uuid') or '—'
