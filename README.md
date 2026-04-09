@@ -1,6 +1,6 @@
 # CRM Agent
 
-Unified CRM AI Agent — all domain agents (accounts, contacts, and 8 future
+Orbit CRM AI Agent — all domain agents (accounts, contacts, and 8 future
 modules) running on a single FastAPI + LangGraph server.
 
 ---
@@ -15,7 +15,7 @@ crm_agent/
 └── app/
     ├── main.py                    ← FastAPI app — registers all routers
     ├── core/                      ← Shared utilities (zero duplication)
-    │   ├── config.py              ← Unified Settings (pydantic-settings)
+    │   ├── config.py              ← Orbit Settings (pydantic-settings)
     │   ├── database.py            ← Generic execute_sp() + test_connection()
     │   ├── memory.py              ← Shared session memory (rolling window)
     │   └── graph_utils.py         ← AgentState, LLM factory, JSON parser,

@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign In — Orbit CRM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* ═══════════════════════════════════════════════════════════════════
+       DESIGN TOKENS — bright store-home theme
+       ═══════════════════════════════════════════════════════════════════ */
+    :root {
+      --bg-page:        #F0F4F8;
+      --bg-card:        #FFFFFF;
+      --bg-input:       rgba(0,0,0,0.04);
+      --bg-input-focus: rgba(13,148,136,0.06);
+      --border-subtle:  rgba(0,0,0,0.08);
+      --border-default: rgba(0,0,0,0.14);
+      --border-focus:   rgba(13,148,136,0.6);
+      --border-error:   rgba(220,38,38,0.7);
+      --text-primary:   #111827;
+      --text-secondary: #4B5563;
+      --text-muted:     #9CA3AF;
+      --text-accent:    #0d9488;
+      --accent-teal:    #0d9488;
+      --accent-emerald: #34D399;
+      --grad-header:    linear-gradient(135deg,#0f766e 0%,#0d9488 50%,#14b8a6 100%);
+      --grad-btn:       linear-gradient(135deg,#0f766e 0%,#0d9488 50%,#14b8a6 100%);
+      --shadow-card:    0 2px 16px rgba(0,0,0,0.09),0 1px 4px rgba(0,0,0,0.05);
+      --shadow-btn:     0 4px 18px rgba(13,148,136,0.35),0 2px 6px rgba(0,0,0,0.12);
+      --radius-md:  10px;
+      --radius-lg:  16px;
+      --radius-xl:  20px;
+      --radius-pill:999px;
+      --font-ui:    'Outfit', 'Segoe UI', system-ui, sans-serif;
+      --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: var(--font-ui);
+      background: var(--bg-page);
+      color: var(--text-primary);
+      display: flex;
+      flex-direction: column;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
+      font-weight: 400;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════
+       HEADER
+       ═══════════════════════════════════════════════════════════════════ */
+    header {
+      background: var(--grad-header);
+      color: white;
+      padding: 0.5rem 1.25rem;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 1rem;
+      box-shadow: 0 2px 20px rgba(20,184,166,0.4);
+      z-index: 10;
+      flex-shrink: 0;
+    }
+    .header-logo { height: 36px; width: auto; display: block; }
+    .header-title-center {
+      text-align: center;
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: white;
+      white-space: nowrap;
+    }
+    .header-right {
+      display: flex; align-items: center; justify-content: flex-end;
+      font-size: 0.78rem; color: rgba(255,255,255,0.9);
+      gap: 0.3rem;
+    }
+    .header-right button {
+      background: rgba(255,255,255,0.18);
+      border: 1px solid rgba(255,255,255,0.35);
+      color: white;
+      font-family: var(--font-ui);
+      font-size: 0.75rem; font-weight: 600;
+      cursor: pointer; padding: 0.22rem 0.7rem;
+      border-radius: var(--radius-pill);
+      transition: background var(--transition);
+    }
+    .header-right button:hover { background: rgba(255,255,255,0.3); }
+
+    /* ═══════════════════════════════════════════════════════════════════
+       MAIN — centred single-column
+       ═══════════════════════════════════════════════════════════════════ */
+    .auth-root {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 2.5rem 1rem 3rem;
+    }
+
+    /* ── Auth card ───────────────────────────────────────────────── */
+    .auth-card {
+      width: 480px;
+      max-width: 100%;
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-xl);
+      padding: 2rem 2rem 1.75rem;
+      box-shadow: var(--shadow-card);
+      position: relative;
+      overflow: hidden;
+    }
+    .auth-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0; height: 3px;
+      background: var(--grad-btn);
+    }
+
+    /* ── Tabs ────────────────────────────────────────────────────── */
+    .auth-tabs {
+      display: flex; gap: 0.2rem;
+      margin-bottom: 1.75rem;
+      background: rgba(0,0,0,0.04);
+      border-radius: var(--radius-md);
+      padding: 4px;
+      border: 1px solid var(--border-subtle);
+    }
+    .auth-tab {
+      flex: 1; padding: 0.48rem 0.5rem;
+      border: none; border-radius: calc(var(--radius-md) - 2px);
+      background: transparent; color: var(--text-secondary);
+      font-family: var(--font-ui); font-size: 0.82rem; font-weight: 600;
+      cursor: pointer; transition: var(--transition); text-align: center;
+    }
+    .auth-tab.active {
+      background: white;
+      color: var(--accent-teal);
+      box-shadow: 0 1px 6px rgba(0,0,0,0.10);
+    }
+    .auth-tab:hover:not(.active) { color: var(--text-primary); background: rgba(0,0,0,0.04); }
+
+    /* ── Form panels ─────────────────────────────────────────────── */
+    .auth-panels { position: relative; }
+    .auth-panel { display: none; flex-direction: column; gap: 1rem; animation: panel-in 0.22s ease; }
+    .auth-panel.active { display: flex; }
+    @keyframes panel-in { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+
+    /* ── Panel titles ────────────────────────────────────────────── */
+    .panel-title   { font-size: 1.1rem; font-weight: 700; color: var(--text-primary); }
+    .panel-subtitle { font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.15rem; line-height: 1.5; }
+
+    /* ── Field groups ────────────────────────────────────────────── */
+    .field-group { display: flex; flex-direction: column; gap: 0.28rem; }
+    .field-row   { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+    .field-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.65rem; }
+    label.field-label {
+      font-size: 0.75rem; font-weight: 600;
+      color: var(--text-secondary); letter-spacing: 0.02em;
+    }
+    .input-wrap { position: relative; display: flex; align-items: center; }
+    .input-wrap .input-icon {
+      position: absolute; left: 10px;
+      color: var(--text-muted); font-size: 13px; pointer-events: none; z-index: 1;
+    }
+    input[type="text"],
+    input[type="email"],
+    input[type="tel"],
+    input[type="password"] {
+      width: 100%;
+      padding: 0.6rem 0.9rem 0.6rem 2.05rem;
+      background: var(--bg-input);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      color: var(--text-primary);
+      font-family: var(--font-ui); font-size: 0.86rem; font-weight: 400;
+      outline: none; transition: var(--transition);
+      -webkit-appearance: none;
+    }
+    input.no-icon { padding-left: 0.9rem; }
+    input:focus {
+      border-color: var(--border-focus);
+      background: var(--bg-input-focus);
+      box-shadow: 0 0 0 3px rgba(13,148,136,0.12);
+    }
+    input.error { border-color: var(--border-error); background: rgba(220,38,38,0.04); }
+    input::placeholder { color: var(--text-muted); font-weight: 400; }
+    .toggle-pw {
+      position: absolute; right: 10px;
+      background: none; border: none; cursor: pointer;
+      color: var(--text-muted); font-size: 13px; padding: 0 2px;
+      transition: color var(--transition);
+    }
+    .toggle-pw:hover { color: var(--text-secondary); }
+
+    /* ── Section divider in form ─────────────────────────────────── */
+    .form-section-label {
+      font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--text-muted);
+      border-bottom: 1px solid var(--border-subtle);
+      padding-bottom: 0.35rem; margin-top: 0.25rem;
+    }
+
+    /* ── Password match indicator ────────────────────────────────── */
+    .pw-match-hint {
+      font-size: 0.72rem; font-weight: 500;
+      min-height: 1em;
+      transition: color var(--transition);
+    }
+    .pw-match-hint.ok    { color: #059669; }
+    .pw-match-hint.mismatch { color: #DC2626; }
+
+    /* ── Password strength bar ───────────────────────────────────── */
+    .pw-strength-wrap { display: none; flex-direction: column; gap: 4px; }
+    .pw-strength-wrap.visible { display: flex; }
+    .pw-strength-bar { height: 3px; border-radius: 999px; background: rgba(0,0,0,0.08); overflow: hidden; }
+    .pw-strength-fill { height: 100%; border-radius: 999px; width: 0%; transition: width 0.3s, background 0.3s; }
+    .pw-strength-label { font-size: 0.69rem; color: var(--text-muted); font-weight: 500; }
+
+    /* ── Checkbox ────────────────────────────────────────────────── */
+    .check-row {
+      display: flex; align-items: center; gap: 0.5rem;
+      font-size: 0.79rem; color: var(--text-secondary); font-weight: 400;
+    }
+    .check-row input[type="checkbox"] {
+      width: 15px; height: 15px; accent-color: var(--accent-teal); padding: 0; cursor: pointer;
+    }
+    .check-row a { color: var(--text-accent); text-decoration: none; font-weight: 500; }
+    .check-row a:hover { text-decoration: underline; }
+
+    /* ── Primary button ──────────────────────────────────────────── */
+    .btn-primary {
+      width: 100%; padding: 0.72rem 1rem;
+      background: var(--grad-btn);
+      border: none; border-radius: var(--radius-md);
+      color: white; font-family: var(--font-ui);
+      font-size: 0.9rem; font-weight: 700;
+      cursor: pointer; box-shadow: var(--shadow-btn);
+      transition: var(--transition); position: relative; overflow: hidden;
+    }
+    .btn-primary:hover::after { background: rgba(255,255,255,0.08); }
+    .btn-primary::after { content:'';position:absolute;inset:0;background:rgba(255,255,255,0);transition:background var(--transition); }
+    .btn-primary:active { transform: scale(0.986); }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary .btn-spinner {
+      display: none; width: 15px; height: 15px;
+      border: 2px solid rgba(255,255,255,0.35); border-top-color: white;
+      border-radius: 50%; animation: spin 0.7s linear infinite; margin: 0 auto;
+    }
+    .btn-primary.loading .btn-text    { display: none; }
+    .btn-primary.loading .btn-spinner { display: block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Link row ────────────────────────────────────────────────── */
+    .link-row { text-align: center; font-size: 0.79rem; color: var(--text-secondary); }
+    .link-row button {
+      background: none; border: none; color: var(--text-accent);
+      font-family: var(--font-ui); font-size: inherit; font-weight: 600;
+      cursor: pointer; padding: 0; text-decoration: underline; text-underline-offset: 2px;
+    }
+    .link-row button:hover { color: #0f766e; }
+
+    /* ── Toasts ──────────────────────────────────────────────────── */
+    #toast-container {
+      position: fixed; top: 64px; right: 1.25rem;
+      z-index: 9999; display: flex; flex-direction: column; gap: 0.5rem; pointer-events: none;
+    }
+    .toast {
+      min-width: 280px; max-width: 380px; padding: 0.75rem 1rem;
+      border-radius: var(--radius-md); font-size: 0.83rem; font-weight: 500;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+      display: flex; align-items: flex-start; gap: 0.6rem;
+      animation: toast-in 0.3s ease; pointer-events: auto;
+    }
+    .toast.success { background: #ECFDF5; color: #065F46; border: 1px solid #6EE7B7; }
+    .toast.error   { background: #FEF2F2; color: #991B1B; border: 1px solid #FCA5A5; }
+    .toast.info    { background: #F0FDFA; color: #134E4A; border: 1px solid #99F6E4; }
+    .toast .toast-icon  { font-size: 15px; flex-shrink: 0; margin-top: 1px; }
+    .toast .toast-body  { flex: 1; line-height: 1.48; }
+    .toast .toast-close { background:none;border:none;color:inherit;cursor:pointer;opacity:0.55;font-size:17px;padding:0;line-height:1;flex-shrink:0; }
+    .toast .toast-close:hover { opacity: 1; }
+    @keyframes toast-in  { from{opacity:0;transform:translateX(18px)} to{opacity:1;transform:translateX(0)} }
+    @keyframes toast-out { from{opacity:1;transform:translateX(0)}    to{opacity:0;transform:translateX(18px)} }
+
+    /* ── Responsive ──────────────────────────────────────────────── */
+    @media (max-width: 520px) {
+      .auth-root  { padding: 1rem 0.75rem 2rem; }
+      .auth-card  { padding: 1.5rem 1.25rem; border-radius: var(--radius-lg); }
+      .field-row, .field-row-3 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ════════════════════════════════════════════════════════════
+       HEADER
+       ════════════════════════════════════════════════════════════ -->
+  <header>
+    <div>
+      <img src="logo/AgentOrc-logo-white.png" alt="AgentOrc" class="header-logo"
+           onerror="this.style.display='none'">
+    </div>
+    <div class="header-title-center">🪐 Orbit CRM</div>
+    <div class="header-right" id="header-right">
+      New here?&nbsp;<button onclick="switchTab('signup')">Create account</button>
+    </div>
+  </header>
+
+  <!-- Toast container -->
+  <div id="toast-container"></div>
+
+  <!-- ════════════════════════════════════════════════════════════
+       MAIN — single centered card
+       ════════════════════════════════════════════════════════════ -->
+  <div class="auth-root">
+    <div class="auth-card" id="auth-card">
+
+      <!-- Tab switcher -->
+      <div class="auth-tabs" role="tablist">
+        <button class="auth-tab active" id="tab-signin" onclick="switchTab('signin')" role="tab">Sign In</button>
+        <button class="auth-tab"        id="tab-signup" onclick="switchTab('signup')" role="tab">Sign Up</button>
+        <button class="auth-tab"        id="tab-reset"  onclick="switchTab('reset')"  role="tab">Reset</button>
+      </div>
+
+      <div class="auth-panels">
+
+        <!-- ═══════════ SIGN IN ═══════════ -->
+        <div class="auth-panel active" id="panel-signin">
+          <div>
+            <div class="panel-title">Welcome back</div>
+            <div class="panel-subtitle">Sign in to your Orbit CRM account</div>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label" for="si-email">Email</label>
+            <div class="input-wrap">
+              <span class="input-icon">✉</span>
+              <input id="si-email" type="email" placeholder="you@company.com"
+                     autocomplete="username" spellcheck="false">
+            </div>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label" for="si-password">Password</label>
+            <div class="input-wrap">
+              <span class="input-icon">🔑</span>
+              <input id="si-password" type="password" placeholder="••••••••"
+                     autocomplete="current-password">
+              <button class="toggle-pw" type="button" onclick="togglePw('si-password',this)" title="Show/hide">👁</button>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <label class="check-row">
+              <input type="checkbox" id="si-remember"> Remember me
+            </label>
+            <button class="link-row" style="font-size:0.75rem" onclick="switchTab('reset')">Forgot password?</button>
+          </div>
+
+          <button class="btn-primary" id="btn-signin" onclick="doSignIn()">
+            <span class="btn-text">Sign In</span>
+            <div class="btn-spinner"></div>
+          </button>
+
+          <div class="link-row">
+            Don't have an account? <button onclick="switchTab('signup')">Create one</button>
+          </div>
+        </div>
+
+        <!-- ═══════════ SIGN UP ═══════════ -->
+        <div class="auth-panel" id="panel-signup">
+          <div>
+            <div class="panel-title">Create account</div>
+            <div class="panel-subtitle">Join Orbit CRM — free to start</div>
+          </div>
+
+          <!-- Name -->
+          <div class="field-row">
+            <div class="field-group">
+              <label class="field-label" for="su-first">First name *</label>
+              <div class="input-wrap">
+                <span class="input-icon">👤</span>
+                <input id="su-first" type="text" placeholder="Ada" autocomplete="given-name">
+              </div>
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="su-last">Last name *</label>
+              <div class="input-wrap">
+                <span class="input-icon">👤</span>
+                <input id="su-last" type="text" placeholder="Lovelace" autocomplete="family-name">
+              </div>
+            </div>
+          </div>
+
+          <!-- Company & Phone -->
+          <div class="field-row">
+            <div class="field-group">
+              <label class="field-label" for="su-company">Company</label>
+              <div class="input-wrap">
+                <span class="input-icon">🏢</span>
+                <input id="su-company" type="text" placeholder="Acme Corp (optional)" autocomplete="organization">
+              </div>
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="su-phone">Phone</label>
+              <div class="input-wrap">
+                <span class="input-icon">📞</span>
+                <input id="su-phone" type="tel" placeholder="+1 555 000 0000" autocomplete="tel">
+              </div>
+            </div>
+          </div>
+
+          <!-- Email -->
+          <div class="field-group">
+            <label class="field-label" for="su-email">Email *</label>
+            <div class="input-wrap">
+              <span class="input-icon">✉</span>
+              <input id="su-email" type="email" placeholder="you@company.com"
+                     autocomplete="email" spellcheck="false">
+            </div>
+          </div>
+
+          <!-- Address -->
+          <div class="form-section-label">Shipping Address</div>
+
+          <div class="field-group">
+            <label class="field-label" for="su-addr1">Address line 1</label>
+            <div class="input-wrap">
+              <span class="input-icon">📍</span>
+              <input id="su-addr1" type="text" placeholder="123 Main St" autocomplete="address-line1">
+            </div>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label" for="su-addr2">Address line 2</label>
+            <div class="input-wrap">
+              <span class="input-icon">📍</span>
+              <input id="su-addr2" type="text" placeholder="Suite 100 (optional)" autocomplete="address-line2">
+            </div>
+          </div>
+
+          <div class="field-row">
+            <div class="field-group">
+              <label class="field-label" for="su-city">City</label>
+              <div class="input-wrap">
+                <span class="input-icon">🏙</span>
+                <input id="su-city" type="text" placeholder="Toronto" autocomplete="address-level2">
+              </div>
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="su-province">Province / State</label>
+              <div class="input-wrap">
+                <span class="input-icon">🗺</span>
+                <input id="su-province" type="text" placeholder="ON" autocomplete="address-level1">
+              </div>
+            </div>
+          </div>
+
+          <div class="field-row">
+            <div class="field-group">
+              <label class="field-label" for="su-postal">Postal / ZIP</label>
+              <div class="input-wrap">
+                <span class="input-icon">📮</span>
+                <input id="su-postal" type="text" placeholder="M5V 1A1" autocomplete="postal-code">
+              </div>
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="su-country">Country</label>
+              <div class="input-wrap">
+                <span class="input-icon">🌍</span>
+                <input id="su-country" type="text" placeholder="Canada" autocomplete="country-name">
+              </div>
+            </div>
+          </div>
+
+          <!-- Password -->
+          <div class="form-section-label">Password</div>
+
+          <div class="field-group">
+            <label class="field-label" for="su-password">Create password *</label>
+            <div class="input-wrap">
+              <span class="input-icon">🔑</span>
+              <input id="su-password" type="password" placeholder="Min. 8 characters"
+                     autocomplete="new-password" oninput="checkStrength(this.value);checkMatch()">
+              <button class="toggle-pw" type="button" onclick="togglePw('su-password',this)" title="Show/hide">👁</button>
+            </div>
+            <div class="pw-strength-wrap" id="pw-strength">
+              <div class="pw-strength-bar"><div class="pw-strength-fill" id="pw-fill"></div></div>
+              <div class="pw-strength-label" id="pw-label">Password strength</div>
+            </div>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label" for="su-confirm">Confirm password *</label>
+            <div class="input-wrap">
+              <span class="input-icon">🔑</span>
+              <input id="su-confirm" type="password" placeholder="Re-enter password"
+                     autocomplete="new-password" oninput="checkMatch()">
+              <button class="toggle-pw" type="button" onclick="togglePw('su-confirm',this)" title="Show/hide">👁</button>
+            </div>
+            <div class="pw-match-hint" id="pw-match-hint"></div>
+          </div>
+
+          <div class="check-row">
+            <input type="checkbox" id="su-terms">
+            I agree to the <a href="/legal-notice.html" target="_blank">Terms</a> and
+            <a href="/privacy-policy.html" target="_blank">Privacy Policy</a>
+          </div>
+
+          <button class="btn-primary" id="btn-signup" onclick="doSignUp()" disabled>
+            <span class="btn-text">Create Account</span>
+            <div class="btn-spinner"></div>
+          </button>
+
+          <div class="link-row">
+            Already have an account? <button onclick="switchTab('signin')">Sign in</button>
+          </div>
+        </div>
+
+        <!-- ═══════════ RESET PASSWORD ═══════════ -->
+        <div class="auth-panel" id="panel-reset">
+          <div>
+            <div class="panel-title">Reset password</div>
+            <div class="panel-subtitle" id="reset-subtitle">Enter your email to receive a reset link</div>
+          </div>
+
+          <!-- Step 1 -->
+          <div id="reset-step1">
+            <div class="field-group" style="margin-bottom:1rem">
+              <label class="field-label" for="rs-email">Email address</label>
+              <div class="input-wrap">
+                <span class="input-icon">✉</span>
+                <input id="rs-email" type="email" placeholder="you@company.com"
+                       autocomplete="email" spellcheck="false">
+              </div>
+            </div>
+            <button class="btn-primary" id="btn-reset-req" onclick="doResetRequest()">
+              <span class="btn-text">Send Reset Link</span>
+              <div class="btn-spinner"></div>
+            </button>
+          </div>
+
+          <!-- Step 2 -->
+          <div id="reset-step2" style="display:none;flex-direction:column;gap:1rem">
+            <div class="field-group">
+              <label class="field-label" for="rs-token">Reset token</label>
+              <div class="input-wrap">
+                <span class="input-icon">🎫</span>
+                <input id="rs-token" type="text" placeholder="Paste token from email"
+                       autocomplete="off" spellcheck="false">
+              </div>
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="rs-newpw">New password</label>
+              <div class="input-wrap">
+                <span class="input-icon">🔑</span>
+                <input id="rs-newpw" type="password" placeholder="Min. 8 characters"
+                       autocomplete="new-password">
+                <button class="toggle-pw" type="button" onclick="togglePw('rs-newpw',this)" title="Show/hide">👁</button>
+              </div>
+            </div>
+            <button class="btn-primary" id="btn-reset-conf" onclick="doResetConfirm()">
+              <span class="btn-text">Set New Password</span>
+              <div class="btn-spinner"></div>
+            </button>
+          </div>
+
+          <div class="link-row" style="margin-top:0.2rem">
+            Remembered it? <button onclick="switchTab('signin')">Back to sign in</button>
+          </div>
+        </div>
+
+      </div><!-- /auth-panels -->
+    </div><!-- /auth-card -->
+  </div><!-- /auth-root -->
+
+<script>
+/* ════════════════════════════════════════════════════════════════════
+   CONFIG
+   ════════════════════════════════════════════════════════════════════ */
+const API_BASE    = 'http://localhost:8000';
+const SESSION_KEY = 'orbit_auth_session';   // shared with store-home.html
+
+/* ════════════════════════════════════════════════════════════════════
+   SESSION HELPERS
+   ════════════════════════════════════════════════════════════════════ */
+function saveSession(data) {
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      session_token: data.session_token,
+      credential_id: data.credential_id,
+      lead_id:       data.lead_id       || null,
+      account_id:    data.account_id    || null,
+      contact_id:    data.contact_id    || null,
+      email:         data.email || data.identifier || '',
+      first_name:    data.first_name    || '',
+      last_name:     data.last_name     || '',
+      source_table:  data.source_table  || 'leads',
+      saved_at:      Date.now(),
+    }));
+  } catch (_) {}
+}
+function getSession() {
+  try { return JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); }
+  catch (_) { return null; }
+}
+function getRedirectTarget() {
+  const p = new URLSearchParams(window.location.search);
+  const r = p.get('redirect') || '';
+  if (!r || r.startsWith('javascript') || r.startsWith('data')) return 'store-home.html';
+  // 'checkout' intent is stored in sessionStorage by store-home.html;
+  // always redirect to plain store-home.html to avoid the intent=checkout redirect loop.
+  if (r === 'checkout' || r === 'home') return 'store-home.html';
+  return r;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   ON LOAD
+   ════════════════════════════════════════════════════════════════════ */
+window.addEventListener('DOMContentLoaded', () => {
+  // Pre-select tab from URL param
+  const p = new URLSearchParams(window.location.search);
+  const tab = p.get('tab');
+  if (tab === 'signup' || tab === 'register') switchTab('signup');
+});
+
+/* ════════════════════════════════════════════════════════════════════
+   TAB SWITCHING
+   ════════════════════════════════════════════════════════════════════ */
+function switchTab(tab) {
+  document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.auth-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  document.getElementById('panel-' + tab).classList.add('active');
+  clearFieldErrors();
+  // Update header contextual link
+  const hr = document.getElementById('header-right');
+  if (tab === 'signin')
+    hr.innerHTML = 'New here?&nbsp;<button onclick="switchTab(\'signup\')">Create account</button>';
+  else
+    hr.innerHTML = 'Have an account?&nbsp;<button onclick="switchTab(\'signin\')">Sign in</button>';
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   TOGGLE PASSWORD VISIBILITY
+   ════════════════════════════════════════════════════════════════════ */
+function togglePw(id, btn) {
+  const inp = document.getElementById(id);
+  if (inp.type === 'password') { inp.type = 'text';     btn.textContent = '🙈'; }
+  else                          { inp.type = 'password'; btn.textContent = '👁'; }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   PASSWORD STRENGTH METER
+   ════════════════════════════════════════════════════════════════════ */
+function checkStrength(pw) {
+  const wrap  = document.getElementById('pw-strength');
+  const fill  = document.getElementById('pw-fill');
+  const label = document.getElementById('pw-label');
+  wrap.classList.toggle('visible', pw.length > 0);
+  if (!pw) return;
+  let score = 0;
+  if (pw.length >= 8)            score++;
+  if (pw.length >= 12)           score++;
+  if (/[A-Z]/.test(pw))          score++;
+  if (/[0-9]/.test(pw))          score++;
+  if (/[^A-Za-z0-9]/.test(pw))  score++;
+  const levels = [
+    { w:'20%',  c:'#ef4444', l:'Very weak'  },
+    { w:'40%',  c:'#f97316', l:'Weak'       },
+    { w:'60%',  c:'#eab308', l:'Fair'       },
+    { w:'80%',  c:'#22c55e', l:'Good'       },
+    { w:'100%', c:'#10b981', l:'Strong ✓'  },
+  ];
+  const lvl = levels[Math.min(score, 4)];
+  fill.style.width      = lvl.w;
+  fill.style.background = lvl.c;
+  label.style.color     = lvl.c;
+  label.textContent     = lvl.l;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   PASSWORD MATCH VALIDATION — real-time; controls submit button
+   ════════════════════════════════════════════════════════════════════ */
+function checkMatch() {
+  const pw  = document.getElementById('su-password').value;
+  const cpw = document.getElementById('su-confirm').value;
+  const hint = document.getElementById('pw-match-hint');
+  const btn  = document.getElementById('btn-signup');
+
+  if (!cpw) { hint.textContent = ''; hint.className = 'pw-match-hint'; btn.disabled = true; return; }
+
+  if (pw === cpw) {
+    hint.textContent = '✓ Passwords match';
+    hint.className = 'pw-match-hint ok';
+    btn.disabled = false;
+  } else {
+    hint.textContent = '✗ Passwords do not match';
+    hint.className = 'pw-match-hint mismatch';
+    btn.disabled = true;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   TOASTS
+   ════════════════════════════════════════════════════════════════════ */
+function toast(message, type = 'info', duration = 4500) {
+  const icons = { success:'✅', error:'❌', info:'ℹ️' };
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.innerHTML = `
+    <span class="toast-icon">${icons[type]||'ℹ️'}</span>
+    <div class="toast-body">${escHtml(message)}</div>
+    <button class="toast-close" onclick="this.parentElement.remove()">×</button>`;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => {
+    el.style.animation = 'toast-out 0.3s ease forwards';
+    setTimeout(() => el.remove(), 300);
+  }, duration);
+}
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   FIELD ERROR HELPERS
+   ════════════════════════════════════════════════════════════════════ */
+function setError(id, msg) {
+  const el = document.getElementById(id);
+  if (el) { el.classList.add('error'); el.title = msg || ''; }
+}
+function clearFieldErrors() {
+  document.querySelectorAll('input.error').forEach(e => { e.classList.remove('error'); e.title = ''; });
+}
+function validateEmail(s) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim()); }
+
+/* ════════════════════════════════════════════════════════════════════
+   BUTTON LOADING STATE
+   ════════════════════════════════════════════════════════════════════ */
+function setLoading(id, on) {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  btn.disabled = on;
+  btn.classList.toggle('loading', on);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   API HELPER
+   ════════════════════════════════════════════════════════════════════ */
+async function apiPost(path, body) {
+  const res = await fetch(API_BASE + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   SIGN IN
+   ════════════════════════════════════════════════════════════════════ */
+async function doSignIn() {
+  clearFieldErrors();
+  const identifier = document.getElementById('si-email').value.trim();
+  const password   = document.getElementById('si-password').value;
+
+  let valid = true;
+  if (!identifier)               { setError('si-email', 'Email is required'); valid = false; }
+  else if (!validateEmail(identifier)) { setError('si-email', 'Enter a valid email'); valid = false; }
+  if (!password)                 { setError('si-password', 'Password is required'); valid = false; }
+  if (!valid) { toast('Please fill in all required fields', 'error'); return; }
+
+  setLoading('btn-signin', true);
+  try {
+    const { ok, status, data } = await apiPost('/auth/signin', { identifier, password });
+    if (ok && data.success) {
+      saveSession(data);
+      const name = data.first_name ? `, ${data.first_name}` : '';
+      toast(`Signed in successfully${name}!`, 'success', 2500);
+      document.getElementById('header-right').innerHTML =
+        `<span style="color:white;font-size:0.75rem;opacity:0.9">✓ ${escHtml(data.email || identifier)}</span>`;
+      setTimeout(() => { window.location.href = getRedirectTarget(); }, 1600);
+    } else {
+      if (status === 401) {
+        setError('si-email', ''); setError('si-password', '');
+        toast('Invalid email or password', 'error');
+      } else {
+        toast(data.detail || data.message || 'Sign in failed', 'error');
+      }
+    }
+  } catch (_) {
+    toast('Network error — is the server running?', 'error');
+  } finally {
+    setLoading('btn-signin', false);
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   SIGN UP
+   ════════════════════════════════════════════════════════════════════ */
+async function doSignUp() {
+  clearFieldErrors();
+
+  const first_name      = document.getElementById('su-first').value.trim();
+  const last_name       = document.getElementById('su-last').value.trim();
+  const company_name    = document.getElementById('su-company').value.trim();
+  const phone           = document.getElementById('su-phone').value.trim();
+  const identifier      = document.getElementById('su-email').value.trim();
+  const address_line1   = document.getElementById('su-addr1').value.trim();
+  const address_line2   = document.getElementById('su-addr2').value.trim();
+  const city            = document.getElementById('su-city').value.trim();
+  const province        = document.getElementById('su-province').value.trim();
+  const postal_code     = document.getElementById('su-postal').value.trim();
+  const country         = document.getElementById('su-country').value.trim();
+  const password        = document.getElementById('su-password').value;
+  const confirm_password = document.getElementById('su-confirm').value;
+  const terms           = document.getElementById('su-terms').checked;
+
+  let valid = true;
+  if (!first_name) { setError('su-first',   'Required'); valid = false; }
+  if (!last_name)  { setError('su-last',    'Required'); valid = false; }
+  if (!identifier || !validateEmail(identifier)) { setError('su-email', 'Enter a valid email'); valid = false; }
+  if (!password || password.length < 8) { setError('su-password', 'Min. 8 characters'); valid = false; }
+  if (password !== confirm_password) { setError('su-confirm', 'Passwords do not match'); valid = false; }
+  if (!terms) { toast('Please accept the Terms and Privacy Policy', 'error'); valid = false; }
+  if (!valid) { toast('Please fix the errors above', 'error'); return; }
+
+  setLoading('btn-signup', true);
+  try {
+    const { ok, status, data } = await apiPost('/auth/signup', {
+      identifier, password, confirm_password,
+      first_name, last_name,
+      company_name: company_name || undefined,
+      phone:         phone        || undefined,
+      address_line1: address_line1 || undefined,
+      address_line2: address_line2 || undefined,
+      city:          city         || undefined,
+      province:      province     || undefined,
+      postal_code:   postal_code  || undefined,
+      country:       country      || undefined,
+    });
+    if (ok && data.success) {
+      saveSession(data);
+      toast(`Welcome to Orbit CRM, ${data.first_name || 'there'}! 🪐`, 'success', 3000);
+      setTimeout(() => { window.location.href = getRedirectTarget(); }, 2200);
+    } else {
+      if (status === 409) {
+        setError('su-email', 'Already registered');
+        toast('That email is already registered — try signing in instead', 'error');
+      } else {
+        toast(data.detail || data.message || 'Registration failed', 'error');
+      }
+    }
+  } catch (_) {
+    toast('Network error — is the server running?', 'error');
+  } finally {
+    setLoading('btn-signup', false);
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   PASSWORD RESET — Step 1: request
+   ════════════════════════════════════════════════════════════════════ */
+async function doResetRequest() {
+  clearFieldErrors();
+  const identifier = document.getElementById('rs-email').value.trim();
+  if (!identifier || !validateEmail(identifier)) {
+    setError('rs-email', 'Enter a valid email');
+    toast('Enter a valid email', 'error');
+    return;
+  }
+  setLoading('btn-reset-req', true);
+  try {
+    const { ok, data } = await apiPost('/auth/password-reset/request', { identifier });
+    if (ok) {
+      toast(data.message || 'Check your email for the reset token', 'success', 5000);
+      if (data.reset_token) {
+        document.getElementById('rs-token').value = data.reset_token;
+        toast('[DEV] Token pre-filled. Remove in production.', 'info', 7000);
+      }
+      document.getElementById('reset-step1').style.display = 'none';
+      const s2 = document.getElementById('reset-step2');
+      s2.style.display = 'flex';
+      document.getElementById('reset-subtitle').textContent = 'Enter the token and your new password';
+    } else {
+      toast(data.detail || 'Request failed', 'error');
+    }
+  } catch (_) {
+    toast('Network error — is the server running?', 'error');
+  } finally {
+    setLoading('btn-reset-req', false);
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   PASSWORD RESET — Step 2: confirm
+   ════════════════════════════════════════════════════════════════════ */
+async function doResetConfirm() {
+  clearFieldErrors();
+  const token        = document.getElementById('rs-token').value.trim();
+  const new_password = document.getElementById('rs-newpw').value;
+
+  let valid = true;
+  if (!token)                        { setError('rs-token', 'Token required'); valid = false; }
+  if (!new_password || new_password.length < 8) { setError('rs-newpw', 'Min. 8 characters'); valid = false; }
+  if (!valid) { toast('Please fill in all fields', 'error'); return; }
+
+  setLoading('btn-reset-conf', true);
+  try {
+    const { ok, data } = await apiPost('/auth/password-reset/confirm', { token, new_password });
+    if (ok && data.success) {
+      toast('Password reset! Sign in with your new password.', 'success', 4000);
+      document.getElementById('reset-step2').style.display = 'none';
+      document.getElementById('reset-step1').style.display = 'block';
+      document.getElementById('reset-subtitle').textContent = 'Enter your email to receive a reset link';
+      setTimeout(() => switchTab('signin'), 2500);
+    } else {
+      toast(data.detail || 'Invalid or expired token', 'error');
+    }
+  } catch (_) {
+    toast('Network error — is the server running?', 'error');
+  } finally {
+    setLoading('btn-reset-conf', false);
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   KEYBOARD — Enter submits active panel
+   ════════════════════════════════════════════════════════════════════ */
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const id = document.querySelector('.auth-panel.active')?.id;
+  if (id === 'panel-signin')  doSignIn();
+  else if (id === 'panel-signup') { if (!document.getElementById('btn-signup').disabled) doSignUp(); }
+  else if (id === 'panel-reset') {
+    const s2 = document.getElementById('reset-step2');
+    (s2 && s2.style.display !== 'none') ? doResetConfirm() : doResetRequest();
+  }
+});
+</script>
+</body>
+</html>

@@ -3,11 +3,19 @@
 All agent routers are registered here.  Each agent exposes its own endpoint
 prefix so existing HTML frontends and n8n webhooks require zero URL changes.
 
+v2.3.0 — Added Auth module (Orbit CRM Authentication).
+  • Direct DB routing — no AI agent, no LangGraph AI nodes.
+  • Endpoints: POST /auth/signup, /auth/signin, /auth/signout,
+               /auth/change-password, /auth/password-reset/request,
+               /auth/password-reset/confirm, /auth/verify-email
+  • Health:   GET  /auth-health
+  • Frontend: auth.html
+
 v2.2.0 — Added Store module (CRM Commerce View).
   • Direct SP routing — no AI agent, no LangGraph AI nodes.
   • Endpoint: POST /store-chat
   • Health:   GET  /store-health
-  • Frontend: web r/store-home.html
+  • Frontend: store-home.html
 """
 
 import logging
@@ -38,6 +46,9 @@ from app.agents.notifications.router import router as notifications_router
 # -- Store module (CRM Commerce View — direct SP routing, no AI agent)
 from app.agents.store.router import router as store_router
 
+# -- Auth module (direct DB routing — no AI agent)
+from app.agents.auth.router import router as auth_router
+
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -47,7 +58,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("=== CRM Agent starting up (all 11 modules + home index) ===")
+    logger.info("=== CRM Agent starting up (all 11 modules + home index + auth) ===")
     db_ok = test_connection()
     logger.info(f"Database: {'OK' if db_ok else 'FAILED -- check DB_DSN in .env'}")
     yield
@@ -59,10 +70,10 @@ app = FastAPI(
     description=(
         "Unified CRM AI Agent -- all 11 modules on a single FastAPI server: "
         "accounts, contacts, products, orders, activities, opportunities, "
-        "accounting, leads, analytics, notifications, store. "
+        "accounting, leads, analytics, notifications, store, auth. "
         "Plus /home-index for the dashboard KPI cards."
     ),
-    version="2.2.0",
+    version="2.3.0",
     lifespan=lifespan,
 )
 
@@ -105,17 +116,20 @@ app.include_router(notifications_router)
 # -- Store module (direct SP routing — no AI agent)
 app.include_router(store_router)
 
+# -- Auth module (direct DB routing — no AI agent)
+app.include_router(auth_router)
+
 
 @app.get("/")
 async def root():
     return {
         "status":  "healthy",
         "service": "CRM Agent",
-        "version": "2.2.0",
+        "version": "2.3.0",
         "agents":  [
             "accounts", "contacts", "products", "orders",
             "activities", "opportunities", "accounting", "leads",
-            "analytics", "notifications", "store",
+            "analytics", "notifications", "store", "auth",
         ],
         "endpoints": {
             "home_index":    "GET /home-index",
@@ -130,6 +144,7 @@ async def root():
             "analytics":     "/analytics-chat",
             "notifications": "/notifications-chat  (alias: /notification-chat)",
             "store":         "/store-chat  (direct SP — no AI agent)",
+            "auth":          "/auth/signin, /auth/signup, /auth/signout, ...",
         },
     }
 
@@ -167,6 +182,18 @@ async def health():
                               "ai_agent": False, "direct_sp": True},
         },
         "memory_window_size": settings.memory_window_size,
+        "auth": {
+            "graph_ready": True,
+            "ai_agent": False,
+            "direct_db": True,
+            "endpoints": [
+                "POST /auth/signup", "POST /auth/signin", "POST /auth/signout",
+                "POST /auth/change-password",
+                "POST /auth/password-reset/request",
+                "POST /auth/password-reset/confirm",
+                "POST /auth/verify-email",
+            ],
+        },
     }
 
 
