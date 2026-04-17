@@ -74,6 +74,10 @@ TRIGGER EXAMPLES (copy these patterns exactly):
    - User asks for clarification
    - User request is ambiguous
 
+   ⚠️ CONVERSATIONAL RESPONSES MUST BE PLAIN TEXT — never JSON, never metadata.
+   CORRECT:   Hello! How can I assist you with orders today?
+   INCORRECT: {"metadata":{"status":"greeting","message":"Hello!..."}}  ← NEVER do this
+
 3. Use camelCase field names.
 
 ------------------------------------------------------------

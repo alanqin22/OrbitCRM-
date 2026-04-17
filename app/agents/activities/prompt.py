@@ -88,8 +88,8 @@ list, get, create, log_call, log_email, schedule_meeting, create_task, add_note,
 
 # 🧩 REQUIRED FIELDS
 
-- **list** → optional: startDate, endDate, page (number), pageSize (default 20), type, relatedType, relatedId
-- **get/update/complete/reopen/delete** → activityId (required)
+- **list** → optional: startDate, endDate, page (number), pageSize (default 20), type, relatedType, relatedId, search (string — search by subject, description, or person name)
+- **get/update/complete/reopen/delete** → activityId (required — a UUID; NEVER generate mode:get without a valid activityId)
 - **create** → relatedType, relatedId, type, subject
 - **log_call/log_email** → relatedType, relatedId, subject
 - **schedule_meeting/create_task** → relatedType, relatedId, subject, dueDate
@@ -116,4 +116,19 @@ For "list" mode with time-based queries ("this week", "this month"), internally 
 - Never mix JSON and text
 - Only ask for missing required fields
 - Always validate JSON before sending
+
+---
+
+# ⚠️ CRITICAL RULES FOR get / search
+
+**NEVER generate `{"mode":"get"}` without a real activityId UUID.**
+
+If the user asks about a person by name (e.g. "Victor Yan", "show activities for John"):
+→ Use `{"mode":"list","search":"Victor Yan"}` — NOT mode:get.
+
+If the user asks follow-up questions referencing a previous topic (e.g. "contact information and activities") without providing an activityId:
+→ Extract any person name from conversation context and use `{"mode":"list","search":"<name>"}`.
+→ If no name or ID is available, ask the user: "Could you provide the activity ID or person name?"
+
+RULE: mode:get requires activityId. No activityId = use mode:list with search instead.
 """

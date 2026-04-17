@@ -236,5 +236,31 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
         logger.info('[list_employee] direct route — returning active employee list')
         return _routed({'mode': 'list_employee'})
 
+    # ── Natural-language name search (no other prefix matched) ───────────────
+    # Catches: "find Sophia", "search Smith", "show me Chen", "look up Alice"
+    # Strips the verb prefix and routes as a list search so the AI never
+    # receives a phrase like "find Sophia" and mistakenly includes "find" in
+    # the search value.
+    # EXCLUDED: any term containing a known command keyword (pipeline, duplicate,
+    # summary, report, list, hot, warm, cold, status names, etc.) — those must
+    # pass through to the AI so it can pick the correct mode.
+    _COMMAND_KEYWORDS = re.compile(
+        r'\b(?:pipeline|duplicat|summary|report|statistic|convert|qualify|archiv|restor'
+        r'|hot|warm|cold|new|working|qualified|converted|disqualified'
+        r'|all leads?|lead list|lead pipeline|lead summary)\b',
+        re.IGNORECASE,
+    )
+    _SEARCH_VERBS = re.compile(
+        r'^(?:find|search(?:\s+for)?|show(?:\s+me)?|look\s*up|fetch|get|display|list)\s+(.+)$',
+        re.IGNORECASE,
+    )
+    m = _SEARCH_VERBS.match(raw)
+    if m:
+        term = m.group(1).strip()
+        # Only treat as a name search if the term has no command keywords and no UUID
+        if term and not UUID_RE.search(term) and not _COMMAND_KEYWORDS.search(term):
+            logger.info(f'→ NL NAME SEARCH: term={term!r}')
+            return _routed({'mode': 'list', 'search': term, 'pageSize': 50, 'pageNumber': 1})
+
     # ── Fallback: AI Agent ───────────────────────────────────────────────────
     return _passthru(raw, chat_input)
