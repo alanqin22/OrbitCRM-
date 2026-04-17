@@ -83,6 +83,20 @@ def pre_router_node(state: Dict[str, Any]) -> Dict[str, Any]:
     return {**state, "router_action": False, "current_message": current_msg}
 
 
+_MAX_HISTORY_CHARS = 40_000   # ~10K tokens budget for history
+
+
+def _trim_history(history: list, max_chars: int) -> list:
+    """Drop oldest message pairs until total history fits within max_chars."""
+    while history:
+        total = sum(len(m.get("content", "")) for m in history)
+        if total <= max_chars:
+            break
+        # Drop the oldest user+assistant pair (2 messages)
+        history = history[2:]
+    return history
+
+
 def ai_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """AI Agent node — invokes LLM with the activities system prompt."""
     logger.info("=== Activities AI Agent Node ===")
@@ -90,7 +104,7 @@ def ai_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     current_message = state.get("current_message") or state.get("user_input", "")
 
     settings = get_settings()
-    history  = get_history(session_id)
+    history  = _trim_history(list(get_history(session_id)), _MAX_HISTORY_CHARS)
     messages = history + [{"role": "user", "content": current_message}]
 
     try:
@@ -127,6 +141,17 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
         parsed_json = state.get("parsed_json") or {}
         if not parsed_json:
             return {**state, "db_rows": []}
+
+        # Safety guard: mode:get without activityId → fall back to list search
+        # using any name found in the user's input to avoid a -500 validation error.
+        if parsed_json.get("mode") in ("get", "update", "complete", "reopen", "delete") \
+                and not parsed_json.get("activityId"):
+            user_input = state.get("user_input", "").strip()
+            logger.warning(
+                f"mode:{parsed_json['mode']} missing activityId — "
+                f"falling back to list search for: {user_input[:80]!r}"
+            )
+            parsed_json = {"mode": "list", "search": user_input or None, "pageSize": 20}
 
         query, _ = build_activities_query(parsed_json)
         logger.info(f"Built sp_activities query for mode: {parsed_json.get('mode')}")
@@ -165,7 +190,11 @@ def formatter_node(state: Dict[str, Any]) -> Dict[str, Any]:
         session_id = state.get("session_id", "default-session")
         user_input = state.get("user_input", "")
         if user_input and final_output:
-            save_turn(session_id, user_input, final_output)
+            # Cap the stored assistant message to avoid bloating context on future turns.
+            # Full output is still returned to the user; only the memory copy is trimmed.
+            _MEM_CAP = 800
+            memory_output = (final_output[:_MEM_CAP] + "…[truncated]") if len(final_output) > _MEM_CAP else final_output
+            save_turn(session_id, user_input, memory_output)
 
         return {**state, "format_result": fmt_result, "final_output": final_output}
 
