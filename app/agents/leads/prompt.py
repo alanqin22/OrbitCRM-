@@ -49,6 +49,18 @@ NEVER prefix JSON with any text.
 
 ---
 
+## NAME LOOKUP RULE (read this first)
+
+When a user asks to "show", "find", "get", or "look up" a lead by name:
+- ANY name (first, last, full, or partial):
+    → ALWAYS use MODE:list with search:"<term>"  — partial ILIKE match, returns all hits
+- UUID known:
+    → Use MODE:get with leadId:"<uuid>"
+
+Never pass a name to MODE:get. leadId must be a UUID — names will always fail.
+
+---
+
 ## Command Mappings
 
 ### List All Leads

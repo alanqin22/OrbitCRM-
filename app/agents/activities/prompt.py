@@ -88,7 +88,7 @@ list, get, create, log_call, log_email, schedule_meeting, create_task, add_note,
 
 # 🧩 REQUIRED FIELDS
 
-- **list** → optional: startDate, endDate, page (number), pageSize (default 20), type, relatedType, relatedId, search (string — search by subject, description, or person name)
+- **list** → optional: startDate, endDate, page (number), pageSize (default 20), type, relatedType, relatedId, search (string — searches subject, description, AND related entity name — account name, contact/lead full name, opportunity name)
 - **get/update/complete/reopen/delete** → activityId (required — a UUID; NEVER generate mode:get without a valid activityId)
 - **create** → relatedType, relatedId, type, subject
 - **log_call/log_email** → relatedType, relatedId, subject
