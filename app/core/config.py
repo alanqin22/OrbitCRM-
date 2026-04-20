@@ -34,9 +34,7 @@ class Settings(BaseSettings):
     ollama_model: str = "gpt-oss:20b"
 
     # ── Database ──────────────────────────────────────────────────────────────
-    db_dsn: str = Field(
-        default_factory=lambda: os.environ.get("DATABASE_URL") or os.environ.get("DB_DSN", "postgresql://postgres:aria@localhost:5434/crmdb")
-    )
+    db_dsn: str = "postgresql://postgres:aria@localhost:5434/crmdb"
 
     # ── Application ───────────────────────────────────────────────────────────
     debug: bool = True
@@ -47,12 +45,23 @@ class Settings(BaseSettings):
     # The merged application uses one port; all agent endpoints are
     # available at /account-chat, /contact-chat, etc. on the same server.
     host: str = "0.0.0.0"
-    port: int = Field(default_factory=lambda: int(os.environ.get("PORT", 8000)))
+    port: int = 8000
 
     # ── Memory ────────────────────────────────────────────────────────────────
     # Number of previous conversation turns (user + assistant pairs) to retain
     # per session.  Set to 0 to disable memory (stateless mode).
     memory_window_size: int = 5
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Ensure Railway's dynamically injected environment variables take ultimate precedence
+        if os.environ.get("DATABASE_URL"):
+            self.db_dsn = os.environ.get("DATABASE_URL")
+        elif os.environ.get("DB_DSN"):
+            self.db_dsn = os.environ.get("DB_DSN")
+            
+        if os.environ.get("PORT"):
+            self.port = int(os.environ.get("PORT"))
 
     @property
     def llm_model(self) -> str:
