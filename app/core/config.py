@@ -9,8 +9,10 @@ Adding a new agent:
   module-specific timeout), add them as optional fields below.
 """
 
+import os
 from typing import Literal
 from functools import lru_cache
+from pydantic import Field
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
@@ -32,7 +34,9 @@ class Settings(BaseSettings):
     ollama_model: str = "gpt-oss:20b"
 
     # ── Database ──────────────────────────────────────────────────────────────
-    db_dsn: str = "postgresql://postgres:aria@localhost:5434/crmdb"
+    db_dsn: str = Field(
+        default_factory=lambda: os.environ.get("DATABASE_URL") or os.environ.get("DB_DSN", "postgresql://postgres:aria@localhost:5434/crmdb")
+    )
 
     # ── Application ───────────────────────────────────────────────────────────
     debug: bool = True
@@ -43,7 +47,7 @@ class Settings(BaseSettings):
     # The merged application uses one port; all agent endpoints are
     # available at /account-chat, /contact-chat, etc. on the same server.
     host: str = "0.0.0.0"
-    port: int = 8000
+    port: int = Field(default_factory=lambda: int(os.environ.get("PORT", 8000)))
 
     # ── Memory ────────────────────────────────────────────────────────────────
     # Number of previous conversation turns (user + assistant pairs) to retain
