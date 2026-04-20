@@ -1,7 +1,13 @@
-"""Unified CRM Agent application — all 11 modules + home index dashboard.
+"""Unified CRM Agent application — all 12 modules + home index dashboard.
 
 All agent routers are registered here.  Each agent exposes its own endpoint
-prefix so existing HTML frontends and n8n webhooks require zero URL changes.
+prefix so existing HTML frontends require zero URL changes.
+
+v2.4.0 — Added EmailAgent module (info@agentorc.ca — SMTP/IMAP + LangGraph).
+  • Endpoint: POST /email-chat
+  • Health:   GET  /email-health
+  • Frontend: email-chat.html
+  • SMTP: mail.agentorc.ca:465 (SSL)  IMAP: mail.agentorc.ca:993 (SSL)
 
 v2.3.0 — Added Auth module (Orbit CRM Authentication).
   • Direct DB routing — no AI agent, no LangGraph AI nodes.
@@ -23,6 +29,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from app.core.config import settings
 from app.core.database import test_connection
@@ -49,6 +56,9 @@ from app.agents.store.router import router as store_router
 # -- Auth module (direct DB routing — no AI agent)
 from app.agents.auth.router import router as auth_router
 
+# -- Email agent (SMTP/IMAP + LangGraph)
+from app.agents.email.router import router as email_router
+
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -58,22 +68,37 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("=== CRM Agent starting up (all 11 modules + home index + auth) ===")
+    logger.info("=== CRM Agent starting up (all 12 modules + home index + auth + email) ===")
     db_ok = test_connection()
     logger.info(f"Database: {'OK' if db_ok else 'FAILED -- check DB_DSN in .env'}")
+
+    # Start autonomous inbound-email auto-reply poller
+    from app.agents.email.imap_poller import start_poller, stop_poller
+    try:
+        from app.agents.email.smtp_imap import EMAIL_ADDRESS
+        start_poller(own_address=EMAIL_ADDRESS)
+        logger.info("ImapPoller started — auto-reply active for info@agentorc.ca")
+    except Exception as exc:
+        logger.warning(f"ImapPoller failed to start: {exc}")
+
     yield
+
+    try:
+        stop_poller()
+    except Exception:
+        pass
     logger.info("=== CRM Agent shutting down ===")
 
 
 app = FastAPI(
     title="CRM Agent",
     description=(
-        "Unified CRM AI Agent -- all 11 modules on a single FastAPI server: "
+        "Unified CRM AI Agent -- all 12 modules on a single FastAPI server: "
         "accounts, contacts, products, orders, activities, opportunities, "
-        "accounting, leads, analytics, notifications, store, auth. "
+        "accounting, leads, analytics, notifications, store, auth, email. "
         "Plus /home-index for the dashboard KPI cards."
     ),
-    version="2.3.0",
+    version="2.4.0",
     lifespan=lifespan,
 )
 
@@ -119,17 +144,26 @@ app.include_router(store_router)
 # -- Auth module (direct DB routing — no AI agent)
 app.include_router(auth_router)
 
+# -- Email agent (SMTP/IMAP + LangGraph)
+app.include_router(email_router)
+
+
+@app.get("/auth.html")
+async def serve_auth_html():
+    """Serve auth.html so email verification redirect works at http://localhost:8000/auth.html"""
+    return FileResponse("auth.html", media_type="text/html")
+
 
 @app.get("/")
 async def root():
     return {
         "status":  "healthy",
         "service": "CRM Agent",
-        "version": "2.3.0",
+        "version": "2.4.0",
         "agents":  [
             "accounts", "contacts", "products", "orders",
             "activities", "opportunities", "accounting", "leads",
-            "analytics", "notifications", "store", "auth",
+            "analytics", "notifications", "store", "auth", "email",
         ],
         "endpoints": {
             "home_index":    "GET /home-index",
@@ -145,6 +179,7 @@ async def root():
             "notifications": "/notifications-chat  (alias: /notification-chat)",
             "store":         "/store-chat  (direct SP — no AI agent)",
             "auth":          "/auth/signin, /auth/signup, /auth/signout, ...",
+            "email":         "/email-chat  (SMTP/IMAP + LangGraph)",
         },
     }
 
