@@ -67,6 +67,30 @@ class EmailChatResponse(BaseModel):
 # ROUTES
 # ============================================================================
 
+@router.get("/email-test")
+async def email_test():
+    """Send a test email and return SMTP diagnostics. Use to debug auth issues."""
+    import os
+    from app.agents.email.smtp_imap import send_email, _email_address, _smtp_host, _smtp_port
+    addr = _email_address()
+    pwd  = os.environ.get("EMAIL_PASSWORD", "")
+    result = send_email(
+        to=addr,
+        subject="Orbit CRM — SMTP test",
+        body_html="<p>SMTP test. If you see this, email is working.</p>",
+        body_text="SMTP test. If you see this, email is working.",
+    )
+    return {
+        "smtp_host":      _smtp_host(),
+        "smtp_port":      _smtp_port(),
+        "email_address":  addr,
+        "password_set":   bool(pwd),
+        "password_length": len(pwd),
+        "password_preview": pwd[:3] + "***" if pwd else "(empty)",
+        "result":         result,
+    }
+
+
 @router.get("/email-health")
 async def email_health():
     return {

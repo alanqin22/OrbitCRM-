@@ -23,13 +23,20 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+def _cfg(key: str, default: str = '') -> str:
+    """Read env var at call time so Railway vars are always current."""
+    return os.environ.get(key, default)
+
 EMAIL_ADDRESS  = os.environ.get('EMAIL_ADDRESS',   'info@agentorc.ca')
-EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD',  '')
-SMTP_HOST      = os.environ.get('EMAIL_SMTP_HOST', 'mail.agentorc.ca')
-SMTP_PORT      = int(os.environ.get('EMAIL_SMTP_PORT', '465'))
-IMAP_HOST      = os.environ.get('EMAIL_IMAP_HOST', 'mail.agentorc.ca')
-IMAP_PORT      = int(os.environ.get('EMAIL_IMAP_PORT', '993'))
 BCC_ADDRESS    = os.environ.get('EMAIL_BCC',        'info@agentorc.ca')
+
+def _email_address() -> str:  return os.environ.get('EMAIL_ADDRESS',   'info@agentorc.ca')
+def _email_password() -> str:  return os.environ.get('EMAIL_PASSWORD',  '')
+def _smtp_host()     -> str:  return os.environ.get('EMAIL_SMTP_HOST', 'mail.agentorc.ca')
+def _smtp_port()     -> int:  return int(os.environ.get('EMAIL_SMTP_PORT', '465'))
+def _imap_host()     -> str:  return os.environ.get('EMAIL_IMAP_HOST', 'mail.agentorc.ca')
+def _imap_port()     -> int:  return int(os.environ.get('EMAIL_IMAP_PORT', '993'))
+def _bcc_address()   -> str:  return os.environ.get('EMAIL_BCC',        'info@agentorc.ca')
 
 
 def send_email(
@@ -40,28 +47,44 @@ def send_email(
     from_name: str = 'Orbit CRM Team',
     bcc: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Send an email via SMTP SSL. Returns {success, message}."""
+    """Send an email via SMTP. Tries SSL on configured port, falls back to STARTTLS on 587."""
+    addr     = _email_address()
+    password = _email_password()
+    host     = _smtp_host()
+    port     = _smtp_port()
+    bcc_addr = bcc or _bcc_address()
+
     try:
         msg = MIMEMultipart('alternative')
         msg['Subject'] = subject
-        msg['From']    = f'{from_name} <{EMAIL_ADDRESS}>'
+        msg['From']    = f'{from_name} <{addr}>'
         msg['To']      = to
-        if bcc or BCC_ADDRESS:
-            msg['Bcc'] = bcc or BCC_ADDRESS
+        if bcc_addr:
+            msg['Bcc'] = bcc_addr
 
         msg.attach(MIMEText(body_text, 'plain', 'utf-8'))
         msg.attach(MIMEText(body_html, 'html',  'utf-8'))
 
-        context = ssl.create_default_context()
-        recipients = [to]
-        if bcc or BCC_ADDRESS:
-            recipients.append(bcc or BCC_ADDRESS)
+        context    = ssl.create_default_context()
+        recipients = [to] + ([bcc_addr] if bcc_addr else [])
+        raw        = msg.as_string()
 
-        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context) as server:
-            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-            server.sendmail(EMAIL_ADDRESS, recipients, msg.as_string())
+        try:
+            # Primary: SMTP_SSL (port 465)
+            with smtplib.SMTP_SSL(host, port, context=context) as server:
+                server.login(addr, password)
+                server.sendmail(addr, recipients, raw)
+            logger.info(f"Email sent (SSL) → {to} | subject={subject!r}")
+        except OSError as ssl_err:
+            # Fallback: STARTTLS on port 587 (Railway may block 465)
+            logger.warning(f"SMTP_SSL failed ({ssl_err}), retrying with STARTTLS on port 587")
+            with smtplib.SMTP(host, 587) as server:
+                server.ehlo()
+                server.starttls(context=context)
+                server.login(addr, password)
+                server.sendmail(addr, recipients, raw)
+            logger.info(f"Email sent (STARTTLS) → {to} | subject={subject!r}")
 
-        logger.info(f"Email sent → {to} | subject={subject!r}")
         return {'success': True, 'message': f'Email sent to {to}', 'to': to, 'subject': subject}
 
     except Exception as e:
@@ -73,8 +96,8 @@ def fetch_inbox(limit: int = 20, unseen_only: bool = False) -> List[Dict[str, An
     """Fetch emails from IMAP inbox. Returns list of email dicts."""
     try:
         context = ssl.create_default_context()
-        with imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT, ssl_context=context) as imap:
-            imap.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+        with imaplib.IMAP4_SSL(_imap_host(), _imap_port(), ssl_context=context) as imap:
+            imap.login(_email_address(), _email_password())
             imap.select('INBOX')
 
             criterion = 'UNSEEN' if unseen_only else 'ALL'
@@ -108,8 +131,8 @@ def search_inbox(query: str, limit: int = 20) -> List[Dict[str, Any]]:
     """Search IMAP inbox by subject/body keyword."""
     try:
         context = ssl.create_default_context()
-        with imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT, ssl_context=context) as imap:
-            imap.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+        with imaplib.IMAP4_SSL(_imap_host(), _imap_port(), ssl_context=context) as imap:
+            imap.login(_email_address(), _email_password())
             imap.select('INBOX')
 
             safe_query = query.replace('"', '')
