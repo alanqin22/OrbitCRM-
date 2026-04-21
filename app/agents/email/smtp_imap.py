@@ -39,6 +39,46 @@ def _imap_port()     -> int:  return int(os.environ.get('EMAIL_IMAP_PORT', '993'
 def _bcc_address()   -> str:  return os.environ.get('EMAIL_BCC',        'info@agentorc.ca')
 
 
+def _send_via_resend(
+    to: str,
+    subject: str,
+    body_html: str,
+    body_text: str,
+    from_addr: str,
+    from_name: str,
+    bcc_addr: str,
+) -> Dict[str, Any]:
+    """Send via Resend API (used when RESEND_API_KEY is set)."""
+    import urllib.request
+    import json as _json
+
+    api_key = os.environ.get('RESEND_API_KEY', '')
+    resend_from = os.environ.get('RESEND_FROM', from_addr)
+    payload: Dict[str, Any] = {
+        'from':    f'{from_name} <{resend_from}>',
+        'to':      [to],
+        'subject': subject,
+        'html':    body_html,
+        'text':    body_text,
+    }
+    if bcc_addr:
+        payload['bcc'] = [bcc_addr]
+
+    req = urllib.request.Request(
+        'https://api.resend.com/emails',
+        data=_json.dumps(payload).encode('utf-8'),
+        headers={
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type':  'application/json',
+        },
+        method='POST',
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        body = _json.loads(resp.read().decode('utf-8'))
+    logger.info(f"Email sent (Resend) → {to} | id={body.get('id')} | subject={subject!r}")
+    return {'success': True, 'message': f'Email sent to {to}', 'to': to, 'subject': subject}
+
+
 def send_email(
     to: str,
     subject: str,
@@ -47,12 +87,20 @@ def send_email(
     from_name: str = 'Orbit CRM Team',
     bcc: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Send an email via SMTP. Tries SSL on configured port, falls back to STARTTLS on 587."""
+    """Send an email. Uses Resend API when RESEND_API_KEY is set, otherwise SMTP."""
     addr     = _email_address()
     password = _email_password()
     host     = _smtp_host()
     port     = _smtp_port()
     bcc_addr = bcc or _bcc_address()
+
+    # Prefer Resend API for reliable delivery on cloud platforms (Railway)
+    if os.environ.get('RESEND_API_KEY'):
+        try:
+            return _send_via_resend(to, subject, body_html, body_text, addr, from_name, bcc_addr)
+        except Exception as e:
+            logger.error(f"Resend API error: {e}", exc_info=True)
+            return {'success': False, 'message': str(e)}
 
     try:
         msg = MIMEMultipart('alternative')
@@ -71,14 +119,14 @@ def send_email(
 
         try:
             # Primary: SMTP_SSL (port 465)
-            with smtplib.SMTP_SSL(host, port, context=context) as server:
+            with smtplib.SMTP_SSL(host, port, context=context, timeout=15) as server:
                 server.login(addr, password)
                 server.sendmail(addr, recipients, raw)
             logger.info(f"Email sent (SSL) → {to} | subject={subject!r}")
-        except OSError as ssl_err:
+        except smtplib.SMTPException as smtp_err:
             # Fallback: STARTTLS on port 587 (Railway may block 465)
-            logger.warning(f"SMTP_SSL failed ({ssl_err}), retrying with STARTTLS on port 587")
-            with smtplib.SMTP(host, 587) as server:
+            logger.warning(f"SMTP_SSL failed ({smtp_err}), retrying with STARTTLS on port 587")
+            with smtplib.SMTP(host, 587, timeout=15) as server:
                 server.ehlo()
                 server.starttls(context=context)
                 server.login(addr, password)
