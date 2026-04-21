@@ -39,26 +39,18 @@ v1.0.0 — initial implementation
 
 import logging
 import os
+import random
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 import psycopg2
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.core.database import get_connection
 from app.agents.email.smtp_imap import send_email
-
-# Verification code settings
-_CODE_TTL_MINUTES = 15   # code expires after this many minutes
-_MAX_ATTEMPTS     = 5    # wrong-code attempts before lockout
-_MAX_RESENDS      = 5    # max resend requests per pending signup
-
-# In-process store for signups awaiting 6-digit code verification
-# { token: { identifier, password, first_name, ..., code, code_expires_at, attempts, resend_count } }
-_PENDING_SIGNUPS: Dict[str, Dict[str, Any]] = {}
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +91,50 @@ else:
 # ---------------------------------------------------------------------------
 _AUTH_SESSIONS: Dict[str, Dict[str, Any]] = {}
 _SESSION_TTL_HOURS = 8
+
+# ---------------------------------------------------------------------------
+# OTP (email verification) store
+# { identifier: { code, expires_at, attempts, last_resend, resend_count, session_data } }
+# ---------------------------------------------------------------------------
+_OTP_STORE: Dict[str, Dict[str, Any]] = {}
+_OTP_TTL_MINUTES = 15
+_OTP_MAX_ATTEMPTS = 5
+_OTP_RESEND_COOLDOWN_SECONDS = 60
+_OTP_MAX_RESENDS = 5
+
+
+def _generate_otp() -> str:
+    return f"{random.SystemRandom().randint(0, 999999):06d}"
+
+
+def _send_otp_email(to_email: str, code: str, first_name: str = "") -> None:
+    """Send OTP verification email via the shared email module."""
+    greeting = f"Hi {first_name}," if first_name else "Hello,"
+    subject = "Your Orbit CRM Verification Code"
+    body_text = (
+        f"{greeting}\n\n"
+        f"Your verification code is: {code}\n\n"
+        f"This code expires in {_OTP_TTL_MINUTES} minutes.\n\n"
+        "If you did not request this, you can ignore this email.\n\n"
+        "— Orbit CRM"
+    )
+    body_html = f"""
+<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
+  <h2 style="color:#0d9488;margin-bottom:8px">Orbit CRM</h2>
+  <p>{greeting}</p>
+  <p>Your email verification code is:</p>
+  <div style="font-size:2.5rem;font-weight:700;letter-spacing:0.25em;color:#0d9488;
+              padding:16px;background:#f0fdfa;border-radius:8px;text-align:center;
+              margin:24px 0">{code}</div>
+  <p style="color:#6b7280;font-size:0.875rem">
+    This code expires in {_OTP_TTL_MINUTES} minutes.<br>
+    If you didn't create an Orbit CRM account, you can safely ignore this email.
+  </p>
+</div>"""
+
+    result = send_email(to=to_email, subject=subject, body_html=body_html, body_text=body_text)
+    if not result.get("success"):
+        raise RuntimeError(result.get("message", "Email send failed"))
 
 
 def _new_session(
@@ -198,11 +234,13 @@ class VerifyEmailRequest(BaseModel):
     contact_id: str
     token:      str
 
+
 class VerifyCodeRequest(BaseModel):
     identifier: str
     code:       str
 
-class ResendCodeRequest(BaseModel):
+
+class ResendVerificationRequest(BaseModel):
     identifier: str
 
 
@@ -299,123 +337,6 @@ def _bootstrap_contact(
 
 
 # ---------------------------------------------------------------------------
-# Pending signup helpers
-# ---------------------------------------------------------------------------
-
-def _find_pending_by_email(identifier: str) -> Optional[str]:
-    """Return the token for a pending signup matching identifier, or None (expired entries cleaned up)."""
-    now = datetime.now(timezone.utc)
-    for token, data in list(_PENDING_SIGNUPS.items()):
-        if data.get('identifier') == identifier:
-            if data.get('code_expires_at', now) > now:
-                return token
-            del _PENDING_SIGNUPS[token]
-    return None
-
-def _generate_code() -> str:
-    """Generate a cryptographically random 6-digit numeric code."""
-    return f"{secrets.randbelow(1_000_000):06d}"
-
-
-def _email_exists_in_db(identifier: str) -> bool:
-    """Quick check — is this identifier already registered?"""
-    try:
-        row = _db_fetchone(
-            "SELECT 1 FROM public.auth_credentials "
-            "WHERE identifier = lower(%s) AND is_active = true LIMIT 1",
-            (identifier,),
-        )
-        return bool(row)
-    except Exception:
-        return False
-
-
-def _send_verification_code_email(to: str, first_name: str, code: str) -> None:
-    name    = (first_name or '').strip() or 'there'
-    subject = "Your 6-digit verification code — Orbit CRM"
-    body_html = f"""
-<html><body style="font-family:Arial,sans-serif;color:#1a202c;max-width:600px;margin:auto;padding:2rem;">
-  <h2 style="color:#0d9488;">Verify your email, {name}!</h2>
-  <p>Hi {name},</p>
-  <p>Use the code below to verify your email address and complete your Orbit CRM sign-up.</p>
-  <div style="margin:2rem 0;text-align:center;">
-    <div style="display:inline-block;background:#F0FDFA;border:2px solid #0d9488;
-                border-radius:12px;padding:1.25rem 2.5rem;">
-      <div style="font-size:0.75rem;font-weight:600;color:#0d9488;letter-spacing:0.1em;
-                  text-transform:uppercase;margin-bottom:0.5rem;">Verification Code</div>
-      <div style="font-size:2.8rem;font-weight:800;letter-spacing:0.35em;color:#1a202c;
-                  font-family:monospace;">{code}</div>
-    </div>
-  </div>
-  <p style="font-size:0.85rem;color:#6b7280;">
-    This code expires in <strong>{_CODE_TTL_MINUTES} minutes</strong>.<br>
-    If you did not create an Orbit CRM account, you can safely ignore this email.
-  </p>
-  <p style="margin-top:2rem;color:#718096;font-size:0.9rem;">The Orbit CRM Team<br>
-  <a href="https://agentorc.ca" style="color:#0d9488;">agentorc.ca</a></p>
-</body></html>
-"""
-    body_text = (
-        f"Hi {name},\n\n"
-        f"Your Orbit CRM verification code is:\n\n  {code}\n\n"
-        f"This code expires in {_CODE_TTL_MINUTES} minutes.\n\n"
-        "If you did not request this, you can safely ignore this email.\n\n"
-        "The Orbit CRM Team"
-    )
-    try:
-        result = send_email(to=to, subject=subject, body_html=body_html, body_text=body_text)
-        if result.get('success'):
-            logger.info(f"Verification code email sent to {to}")
-        else:
-            logger.warning(f"Verification code email failed for {to}: {result.get('message')}")
-    except Exception as exc:
-        logger.error(f"Verification code email exception for {to}: {exc}", exc_info=True)
-
-
-# ---------------------------------------------------------------------------
-# Welcome email (called in background after signup)
-# ---------------------------------------------------------------------------
-
-def _send_welcome_email(to: str, first_name: str, last_name: str) -> None:
-    name = (first_name or '').strip() or 'there'
-    full = f"{first_name or ''} {last_name or ''}".strip() or to
-    subject = "Welcome to Orbit CRM — Your account is ready"
-    body_html = f"""
-<html><body style="font-family:Arial,sans-serif;color:#1a202c;max-width:600px;margin:auto;padding:2rem;">
-  <h2 style="color:#4a90d9;">Welcome to Orbit CRM, {name}!</h2>
-  <p>Hi {name},</p>
-  <p>Your Orbit CRM account has been successfully created. You now have access to our
-  full suite of CRM tools — leads, contacts, opportunities, orders, and more.</p>
-  <p>Here's what you can do next:</p>
-  <ul>
-    <li>Browse your <strong>Dashboard</strong> for an overview</li>
-    <li>Add your first <strong>Lead</strong> or <strong>Contact</strong></li>
-    <li>Set up your <strong>Products</strong> and start tracking orders</li>
-  </ul>
-  <p>If you have any questions, simply reply to this email and our team will be happy to help.</p>
-  <p>Welcome aboard!</p>
-  <p style="margin-top:2rem;color:#718096;font-size:0.9rem;">The Orbit CRM Team<br>
-  <a href="https://agentorc.ca" style="color:#4a90d9;">agentorc.ca</a></p>
-</body></html>
-"""
-    body_text = (
-        f"Welcome to Orbit CRM, {name}!\n\n"
-        f"Hi {name},\n\n"
-        "Your Orbit CRM account has been successfully created.\n\n"
-        "You can now access leads, contacts, opportunities, orders, and more.\n\n"
-        "Welcome aboard!\n\nThe Orbit CRM Team\nhttps://agentorc.ca"
-    )
-    try:
-        result = send_email(to=to, subject=subject, body_html=body_html, body_text=body_text)
-        if result.get('success'):
-            logger.info(f"Welcome email sent to {to}")
-        else:
-            logger.warning(f"Welcome email failed for {to}: {result.get('message')}")
-    except Exception as exc:
-        logger.error(f"Welcome email exception for {to}: {exc}", exc_info=True)
-
-
-# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
@@ -431,96 +352,14 @@ async def auth_health():
 
 
 @router.post("/auth/signup", response_model=AuthResponse)
-async def signup(req: SignUpRequest, background_tasks: BackgroundTasks):
-    """Step 1 of signup: generate 6-digit code, store pending data, send code email."""
+async def signup(req: SignUpRequest):
+    """Register a new user. Creates auth_credentials + lead record atomically via sp_signup_with_lead."""
     identifier = req.identifier.strip().lower()
-    logger.info(f"Signup request — identifier={identifier!r}")
+    logger.info(f"Signup — identifier={identifier!r}")
 
+    # Client-side password match check (belt-and-suspenders)
     if req.confirm_password is not None and req.password != req.confirm_password:
         raise HTTPException(status_code=422, detail="Passwords do not match")
-
-    if _email_exists_in_db(identifier):
-        raise HTTPException(status_code=409, detail="That email is already registered")
-
-    # Re-use existing pending entry (just regenerate code)
-    existing_token = _find_pending_by_email(identifier)
-    if existing_token:
-        p = _PENDING_SIGNUPS[existing_token]
-        if p.get('resend_count', 0) >= _MAX_RESENDS:
-            raise HTTPException(status_code=429, detail="Too many attempts. Please wait and try again later.")
-        new_code = _generate_code()
-        p['code']             = new_code
-        p['code_expires_at']  = datetime.now(timezone.utc) + timedelta(minutes=_CODE_TTL_MINUTES)
-        p['attempts']         = 0
-        p['resend_count']     = p.get('resend_count', 0) + 1
-        background_tasks.add_task(_send_verification_code_email, identifier, p.get('first_name', ''), new_code)
-        return AuthResponse(
-            success=True,
-            message=f"We've sent a 6-digit verification code to your email. Please enter it below to continue.",
-            email=identifier, needs_password=False,
-        )
-
-    code  = _generate_code()
-    token = secrets.token_urlsafe(32)
-    _PENDING_SIGNUPS[token] = {
-        'identifier':    identifier,
-        'password':      req.password,
-        'first_name':    req.first_name or '',
-        'last_name':     req.last_name or '',
-        'company_name':  req.company_name or '',
-        'phone':         req.phone or '',
-        'address_line1': req.address_line1 or '',
-        'address_line2': req.address_line2 or '',
-        'city':          req.city or '',
-        'province':      req.province or '',
-        'postal_code':   req.postal_code or '',
-        'country':       req.country or '',
-        'code':          code,
-        'code_expires_at': datetime.now(timezone.utc) + timedelta(minutes=_CODE_TTL_MINUTES),
-        'attempts':      0,
-        'resend_count':  0,
-    }
-    background_tasks.add_task(_send_verification_code_email, identifier, req.first_name or '', code)
-    logger.info(f"Pending signup + code created for {identifier!r}")
-
-    return AuthResponse(
-        success=True,
-        message=f"We've sent a 6-digit verification code to your email. Please enter it below to continue.",
-        email=identifier, first_name=req.first_name or '', last_name=req.last_name or '',
-        needs_password=False,
-    )
-
-
-@router.post("/auth/verify-code", response_model=AuthResponse)
-async def verify_code(req: VerifyCodeRequest, background_tasks: BackgroundTasks):
-    """Step 2: validate the 6-digit code and create the account."""
-    identifier = req.identifier.strip().lower()
-    code       = req.code.strip()
-
-    token = _find_pending_by_email(identifier)
-    if not token:
-        raise HTTPException(status_code=404, detail="No pending signup found. Please sign up again.")
-
-    pending = _PENDING_SIGNUPS[token]
-    now     = datetime.now(timezone.utc)
-
-    if pending.get('attempts', 0) >= _MAX_ATTEMPTS:
-        raise HTTPException(status_code=429, detail="Too many failed attempts. Please request a new code.")
-
-    if pending['code_expires_at'] <= now:
-        raise HTTPException(status_code=410, detail="This code has expired. Please request a new one.")
-
-    if pending['code'] != code:
-        pending['attempts'] += 1
-        remaining = _MAX_ATTEMPTS - pending['attempts']
-        if remaining <= 0:
-            raise HTTPException(status_code=429, detail="Too many failed attempts. Please request a new code.")
-        raise HTTPException(status_code=400, detail=f"Incorrect verification code. Please try again. ({remaining} attempt{'s' if remaining != 1 else ''} remaining)")
-
-    # Code is valid — create the account
-    if _email_exists_in_db(identifier):
-        del _PENDING_SIGNUPS[token]
-        raise HTTPException(status_code=409, detail="That email is already registered. Please sign in.")
 
     try:
         row = _db_fetchone(
@@ -530,75 +369,76 @@ async def verify_code(req: VerifyCodeRequest, background_tasks: BackgroundTasks)
             "  %s::text, %s::text, %s::text, %s::text, %s::text, %s::text"
             ") AS payload",
             (
-                identifier, pending['password'],
-                pending['first_name'], pending['last_name'],
-                pending['company_name'], pending['phone'],
-                pending['address_line1'], pending['address_line2'],
-                pending['city'], pending['province'],
-                pending['postal_code'], pending['country'],
+                identifier, req.password,
+                req.first_name, req.last_name, req.company_name, req.phone,
+                req.address_line1, req.address_line2,
+                req.city, req.province, req.postal_code, req.country,
             ),
         )
     except psycopg2.errors.UniqueViolation:
-        del _PENDING_SIGNUPS[token]
-        raise HTTPException(status_code=409, detail="That email is already registered. Please sign in.")
+        raise HTTPException(status_code=409, detail="That email is already registered")
     except psycopg2.Error as exc:
-        logger.error(f"verify-code sp_signup_with_lead error: {exc}")
-        raise HTTPException(status_code=500, detail="Account creation failed. Please try again.")
+        msg = str(exc)
+        if "23505" in msg or "unique" in msg.lower() or "duplicate" in msg.lower() or "email_exists" in msg.lower():
+            raise HTTPException(status_code=409, detail="That email is already registered")
+        logger.error(f"sp_signup_with_lead error: {exc}")
+        raise HTTPException(status_code=500, detail="Registration failed")
 
-    if not row or not row[0] or not row[0].get('success'):
-        raise HTTPException(status_code=500, detail="Account creation failed. Please try again.")
+    if not row or not row[0]:
+        raise HTTPException(status_code=500, detail="Signup returned no payload")
 
-    payload       = row[0]
+    payload = row[0]
+    if not payload.get("success"):
+        raise HTTPException(status_code=500, detail="Signup failed")
+
     credential_id = str(payload["credential_id"])
-    lead_id       = str(payload["lead_id"])    if payload.get("lead_id")    else None
-    account_id    = str(payload["account_id"]) if payload.get("account_id") else None
-    contact_id    = str(payload["contact_id"]) if payload.get("contact_id") else None
-    first_name    = pending.get('first_name', '')
-    last_name     = pending.get('last_name', '')
+    lead_id       = str(payload["lead_id"])       if payload.get("lead_id")    else None
+    account_id    = str(payload["account_id"])    if payload.get("account_id") else None
+    contact_id    = str(payload["contact_id"])    if payload.get("contact_id") else None
+    first_name    = payload.get("first_name", "")
+    last_name     = payload.get("last_name", "")
     source_table  = payload.get("source_table", "leads")
 
-    del _PENDING_SIGNUPS[token]
-    background_tasks.add_task(_send_welcome_email, identifier, first_name, last_name)
-    logger.info(f"Code verified + account created for {identifier!r}")
+    logger.info(f"Signup OK — lead={lead_id} account={account_id} cred={credential_id}")
 
-    session_token = _new_session(
-        account_id=account_id or '', credential_id=credential_id,
-        identifier=identifier, lead_id=lead_id, contact_id=contact_id,
-        first_name=first_name, last_name=last_name, source_table=source_table,
-    )
+    # Generate OTP and store pending verification
+    code = _generate_otp()
+    _OTP_STORE[identifier] = {
+        "code":        code,
+        "expires_at":  datetime.now(timezone.utc) + timedelta(minutes=_OTP_TTL_MINUTES),
+        "attempts":    0,
+        "last_resend": datetime.now(timezone.utc),
+        "resend_count": 0,
+        "session_data": {
+            "credential_id": credential_id,
+            "lead_id":       lead_id,
+            "account_id":    account_id,
+            "contact_id":    contact_id,
+            "first_name":    first_name,
+            "last_name":     last_name,
+            "source_table":  source_table,
+        },
+    }
+
+    try:
+        _send_otp_email(identifier, code, first_name)
+        logger.info(f"OTP email sent to {identifier!r}")
+    except Exception as exc:
+        logger.error(f"Failed to send OTP email to {identifier!r}: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail="Account created but verification email could not be sent. "
+                   "Please use 'Resend Code' or contact support.",
+        )
+
     return AuthResponse(
         success=True,
-        message="Email verified! Welcome to Orbit CRM.",
-        session_token=session_token, credential_id=credential_id,
-        lead_id=lead_id, account_id=account_id, contact_id=contact_id,
-        identifier=identifier, email=identifier,
-        first_name=first_name, last_name=last_name, source_table=source_table,
+        message="Account created. Check your email for the verification code.",
+        identifier=identifier,
+        email=identifier,
+        first_name=first_name,
+        last_name=last_name,
     )
-
-
-@router.post("/auth/resend-verification", response_model=AuthResponse)
-async def resend_verification(req: ResendCodeRequest, background_tasks: BackgroundTasks):
-    """Resend a new 6-digit verification code, invalidating the previous one."""
-    identifier = req.identifier.strip().lower()
-    token      = _find_pending_by_email(identifier)
-
-    if not token:
-        return AuthResponse(success=True, message="If that email has a pending signup, a new code has been sent.")
-
-    pending = _PENDING_SIGNUPS[token]
-    if pending.get('resend_count', 0) >= _MAX_RESENDS:
-        raise HTTPException(status_code=429, detail="Too many resend requests. Please wait and try again later.")
-
-    new_code = _generate_code()
-    pending['code']            = new_code
-    pending['code_expires_at'] = datetime.now(timezone.utc) + timedelta(minutes=_CODE_TTL_MINUTES)
-    pending['attempts']        = 0
-    pending['resend_count']    = pending.get('resend_count', 0) + 1
-
-    background_tasks.add_task(_send_verification_code_email, identifier, pending.get('first_name', ''), new_code)
-    logger.info(f"New verification code sent for {identifier!r} (resend #{pending['resend_count']})")
-
-    return AuthResponse(success=True, message="A new verification code has been sent to your email.", email=identifier)
 
 
 @router.post("/auth/signin", response_model=AuthResponse)
@@ -617,12 +457,6 @@ async def signin(req: SignInRequest):
         raise HTTPException(status_code=500, detail="Authentication error")
 
     if not row or not row[0]:
-        # Check if email is pending verification
-        if _find_pending_by_email(identifier):
-            raise HTTPException(
-                status_code=403,
-                detail="Your email is not verified yet. Please check your inbox for the verification email.",
-            )
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     payload = row[0]
@@ -636,6 +470,23 @@ async def signin(req: SignInRequest):
     first_name    = payload.get("first_name", "")
     last_name     = payload.get("last_name", "")
     source_table  = payload.get("source_table", "leads")
+
+    # Check email verified (contacts table only; leads don't require verification)
+    if contact_id and source_table == "contacts":
+        try:
+            ver_row = _db_fetchone(
+                "SELECT is_email_verified FROM public.contacts WHERE contact_id = %s::uuid",
+                (contact_id,),
+            )
+            if ver_row and ver_row[0] is False:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Your email is not verified yet. Please check your inbox or request a new code.",
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning(f"Could not check email verification status: {exc}")
 
     session_token = _new_session(
         account_id=account_id or "",
@@ -778,6 +629,161 @@ async def password_reset_confirm(req: PasswordResetConfirmRequest):
             detail="Invalid, expired, or already-used reset token",
         )
     return AuthResponse(success=True, message="Password reset. Please sign in.")
+
+
+@router.post("/auth/verify-code", response_model=AuthResponse)
+async def verify_code(req: VerifyCodeRequest):
+    """Verify 6-digit OTP sent after signup. Issues session on success."""
+    identifier = req.identifier.strip().lower()
+    entry = _OTP_STORE.get(identifier)
+
+    if not entry:
+        raise HTTPException(status_code=404, detail="No pending verification for this email")
+
+    if datetime.now(timezone.utc) > entry["expires_at"]:
+        _OTP_STORE.pop(identifier, None)
+        raise HTTPException(status_code=410, detail="Verification code has expired. Request a new one.")
+
+    if entry["attempts"] >= _OTP_MAX_ATTEMPTS:
+        raise HTTPException(status_code=429, detail="Too many failed attempts. Request a new code.")
+
+    if req.code != entry["code"]:
+        entry["attempts"] += 1
+        remaining = _OTP_MAX_ATTEMPTS - entry["attempts"]
+        raise HTTPException(
+            status_code=401,
+            detail=f"Incorrect code. {remaining} attempt{'s' if remaining != 1 else ''} remaining.",
+        )
+
+    # Code correct — mark contact email verified if applicable
+    sd = entry["session_data"]
+    if sd.get("contact_id"):
+        try:
+            _db_execute(
+                "UPDATE public.contacts SET is_email_verified = true, updated_at = now() "
+                "WHERE contact_id = %s::uuid",
+                (sd["contact_id"],),
+            )
+        except Exception as exc:
+            logger.warning(f"Could not mark email verified for contact {sd['contact_id']}: {exc}")
+
+    _OTP_STORE.pop(identifier, None)
+
+    session_token = _new_session(
+        account_id=sd.get("account_id") or "",
+        credential_id=sd["credential_id"],
+        identifier=identifier,
+        lead_id=sd.get("lead_id"),
+        contact_id=sd.get("contact_id"),
+        first_name=sd.get("first_name", ""),
+        last_name=sd.get("last_name", ""),
+        source_table=sd.get("source_table", "leads"),
+    )
+
+    logger.info(f"Email verified and session issued for {identifier!r}")
+    return AuthResponse(
+        success=True,
+        message="Email verified. Welcome to Orbit CRM.",
+        session_token=session_token,
+        credential_id=sd["credential_id"],
+        lead_id=sd.get("lead_id"),
+        account_id=sd.get("account_id"),
+        contact_id=sd.get("contact_id"),
+        identifier=identifier,
+        email=identifier,
+        first_name=sd.get("first_name", ""),
+        last_name=sd.get("last_name", ""),
+        source_table=sd.get("source_table", "leads"),
+    )
+
+
+@router.post("/auth/resend-verification", response_model=AuthResponse)
+async def resend_verification(req: ResendVerificationRequest):
+    """Resend OTP to the given email. Rate-limited."""
+    identifier = req.identifier.strip().lower()
+    entry = _OTP_STORE.get(identifier)
+
+    if entry:
+        now = datetime.now(timezone.utc)
+        elapsed = (now - entry["last_resend"]).total_seconds()
+        if elapsed < _OTP_RESEND_COOLDOWN_SECONDS:
+            wait = int(_OTP_RESEND_COOLDOWN_SECONDS - elapsed)
+            raise HTTPException(
+                status_code=429,
+                detail=f"Please wait {wait} second{'s' if wait != 1 else ''} before requesting a new code.",
+            )
+        if entry["resend_count"] >= _OTP_MAX_RESENDS:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many resend requests. Please try again later or contact support.",
+            )
+        first_name = entry["session_data"].get("first_name", "")
+        resend_count = entry["resend_count"] + 1
+        sd = entry["session_data"]
+    else:
+        # Allow resend for existing unverified contacts (e.g. from signin 403 flow)
+        try:
+            row = _db_fetchone(
+                """
+                SELECT c.contact_id, c.first_name, c.last_name, c.is_email_verified,
+                       ac.credential_id,
+                       l.lead_id, c.account_id
+                FROM   public.contacts c
+                LEFT   JOIN public.auth_credentials ac
+                       ON  ac.identifier = lower(c.email)
+                       AND ac.credential_type = 'password' AND ac.is_active = true
+                LEFT   JOIN public.leads l ON l.converted_contact_id = c.contact_id
+                WHERE  c.email = lower(%s) AND c.is_deleted = false
+                LIMIT  1
+                """,
+                (identifier,),
+            )
+        except Exception as exc:
+            logger.error(f"resend_verification DB lookup error: {exc}")
+            raise HTTPException(status_code=500, detail="Lookup failed")
+
+        if not row:
+            # Respond vaguely to avoid account enumeration
+            return AuthResponse(
+                success=True,
+                message="If that account exists, a new verification code has been sent.",
+            )
+        contact_id, first_name, last_name, is_verified, credential_id, lead_id, account_id = row
+        if is_verified:
+            return AuthResponse(success=True, message="Email is already verified. Please sign in.")
+
+        sd = {
+            "credential_id": str(credential_id) if credential_id else "",
+            "lead_id":       str(lead_id)       if lead_id       else None,
+            "account_id":    str(account_id)    if account_id    else None,
+            "contact_id":    str(contact_id),
+            "first_name":    first_name or "",
+            "last_name":     last_name  or "",
+            "source_table":  "contacts",
+        }
+        resend_count = 1
+
+    code = _generate_otp()
+    _OTP_STORE[identifier] = {
+        "code":        code,
+        "expires_at":  datetime.now(timezone.utc) + timedelta(minutes=_OTP_TTL_MINUTES),
+        "attempts":    0,
+        "last_resend": datetime.now(timezone.utc),
+        "resend_count": resend_count,
+        "session_data": sd,
+    }
+
+    try:
+        _send_otp_email(identifier, code, first_name or "")
+        logger.info(f"OTP resent to {identifier!r}")
+    except Exception as exc:
+        logger.error(f"Failed to resend OTP to {identifier!r}: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to send verification email. Please try again.")
+
+    return AuthResponse(
+        success=True,
+        message="A new verification code has been sent to your email.",
+    )
 
 
 @router.get("/auth/address")
