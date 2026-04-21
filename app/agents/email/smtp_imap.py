@@ -53,8 +53,9 @@ def _send_via_resend(
     import urllib.error
     import json as _json
 
-    api_key = os.environ.get('RESEND_API_KEY', '')
-    resend_from = os.environ.get('RESEND_FROM', from_addr)
+    api_key = os.environ.get('RESEND_API_KEY', '').strip()
+    resend_from = os.environ.get('RESEND_FROM', from_addr).strip()
+    to = to.strip()
     logger.info(f"[Resend] from={resend_from!r} to={to!r} key_prefix={api_key[:8] if api_key else 'MISSING'}...")
 
     payload: Dict[str, Any] = {
@@ -65,7 +66,7 @@ def _send_via_resend(
         'text':    body_text,
     }
     if bcc_addr:
-        payload['bcc'] = [bcc_addr]
+        payload['bcc'] = [bcc_addr.strip()]
 
     req = urllib.request.Request(
         'https://api.resend.com/emails',
@@ -73,6 +74,7 @@ def _send_via_resend(
         headers={
             'Authorization': f'Bearer {api_key}',
             'Content-Type':  'application/json',
+            'User-Agent':    'OrbitCRM/1.0',
         },
         method='POST',
     )
@@ -84,8 +86,12 @@ def _send_via_resend(
     except urllib.error.HTTPError as http_err:
         error_body = http_err.read().decode('utf-8', errors='replace')
         logger.error(f"[Resend] HTTP {http_err.code} — response: {error_body}")
+        # If we get a 403 with error code 1010, it's a Cloudflare block
+        if http_err.code == 403 and "1010" in error_body:
+            logger.error("[Resend] Request blocked by Cloudflare (Error 1010). Check User-Agent or IP reputation.")
         raise
     return {'success': True, 'message': f'Email sent to {to}', 'to': to, 'subject': subject}
+
 
 
 def send_email(
