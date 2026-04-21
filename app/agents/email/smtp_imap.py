@@ -54,6 +54,8 @@ def _send_via_resend(
 
     api_key = os.environ.get('RESEND_API_KEY', '')
     resend_from = os.environ.get('RESEND_FROM', from_addr)
+    logger.debug(f"[Resend] from={resend_from!r} to={to!r} subject={subject!r}")
+
     payload: Dict[str, Any] = {
         'from':    f'{from_name} <{resend_from}>',
         'to':      [to],
@@ -64,6 +66,7 @@ def _send_via_resend(
     if bcc_addr:
         payload['bcc'] = [bcc_addr]
 
+    logger.debug(f"[Resend] POST https://api.resend.com/emails — key present={bool(api_key)}")
     req = urllib.request.Request(
         'https://api.resend.com/emails',
         data=_json.dumps(payload).encode('utf-8'),
@@ -74,8 +77,9 @@ def _send_via_resend(
         method='POST',
     )
     with urllib.request.urlopen(req, timeout=15) as resp:
+        status_code = resp.status
         body = _json.loads(resp.read().decode('utf-8'))
-    logger.info(f"Email sent (Resend) → {to} | id={body.get('id')} | subject={subject!r}")
+    logger.info(f"[Resend] OK status={status_code} id={body.get('id')} → {to} | subject={subject!r}")
     return {'success': True, 'message': f'Email sent to {to}', 'to': to, 'subject': subject}
 
 
@@ -94,14 +98,19 @@ def send_email(
     port     = _smtp_port()
     bcc_addr = bcc or _bcc_address()
 
+    resend_key = os.environ.get('RESEND_API_KEY', '')
+    logger.info(f"[send_email] to={to!r} | RESEND_API_KEY={'SET' if resend_key else 'NOT SET'} | smtp={host}:{port}")
+
     # Prefer Resend API for reliable delivery on cloud platforms (Railway)
-    if os.environ.get('RESEND_API_KEY'):
+    if resend_key:
+        logger.info(f"[send_email] → using Resend API path")
         try:
             return _send_via_resend(to, subject, body_html, body_text, addr, from_name, bcc_addr)
         except Exception as e:
-            logger.error(f"Resend API error: {e}", exc_info=True)
+            logger.error(f"[send_email] Resend API error: {e}", exc_info=True)
             return {'success': False, 'message': str(e)}
 
+    logger.info(f"[send_email] → using SMTP path (host={host} port={port})")
     try:
         msg = MIMEMultipart('alternative')
         msg['Subject'] = subject
@@ -118,25 +127,24 @@ def send_email(
         raw        = msg.as_string()
 
         try:
-            # Primary: SMTP_SSL (port 465)
+            logger.debug(f"[send_email] Trying SMTP_SSL {host}:{port} timeout=15s")
             with smtplib.SMTP_SSL(host, port, context=context, timeout=15) as server:
                 server.login(addr, password)
                 server.sendmail(addr, recipients, raw)
-            logger.info(f"Email sent (SSL) → {to} | subject={subject!r}")
+            logger.info(f"[send_email] Email sent (SSL) → {to} | subject={subject!r}")
         except smtplib.SMTPException as smtp_err:
-            # Fallback: STARTTLS on port 587 (Railway may block 465)
-            logger.warning(f"SMTP_SSL failed ({smtp_err}), retrying with STARTTLS on port 587")
+            logger.warning(f"[send_email] SMTP_SSL failed: {smtp_err} — retrying STARTTLS on port 587")
             with smtplib.SMTP(host, 587, timeout=15) as server:
                 server.ehlo()
                 server.starttls(context=context)
                 server.login(addr, password)
                 server.sendmail(addr, recipients, raw)
-            logger.info(f"Email sent (STARTTLS) → {to} | subject={subject!r}")
+            logger.info(f"[send_email] Email sent (STARTTLS) → {to} | subject={subject!r}")
 
         return {'success': True, 'message': f'Email sent to {to}', 'to': to, 'subject': subject}
 
     except Exception as e:
-        logger.error(f"SMTP error: {e}", exc_info=True)
+        logger.error(f"[send_email] SMTP error: {e}", exc_info=True)
         return {'success': False, 'message': str(e)}
 
 
