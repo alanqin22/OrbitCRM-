@@ -39,6 +39,11 @@ def _imap_port()     -> int:  return int(os.environ.get('EMAIL_IMAP_PORT', '993'
 def _bcc_address()   -> str:  return os.environ.get('EMAIL_BCC',        'info@agentorc.ca')
 
 
+def _clean(value: str) -> str:
+    """Strip all whitespace including non-breaking spaces."""
+    return ''.join(ch for ch in value if not ch.isspace()) if value else value
+
+
 def _send_via_resend(
     to: str,
     subject: str,
@@ -48,14 +53,12 @@ def _send_via_resend(
     from_name: str,
     bcc_addr: str,
 ) -> Dict[str, Any]:
-    """Send via Resend API (used when RESEND_API_KEY is set)."""
-    import urllib.request
-    import urllib.error
-    import json as _json
+    """Send via Resend API using the requests library (avoids Cloudflare bot detection)."""
+    import requests as _requests
 
-    api_key = os.environ.get('RESEND_API_KEY', '').strip()
-    resend_from = os.environ.get('RESEND_FROM', from_addr).strip()
-    to = to.strip()
+    api_key     = _clean(os.environ.get('RESEND_API_KEY', ''))
+    resend_from = _clean(os.environ.get('RESEND_FROM', from_addr))
+    to          = _clean(to)
     logger.info(f"[Resend] from={resend_from!r} to={to!r} key_prefix={api_key[:8] if api_key else 'MISSING'}...")
 
     payload: Dict[str, Any] = {
@@ -66,30 +69,18 @@ def _send_via_resend(
         'text':    body_text,
     }
     if bcc_addr:
-        payload['bcc'] = [bcc_addr.strip()]
+        payload['bcc'] = [_clean(bcc_addr)]
 
-    req = urllib.request.Request(
+    resp = _requests.post(
         'https://api.resend.com/emails',
-        data=_json.dumps(payload).encode('utf-8'),
-        headers={
-            'Authorization': f'Bearer {api_key}',
-            'Content-Type':  'application/json',
-            'User-Agent':    'OrbitCRM/1.0',
-        },
-        method='POST',
+        headers={'Authorization': f'Bearer {api_key}'},
+        json=payload,
+        timeout=15,
     )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            status_code = resp.status
-            body = _json.loads(resp.read().decode('utf-8'))
-        logger.info(f"[Resend] OK status={status_code} id={body.get('id')} → {to} | subject={subject!r}")
-    except urllib.error.HTTPError as http_err:
-        error_body = http_err.read().decode('utf-8', errors='replace')
-        logger.error(f"[Resend] HTTP {http_err.code} — response: {error_body}")
-        # If we get a 403 with error code 1010, it's a Cloudflare block
-        if http_err.code == 403 and "1010" in error_body:
-            logger.error("[Resend] Request blocked by Cloudflare (Error 1010). Check User-Agent or IP reputation.")
-        raise
+    logger.info(f"[Resend] HTTP {resp.status_code} — body: {resp.text[:300]}")
+    resp.raise_for_status()
+    body = resp.json()
+    logger.info(f"[Resend] OK id={body.get('id')} → {to} | subject={subject!r}")
     return {'success': True, 'message': f'Email sent to {to}', 'to': to, 'subject': subject}
 
 
