@@ -9,10 +9,9 @@ Adding a new agent:
   module-specific timeout), add them as optional fields below.
 """
 
-import os
-from typing import Literal
+from typing import Literal, Optional
 from functools import lru_cache
-from pydantic import Field
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
@@ -35,33 +34,33 @@ class Settings(BaseSettings):
 
     # ── Database ──────────────────────────────────────────────────────────────
     db_dsn: str = "postgresql://postgres:aria@localhost:5434/crmdb"
+    database_url: Optional[str] = None  # Railway injects this automatically
 
     # ── Application ───────────────────────────────────────────────────────────
     debug: bool = True
     log_level: str = "INFO"
 
-    # ── Server (unified crm_agent listens on a single port) ───────────────────
-    # Individual agent zip files used 8003 / 8004.
-    # The merged application uses one port; all agent endpoints are
-    # available at /account-chat, /contact-chat, etc. on the same server.
+    # ── Server ────────────────────────────────────────────────────────────────
     host: str = "0.0.0.0"
     port: int = 8000
 
     # ── Memory ────────────────────────────────────────────────────────────────
-    # Number of previous conversation turns (user + assistant pairs) to retain
-    # per session.  Set to 0 to disable memory (stateless mode).
     memory_window_size: int = 5
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        # Ensure Railway's dynamically injected environment variables take ultimate precedence
-        if os.environ.get("DATABASE_URL"):
-            self.db_dsn = os.environ.get("DATABASE_URL")
-        elif os.environ.get("DB_DSN"):
-            self.db_dsn = os.environ.get("DB_DSN")
-            
-        if os.environ.get("PORT"):
-            self.port = int(os.environ.get("PORT"))
+    # ── SMTP (OTP email verification) ─────────────────────────────────────────
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_pass: str = ""
+    smtp_from: str = "noreply@agentorc.ca"
+    smtp_tls: bool = True
+
+    @model_validator(mode='after')
+    def apply_railway_overrides(self) -> 'Settings':
+        """Let Railway's DATABASE_URL override db_dsn when present."""
+        if self.database_url:
+            self.db_dsn = self.database_url
+        return self
 
     @property
     def llm_model(self) -> str:
