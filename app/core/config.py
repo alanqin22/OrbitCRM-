@@ -47,6 +47,14 @@ class Settings(BaseSettings):
     # ── Memory ────────────────────────────────────────────────────────────────
     memory_window_size: int = 5
 
+    # ── SMTP (OTP email verification) ─────────────────────────────────────────
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_pass: str = ""
+    smtp_from: str = "noreply@agentorc.ca"
+    smtp_tls: bool = True
+
     @model_validator(mode='after')
     def apply_railway_overrides(self) -> 'Settings':
         """Let Railway's DATABASE_URL override db_dsn when present."""
