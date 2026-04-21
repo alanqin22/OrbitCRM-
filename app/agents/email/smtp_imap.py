@@ -50,11 +50,12 @@ def _send_via_resend(
 ) -> Dict[str, Any]:
     """Send via Resend API (used when RESEND_API_KEY is set)."""
     import urllib.request
+    import urllib.error
     import json as _json
 
     api_key = os.environ.get('RESEND_API_KEY', '')
     resend_from = os.environ.get('RESEND_FROM', from_addr)
-    logger.debug(f"[Resend] from={resend_from!r} to={to!r} subject={subject!r}")
+    logger.info(f"[Resend] from={resend_from!r} to={to!r} key_prefix={api_key[:8] if api_key else 'MISSING'}...")
 
     payload: Dict[str, Any] = {
         'from':    f'{from_name} <{resend_from}>',
@@ -66,7 +67,6 @@ def _send_via_resend(
     if bcc_addr:
         payload['bcc'] = [bcc_addr]
 
-    logger.debug(f"[Resend] POST https://api.resend.com/emails — key present={bool(api_key)}")
     req = urllib.request.Request(
         'https://api.resend.com/emails',
         data=_json.dumps(payload).encode('utf-8'),
@@ -76,10 +76,15 @@ def _send_via_resend(
         },
         method='POST',
     )
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        status_code = resp.status
-        body = _json.loads(resp.read().decode('utf-8'))
-    logger.info(f"[Resend] OK status={status_code} id={body.get('id')} → {to} | subject={subject!r}")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            status_code = resp.status
+            body = _json.loads(resp.read().decode('utf-8'))
+        logger.info(f"[Resend] OK status={status_code} id={body.get('id')} → {to} | subject={subject!r}")
+    except urllib.error.HTTPError as http_err:
+        error_body = http_err.read().decode('utf-8', errors='replace')
+        logger.error(f"[Resend] HTTP {http_err.code} — response: {error_body}")
+        raise
     return {'success': True, 'message': f'Email sent to {to}', 'to': to, 'subject': subject}
 
 
