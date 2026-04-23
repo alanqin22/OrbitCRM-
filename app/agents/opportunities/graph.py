@@ -117,6 +117,20 @@ def parse_output_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Parse AI Output — extract JSON from the LLM's response."""
     logger.info("=== Opportunities Parse Output Node ===")
     parsed = parse_ai_json(state.get("ai_output") or "")
+
+    if parsed and parsed.get("mode") == "list" and not parsed.get("search"):
+        user_input = state.get("user_input") or ""
+        name_m = re.search(
+            r'(?:find|search|show|get|look\s*up|list)\s+'
+            r'(?:opportunities?\s+)?(?:named?\s+|called\s+|for\s+)?'
+            r'["\']?([A-Za-z][A-Za-z\s\-\']{1,40}?)["\']?'
+            r'\s*(?:$|[.,!?])',
+            user_input, re.IGNORECASE,
+        )
+        if name_m:
+            parsed["search"] = name_m.group(1).strip()
+            logger.info(f"Recovered search term from user_input: {parsed['search']!r}")
+
     if parsed:
         return {**state, "parsed_json": parsed, "should_call_api": True}
     return {**state, "parsed_json": None, "should_call_api": False}
