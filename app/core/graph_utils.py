@@ -186,6 +186,40 @@ def parse_ai_json(ai_output: str) -> Optional[Dict[str, Any]]:
         except json.JSONDecodeError:
             pass
 
+    # 4. JSON found but without a mode key — infer mode from known field names
+    for candidate in reversed(candidates):
+        try:
+            parsed = json.loads(candidate)
+            if parsed.get("mode"):
+                continue  # already handled above
+            inferred: Optional[str] = None
+            if "search" in parsed:
+                inferred = "list"
+            elif any(k in parsed for k in ("contact_id", "account_id", "lead_id",
+                                            "opportunity_id", "order_id", "product_id")):
+                inferred = "get"
+            elif any(k in parsed for k in ("first_name", "last_name", "email",
+                                            "account_name", "company")):
+                inferred = "create"
+            if inferred:
+                parsed["mode"] = inferred
+                logger.info(f"Inferred mode '{inferred}' from JSON fields (no mode key): {list(parsed.keys())}")
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # 5. [MODE:xxx] text marker fallback — model emitted a tag instead of JSON
+    mode_tag = re.search(r'\[MODE:(\w+)\]', ai_output, re.IGNORECASE)
+    if mode_tag:
+        mode = mode_tag.group(1).lower()
+        params: Dict[str, Any] = {"mode": mode}
+        # Try to pick up a search term that appears near the marker
+        search_m = re.search(r'search[:\s]+["\']?([^"\'\[\]\n,]+)["\']?', ai_output, re.IGNORECASE)
+        if search_m:
+            params["search"] = search_m.group(1).strip()
+        logger.info(f"Parsed mode via [MODE:xxx] marker fallback: {params}")
+        return params
+
     logger.info("No valid JSON with mode found — conversational response")
     return None
 
