@@ -123,6 +123,32 @@ async def normalise_path(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def private_network_access(request: Request, call_next):
+    """Allow Chrome's Private Network Access preflight (file:// → localhost).
+
+    Chrome 94+ sends Access-Control-Request-Private-Network: true on OPTIONS
+    preflights from null/file origins to localhost.  Starlette's CORS
+    middleware does not handle this header, so the preflight fails and the
+    browser blocks the fetch with 'Failed to fetch'.
+    """
+    if (request.method == "OPTIONS" and
+            request.headers.get("access-control-request-private-network") == "true"):
+        from fastapi.responses import Response
+        return Response(
+            status_code=204,
+            headers={
+                "Access-Control-Allow-Origin":          request.headers.get("origin", "*"),
+                "Access-Control-Allow-Methods":         "POST, GET, OPTIONS",
+                "Access-Control-Allow-Headers":         "Content-Type",
+                "Access-Control-Allow-Private-Network": "true",
+                "Access-Control-Max-Age":               "600",
+            },
+        )
+    response = await call_next(request)
+    return response
+
+
 # -- Home dashboard (registered first for fast routing)
 app.include_router(home_router)
 
