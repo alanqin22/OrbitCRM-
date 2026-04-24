@@ -198,8 +198,22 @@ def parse_ai_json(ai_output: str) -> Optional[Dict[str, Any]]:
             elif any(k in parsed for k in ("contact_id", "account_id", "lead_id",
                                             "opportunity_id", "order_id", "product_id")):
                 inferred = "get"
-            elif any(k in parsed for k in ("first_name", "last_name", "email",
-                                            "account_name", "company")):
+            elif any(k in parsed for k in ("firstName", "first_name",
+                                            "lastName", "last_name")):
+                # Name-only fields with no contact details → search query, not create
+                has_details = any(k in parsed for k in ("email", "phone", "role",
+                                                         "status", "billing_address"))
+                if has_details:
+                    inferred = "create"
+                else:
+                    inferred = "list"
+                    # Synthesise a search term from the name parts
+                    first = parsed.get("firstName") or parsed.get("first_name", "")
+                    last  = parsed.get("lastName")  or parsed.get("last_name",  "")
+                    name  = f"{first} {last}".strip()
+                    if name:
+                        parsed["search"] = name
+            elif any(k in parsed for k in ("email", "account_name", "company")):
                 inferred = "create"
             if inferred:
                 parsed["mode"] = inferred
