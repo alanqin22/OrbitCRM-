@@ -27,9 +27,10 @@ v2.2.0 — Added Store module (CRM Commerce View).
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import settings
 from app.core.database import test_connection
@@ -102,13 +103,38 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+class _PrivateNetworkMiddleware(BaseHTTPMiddleware):
+    """Intercept Chrome Private Network Access preflights before CORSMiddleware.
+
+    Chrome 94+ sends Access-Control-Request-Private-Network: true on OPTIONS
+    preflights from null (file://) origins to localhost.  Must be registered
+    AFTER CORSMiddleware so it wraps it and runs first.
+    """
+    async def dispatch(self, request: Request, call_next):
+        if (request.method == "OPTIONS" and
+                request.headers.get("access-control-request-private-network") == "true"):
+            return Response(
+                status_code=204,
+                headers={
+                    "Access-Control-Allow-Origin":          request.headers.get("origin", "*"),
+                    "Access-Control-Allow-Methods":         "POST, GET, OPTIONS",
+                    "Access-Control-Allow-Headers":         "Content-Type",
+                    "Access-Control-Allow-Private-Network": "true",
+                    "Access-Control-Max-Age":               "600",
+                },
+            )
+        return await call_next(request)
+
+
+# Middleware stack — registered in reverse execution order (last added = first run).
+# 1. CORSMiddleware  — added first → runs second
+# 2. _PrivateNetworkMiddleware — added second → runs first (intercepts before CORS)
+app.add_middleware(CORSMiddleware,
+                   allow_origins=["*"],
+                   allow_credentials=False,
+                   allow_methods=["*"],
+                   allow_headers=["*"])
+app.add_middleware(_PrivateNetworkMiddleware)
 
 
 @app.middleware("http")
@@ -121,32 +147,6 @@ async def normalise_path(request: Request, call_next):
         scope["raw_path"] = corrected.encode()
         request = Request(scope, request.receive, request._send)
     return await call_next(request)
-
-
-@app.middleware("http")
-async def private_network_access(request: Request, call_next):
-    """Allow Chrome's Private Network Access preflight (file:// → localhost).
-
-    Chrome 94+ sends Access-Control-Request-Private-Network: true on OPTIONS
-    preflights from null/file origins to localhost.  Starlette's CORS
-    middleware does not handle this header, so the preflight fails and the
-    browser blocks the fetch with 'Failed to fetch'.
-    """
-    if (request.method == "OPTIONS" and
-            request.headers.get("access-control-request-private-network") == "true"):
-        from fastapi.responses import Response
-        return Response(
-            status_code=204,
-            headers={
-                "Access-Control-Allow-Origin":          request.headers.get("origin", "*"),
-                "Access-Control-Allow-Methods":         "POST, GET, OPTIONS",
-                "Access-Control-Allow-Headers":         "Content-Type",
-                "Access-Control-Allow-Private-Network": "true",
-                "Access-Control-Max-Age":               "600",
-            },
-        )
-    response = await call_next(request)
-    return response
 
 
 # -- Home dashboard (registered first for fast routing)
