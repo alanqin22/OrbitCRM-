@@ -144,9 +144,17 @@ def _match_nl(message: str) -> Optional[dict]:
     # Search / find opportunities
     if re.search(r'\b(search|find)\b.*\bopportunit', msg):
         params = {'mode': 'list', 'page_size': 50, 'page_number': 1}
+        # "named X" / "called X"
         nm = re.search(r"(?:named?|called?)\s+[\"']?([^\"']+?)[\"']?(?:\s|$)", msg, re.IGNORECASE)
         if nm:
             params['search'] = nm.group(1).strip()
+        else:
+            # "find opportunities: David"  or  "find opportunities David"
+            colon = re.search(r'opportunit\w*[:\s]+(.+)', msg, re.IGNORECASE)
+            if colon:
+                term = colon.group(1).strip().strip('"\'')
+                if term:
+                    params['search'] = term
         return params
 
     return None

@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     smtp_from: str = "noreply@agentorc.ca"
     smtp_tls: bool = True
 
+    # ── Azure Speech (browser STT — Bing-style engine for Edge sensitivity) ───
+    # If unset, /voice/azure-token returns 503 and the frontend falls back to
+    # the browser's built-in Web Speech API.
+    azure_speech_key: str = ""
+    azure_speech_region: str = "eastus"
+
     @model_validator(mode='after')
     def apply_railway_overrides(self) -> 'Settings':
         """Let Railway's DATABASE_URL override db_dsn when present."""
