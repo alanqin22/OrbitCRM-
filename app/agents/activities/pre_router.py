@@ -221,5 +221,70 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
         logger.info('[get_owners] direct route — returning active owner list')
         return _routed({'mode': 'get_owners'})
 
+    # ── Natural-language shortcuts ────────────────────────────────────────────
+    # Catch common typed/voice queries before they reach the AI Agent, which
+    # returns empty results for these well-known filter requests.
+
+    # "pending activities" / "show pending" / "open activities" / "incomplete"
+    _PENDING_RE = re.compile(
+        r'\b(pending|not\s+completed?|incomplete|open)\b.*\bactivit|\bactivit.*\b(pending|open|incomplete)\b',
+        re.IGNORECASE,
+    )
+    if _PENDING_RE.search(raw):
+        logger.info('[NL] → pending activities shortcut: mode=list includeCompleted=False')
+        return _routed({
+            'mode':             'list',
+            'includeCompleted': False,
+            'pageNumber':       1,
+            'pageSize':         50,
+        })
+
+    # "overdue activities" / "activities overdue" / "past due activities"
+    _OVERDUE_RE = re.compile(
+        r'\b(overdue|past\s+due|late)\b.*\bactivit|\bactivit.*\b(overdue|past\s+due|late)\b',
+        re.IGNORECASE,
+    )
+    if _OVERDUE_RE.search(raw):
+        logger.info('[NL] → overdue activities shortcut: mode=overdue')
+        return _routed({'mode': 'overdue'})
+
+    # "upcoming activities" / "activities this week" / "scheduled activities"
+    _UPCOMING_RE = re.compile(
+        r'\b(upcoming|this\s+week|scheduled|future)\b.*\bactivit|\bactivit.*\b(upcoming|this\s+week|scheduled)\b',
+        re.IGNORECASE,
+    )
+    if _UPCOMING_RE.search(raw):
+        logger.info('[NL] → upcoming activities shortcut: mode=upcoming')
+        return _routed({'mode': 'upcoming'})
+
+    # "completed activities" / "activities completed" / "finished activities"
+    _COMPLETED_RE = re.compile(
+        r'\b(completed?|finished?|done|closed)\b.*\bactivit|\bactivit.*\b(completed?|finished?|done|closed)\b',
+        re.IGNORECASE,
+    )
+    if _COMPLETED_RE.search(raw):
+        logger.info('[NL] → completed activities shortcut: mode=list onlyCompleted=True')
+        return _routed({
+            'mode':             'list',
+            'includeCompleted': True,
+            'onlyCompleted':    True,
+            'pageNumber':       1,
+            'pageSize':         50,
+        })
+
+    # "all activities" / "list all activities" / "show me activities" / "my activities"
+    _ALL_RE = re.compile(
+        r'\b(all|every|show\s+(me\s+)?|list\s+(all\s+)?|my\s+|get\s+)\bactivit|\bactivit\b',
+        re.IGNORECASE,
+    )
+    if _ALL_RE.search(raw):
+        logger.info('[NL] → all activities shortcut: mode=list includeCompleted=True')
+        return _routed({
+            'mode':             'list',
+            'includeCompleted': True,
+            'pageNumber':       1,
+            'pageSize':         50,
+        })
+
     # ── Fallback: AI Agent ───────────────────────────────────────────────────
     return _passthru(raw, chat_input)
