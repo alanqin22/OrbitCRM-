@@ -288,6 +288,9 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             }
             out.append(f"**Page:** {pg['page']} of {pg['totalPages']} | **Total:** {pg['totalRecords']} orders")
             out.append(f"**Sort:** {pg['sortBy']} {pg['sortOrder']}")
+            search_term = (params.get('search') or '').strip()
+            if search_term:
+                out.append(f'**Search:** "{search_term}"')
             out.append('')
             out.append('### Orders Summary')
             out.append('| # | Order Number | Order ID | Account | Contact | Date | Status | Total | Items |')

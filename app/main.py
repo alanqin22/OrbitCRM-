@@ -60,6 +60,9 @@ from app.agents.auth.router import router as auth_router
 # -- Email agent (SMTP/IMAP + LangGraph)
 from app.agents.email.router import router as email_router
 
+# -- Voice (browser STT auth-token mint for Azure Cognitive Services)
+from app.agents.voice.router import router as voice_router
+
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -173,11 +176,56 @@ app.include_router(auth_router)
 # -- Email agent (SMTP/IMAP + LangGraph)
 app.include_router(email_router)
 
+# -- Voice (Azure Speech token mint)
+app.include_router(voice_router)
+
 
 @app.get("/auth.html")
 async def serve_auth_html():
     """Serve auth.html so email verification redirect works at http://localhost:8000/auth.html"""
     return FileResponse("auth.html", media_type="text/html")
+
+
+@app.get("/product-chat.html")
+async def serve_product_chat_html():
+    """Serve product-chat.html over http so AudioWorklet / blob: URLs work for the
+    Azure Speech SDK (file:// origins are blocked from loading blob: workers)."""
+    return FileResponse("product-chat.html", media_type="text/html")
+
+
+# ── Chat-page routes ───────────────────────────────────────────────────────
+# Serve every *-chat.html over http://<host>/<filename>.html so the Azure
+# Speech SDK can use AudioWorklet (blocked on file:// origins). Each route
+# is registered explicitly (rather than via StaticFiles) so we don't
+# accidentally expose the whole project directory.
+_CHAT_PAGES = [
+    "account-chat.html",
+    "accounting-chat.html",
+    "activity-chat.html",
+    "analytics-chat.html",
+    "contact-chat.html",
+    "email-chat.html",
+    "lead-chat.html",
+    "notifications-chat.html",
+    "opportunity-chat.html",
+    "orchestrator-chat.html",
+    "order-chat.html",
+    "store-home.html",
+]
+
+def _register_chat_page(filename: str) -> None:
+    @app.get(f"/{filename}", name=f"serve_{filename.replace('-', '_').replace('.', '_')}")
+    async def _serve():
+        return FileResponse(filename, media_type="text/html")
+
+for _page in _CHAT_PAGES:
+    _register_chat_page(_page)
+
+
+@app.get("/favicon.ico")
+async def serve_favicon():
+    """Silence the auto-requested /favicon.ico 404 across every page."""
+    return FileResponse("logo/Orbit_CRM_Logo.png", media_type="image/png")
 
 
 @app.get("/")
