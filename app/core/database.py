@@ -34,7 +34,9 @@ logger = logging.getLogger(__name__)
 def get_connection():
     """Return a raw psycopg2 connection using DB_DSN from settings."""
     settings = get_settings()
-    return psycopg2.connect(settings.db_dsn)
+    conn = psycopg2.connect(settings.db_dsn)
+    conn.set_client_encoding('UTF8')
+    return conn
 
 
 # ── Generic SP executor ───────────────────────────────────────────────────────
