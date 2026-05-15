@@ -265,12 +265,21 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
     is_warning = metadata.get('status') == 'warning' or metadata.get('code') == 100
 
     if is_error:
+        code = metadata.get("code")
+        msg  = metadata.get("message", "Unknown error")
+        if code == -22:
+            hint = (
+                '\n\n**Tip:** This lead may have already been **converted**, **merged**, or is otherwise locked. '
+                'Converted leads are read-only. To make changes, update the associated Account or Contact instead.'
+            )
+        else:
+            hint = '\n\nPlease fix the input and try again.'
         output = (
             f'### ❌ ERROR\n'
             f'**Time:** {_fmt_dt(datetime.utcnow().isoformat())}\n'
-            f'**Error Code:** {metadata.get("code")}\n'
-            f'**Error Message:** {metadata.get("message", "Unknown error")}\n\n'
-            f'Please fix the input and try again.'
+            f'**Error Code:** {code}\n'
+            f'**Error Message:** {msg}\n'
+            f'{hint}'
         )
         return {'output': output, 'mode': mode, 'report_mode': 'error', 'success': False,
                 'leads': [], 'lead': None, 'pipeline': None, 'employees': [],
