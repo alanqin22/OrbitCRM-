@@ -371,9 +371,9 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
         out.append('| Field | Value |')
         out.append('|-------|-------|')
         out.append(f"| Created At | {_fmt_dt(contact.get('created_at'))} |")
-        out.append(f"| Created By | {contact.get('created_by') or 'N/A'} |")
+        out.append(f"| Created By | {contact.get('created_by_name') or contact.get('created_by') or 'N/A'} |")
         out.append(f"| Updated At | {_fmt_dt(contact.get('updated_at'))} |")
-        out.append(f"| Updated By | {contact.get('updated_by') or 'N/A'} |")
+        out.append(f"| Updated By | {contact.get('updated_by_name') or contact.get('updated_by') or 'N/A'} |")
         out.append('')
 
         return '\n'.join(out)
