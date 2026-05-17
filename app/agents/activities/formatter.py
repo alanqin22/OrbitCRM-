@@ -139,6 +139,18 @@ def _type_icon(t: str) -> str:
     return TYPE_ICONS.get(str(t or '').lower(), '•')
 
 
+_NULL_UUID = '00000000-0000-0000-0000-000000000000'
+
+def _owner_display(act: dict) -> str:
+    """Return owner display name, falling back to '—' for null/missing owners."""
+    name = act.get('owner_name') or ''
+    oid  = act.get('owner_id')   or ''
+    # Suppress the PostgreSQL null UUID — it means 'no owner assigned'
+    if oid == _NULL_UUID:
+        oid = ''
+    return name or oid or '—'
+
+
 def _mode_name(mode: str) -> str:
     return {
         'list':             'Activity List',
@@ -298,7 +310,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                 icon = _type_icon(t)
                 out.append(
                     f'| {icon} {t} | **{_clean_text(act.get("subject")) or "No subject"}** | '
-                    f'{act.get("owner_name") or act.get("owner_id") or "N/A"} | '
+                    f'{_owner_display(act)} | '
                     f'{_fmt_date(act.get("due_at"))} | '
                     f'{_fmt_dt(act.get("created_at"))} | '
                     f'{act.get("related_name") or "N/A"} | '
@@ -451,7 +463,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                 score       = act.get('activity_score')
                 out.append(
                     f'| {icon} {t} | **{_clean_text(act.get("subject")) or "No subject"}** | '
-                    f'{act.get("owner_name") or act.get("owner_id") or "N/A"} | '
+                    f'{_owner_display(act)} | '
                     f'{_fmt_date(act.get("due_at"))} | '
                     f'{days_over if days_over is not None else "N/A"} | '
                     f'{rel_name} | {rel_type} | '
@@ -478,7 +490,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                 score      = act.get('activity_score')
                 out.append(
                     f'| {icon} {t} | **{_clean_text(act.get("subject")) or "No subject"}** | '
-                    f'{act.get("owner_name") or act.get("owner_id") or "N/A"} | '
+                    f'{_owner_display(act)} | '
                     f'{_fmt_date(act.get("due_at"))} | '
                     f'{days_until if days_until is not None else "N/A"} | '
                     f'{rel_name} | {rel_type} | '
