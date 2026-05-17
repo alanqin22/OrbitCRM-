@@ -223,7 +223,7 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
                     'mode':              'low_stock',
                     'categoryFilter':    pd.get('category_id') or None,
                     'categoryNumber':    _to_num(pd.get('category_number'), int),
-                    'lowStockThreshold': _to_num(pd.get('low_stock_threshold'), int) or 10,
+                    'lowStockThreshold': _to_num(pd.get('low_stock_threshold'), int) or 80,
                     'skuFilter':         pd.get('sku_filter') or None,
                     'nameFilter':        pd.get('name_filter') or None
                 }

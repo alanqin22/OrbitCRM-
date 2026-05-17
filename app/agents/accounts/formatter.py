@@ -489,6 +489,11 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
         return '\n'.join(lines)
 
     # ── MERGE ─────────────────────────────────────────────────────────────────
+    if mode == 'list_owner':
+        owner_list = response.get('owners') or []
+        lines.append(f"Found {len(owner_list)} owner(s).")
+        return '\n'.join(lines)
+
     if mode == 'merge':
         mr = response.get('merge') or response
 

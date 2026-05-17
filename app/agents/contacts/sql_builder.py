@@ -48,6 +48,7 @@ VALID_PARAMS = {
     'search', 'includeDeleted', 'deletedOnly',
     'billingAddress', 'shippingAddress',
     'dateFrom', 'dateTo',
+    'isCustomer', 'isEmailVerified',
 }
 
 JSONB_PARAMS = {'payload', 'billingAddress', 'shippingAddress'}
@@ -74,6 +75,8 @@ _SNAKE_TO_CAMEL = {
     'date_to':             'dateTo',
     'billing_address':     'billingAddress',
     'shipping_address':    'shippingAddress',
+    'is_customer':         'isCustomer',
+    'is_email_verified':   'isEmailVerified',
 }
 
 UUID_PATTERN = re.compile(

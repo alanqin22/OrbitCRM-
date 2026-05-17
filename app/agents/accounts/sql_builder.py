@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 VALID_MODES = {
     'list', 'get', 'create', 'update',
     'timeline', 'financials', 'duplicates',
-    'merge', 'archive', 'restore', 'summary',
+    'merge', 'archive', 'restore', 'summary', 'list_owner',
 }
 
 VALID_PARAMS = {

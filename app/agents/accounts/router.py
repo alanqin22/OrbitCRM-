@@ -104,6 +104,7 @@ class AccountChatResponse(BaseModel):
     reportMode:     Optional[str] = None
     account:        Optional[dict] = None
     accounts:       Optional[list] = None
+    owners:         Optional[list] = None
     success:        bool = True
 
 
@@ -120,6 +121,7 @@ _REPORT_MODE_MAP = {
     "archive":    "archive",
     "restore":    "restore",
     "summary":    "summary",
+    "list_owner": "list_owner",
 }
 
 
@@ -177,6 +179,7 @@ async def account_chat(req: AccountChatRequest):
         parsed_db = _parse_response(db_rows) if called_db and db_rows else {}
         accounts  = parsed_db.get("accounts")
         account   = parsed_db.get("account")
+        owners    = parsed_db.get("owners")
 
         logger.info(f"Accounts request complete — DB={called_db}, mode={mode}")
 
@@ -189,6 +192,7 @@ async def account_chat(req: AccountChatRequest):
             reportMode=report_mode,
             account=account,
             accounts=accounts,
+            owners=owners,
             success=True,
         )
 
