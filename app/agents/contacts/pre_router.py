@@ -155,6 +155,8 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
             'accountId':       _val(chat_input.get('accountId')),
             'ownerId':         _val(chat_input.get('ownerId')),
             'createdBy':       _val(chat_input.get('createdBy')),
+            'isCustomer':      chat_input.get('isCustomer')      if isinstance(chat_input.get('isCustomer'), bool)      else None,
+            'isEmailVerified': chat_input.get('isEmailVerified') if isinstance(chat_input.get('isEmailVerified'), bool) else None,
             'billingAddress':  chat_input.get('billingAddress')  or None,
             'shippingAddress': chat_input.get('shippingAddress') or None,
         }))
@@ -177,6 +179,8 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
             'accountId':       _val(chat_input.get('accountId')),
             'ownerId':         _val(chat_input.get('ownerId')),
             'updatedBy':       _val(chat_input.get('updatedBy')),
+            'isCustomer':      chat_input.get('isCustomer')      if isinstance(chat_input.get('isCustomer'), bool)      else None,
+            'isEmailVerified': chat_input.get('isEmailVerified') if isinstance(chat_input.get('isEmailVerified'), bool) else None,
             'billingAddress':  chat_input.get('billingAddress')  or None,
             'shippingAddress': chat_input.get('shippingAddress') or None,
         }))

@@ -32,7 +32,14 @@ logger = logging.getLogger(__name__)
 # ── Connection factory ────────────────────────────────────────────────────────
 
 def get_connection():
-    """Return a raw psycopg2 connection using DB_DSN from settings."""
+    """Return a raw psycopg2 connection using DB_DSN from settings.
+
+    Forces client_encoding=UTF8 so multi-byte characters (e.g. 'é' in
+    'Québec', en-dashes) round-trip correctly regardless of what the
+    remote PostgreSQL server negotiates by default. Without this,
+    Railway connections may return UTF-8 bytes decoded as ASCII,
+    producing '??' per byte for non-ASCII characters.
+    """
     settings = get_settings()
     conn = psycopg2.connect(settings.db_dsn)
     conn.set_client_encoding('UTF8')

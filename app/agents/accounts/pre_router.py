@@ -47,7 +47,7 @@ UUID_RE = re.compile(
 VALID_DIRECT_MODES = {
     'create', 'update', 'get', 'list',
     'timeline', 'financials', 'duplicates', 'summary',
-    'archive', 'restore', 'merge',
+    'archive', 'restore', 'merge', 'list_owner',
 }
 
 # Keys injected by the pre-router itself that must NOT be forwarded to sp_accounts
@@ -157,6 +157,14 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
 
         logger.warning(f'[AccountDirect] unknown operation "{operation}" — passthru')
         return passthru()
+
+    # ── "list owners: <query>" — owner typeahead for Create/Update forms  ────
+    if msg.startswith('list owners:'):
+        query = raw[len('list owners:'):].strip()
+        params: Dict[str, Any] = {'mode': 'list_owner', 'pageSize': 50}
+        if query:
+            params['search'] = query
+        return routed(params)
 
     # ── "search accounts: <query>" — typeahead search  ───────────────────────
     # Sent by home-page and Update-form typeahead boxes.
