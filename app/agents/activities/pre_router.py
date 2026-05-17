@@ -190,6 +190,8 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
             'channel':     _val(chat_input.get('channel')),
             'ownerId':     _val(chat_input.get('ownerId')),
             'completedAt': completed_at,
+            'relatedType': _val(chat_input.get('relatedType')),
+            'relatedId':   _val(chat_input.get('relatedId')),
         })
 
     # ── "complete activity:" ─────────────────────────────────────────────────
