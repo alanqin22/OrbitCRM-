@@ -72,6 +72,7 @@ class ActivityChatResponse(BaseModel):
     reportMode:     Optional[str]  = None
     success:        bool           = True
     owners:         Optional[List] = None   # populated for get_owners mode
+    activity:       Optional[dict] = None   # populated for get/update/create/complete/reopen modes
 
 
 # ============================================================================
@@ -143,6 +144,7 @@ async def activity_chat(req: ActivityChatRequest):
             reportMode=report_mode,
             success=fmt_result.get("success", True),
             owners=fmt_result.get("owners"),
+            activity=fmt_result.get("activity"),
         )
 
     except Exception as e:

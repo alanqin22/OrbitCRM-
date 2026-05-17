@@ -253,14 +253,20 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
     elif mode == 'get':
         report_mode = 'activity_detail'
         activity    = response.get('activity')
+        if activity:
+            report_data['activity'] = activity
 
     elif mode in ('create', 'log_call', 'log_email', 'schedule_meeting', 'create_task', 'add_note'):
         report_mode = 'activity_created'
         activity    = response.get('activity')
+        if activity:
+            report_data['activity'] = activity
 
     elif mode in ('update', 'complete', 'reopen'):
         report_mode = 'activity_updated'
         activity    = response.get('activity')
+        if activity:
+            report_data['activity'] = activity
 
     elif mode == 'delete':
         report_mode = 'activity_deleted'
@@ -598,4 +604,5 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         'mode':        mode,
         'report_mode': report_mode,
         'success':     True,
+        **report_data,
     }
