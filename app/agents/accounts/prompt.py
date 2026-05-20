@@ -151,7 +151,7 @@ Example: {"mode": "get", "accountName": "Samantha Chen"}
 
 ### MODE: create — CREATE ACCOUNT (with duplicate detection)
 Required: accountName
-Optional: type (customer/partner/vendor/prospect), industry, phone, email, website,
+Optional: type (customer/partner/vendor/prospect/competitor/reseller/investor/internal), industry, phone, email, website,
   billingAddress (JSONB), shippingAddress (JSONB), ownerId, status, createdBy
 Address format: {"street": "...", "line2": "optional", "city": "...", "province": "...", "postal_code": "...", "country": "..."}
 Example:
@@ -207,7 +207,7 @@ Example: {"mode": "summary"}
 ## FIELD REFERENCE
 - accountId:       UUID string
 - accountName:     string
-- type:            customer | partner | vendor | prospect
+- type:            customer | partner | vendor | prospect | competitor | reseller | investor | internal
 - industry:        string (e.g. "Technology", "Healthcare")
 - status:          active | inactive | archived
 - email:           valid email string

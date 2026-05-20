@@ -86,10 +86,12 @@ def _build_location(a: dict) -> str:
 
 
 def _normalize_type(raw) -> str:
-    """Map raw account type to one of the four tokens the web page recognises."""
+    """Map raw account type to one of the tokens the web page recognises."""
     t = (raw or '').lower()
-    return {'customer': 'CUSTOMER', 'partner': 'PARTNER',
-            'vendor': 'VENDOR', 'prospect': 'PROSPECT'}.get(t, 'CUSTOMER')
+    return {'customer':   'CUSTOMER',   'partner':  'PARTNER',
+            'vendor':     'VENDOR',     'prospect': 'PROSPECT',
+            'competitor': 'COMPETITOR', 'reseller': 'RESELLER',
+            'investor':   'INVESTOR',   'internal': 'INTERNAL'}.get(t, 'CUSTOMER')
 
 
 def _mode_name(m: str) -> str:
