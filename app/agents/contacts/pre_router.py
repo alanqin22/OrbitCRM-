@@ -276,5 +276,31 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         logger.info('[NL->duplicates]')
         return routed({'mode': 'duplicates'})
 
+    # "find Steven" / "search for Emily" / "look up John Smith" etc.
+    # Catches voice queries that include an action verb before the name.
+    _find_m = re.match(
+        r'^(?:find|search(?:\s+for)?|look(?:\s+up)?(?:\s+for)?|'
+        r'show(?:\s+me)?|get|display|pull\s+up)\s+(.+)$',
+        raw, re.IGNORECASE
+    )
+    if _find_m:
+        term = _find_m.group(1).strip()
+        if len(term) >= 2:
+            logger.info(f'[NL->search] verb+name: {term}')
+            return routed(_compact({'mode': 'list', 'search': term, 'pageSize': 20, 'pageNumber': 1}))
+
+    # Bare name — voice STT outputs just "Steven" or "John Smith" with no verb.
+    # Match 1–4 words made of letters/apostrophes/hyphens; skip reserved words
+    # that are handled by earlier branches so they don't get swallowed here.
+    _RESERVED = {
+        'contacts', 'contact', 'list', 'all', 'show', 'find', 'search',
+        'view', 'archive', 'archived', 'duplicate', 'duplicates', 'merge',
+        'activities', 'summary', 'statistics', 'report', 'home', 'back',
+    }
+    if re.match(r"^[A-Za-z][A-Za-z'\-]{1,}(?:\s+[A-Za-z][A-Za-z'\-]*){0,3}$", raw) \
+            and msg not in _RESERVED:
+        logger.info(f'[NL->search] bare name: {raw}')
+        return routed(_compact({'mode': 'list', 'search': raw, 'pageSize': 20, 'pageNumber': 1}))
+
     # -- No match -- AI Agent handles ------------------------------------------
     return passthru()
