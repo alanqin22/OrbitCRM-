@@ -21,6 +21,26 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Unicode normalisation — remote PostgreSQL encoding fix
+# (same table as activities/formatter.py — keeps activity subjects clean)
+# ---------------------------------------------------------------------------
+_UNICODE_NORMALISE = str.maketrans({
+    '­': '-',  '‐': '-',  '‑': '-',  '‒': '-',
+    '–': '-',  '—': '-',  '―': '-',  '−': '-',
+    '﹘': '-',  '﹣': '-',  '－': '-',
+    '‘': "'",  '’': "'",  '‚': "'",  '‛': "'",
+    '“': '"',  '”': '"',  '„': '"',  '‟': '"',
+    '…': '...', '•': '*', '·': '*',  '‣': '*',
+    ' ': ' ',
+})
+
+def _clean_text(value):
+    if not value:
+        return value
+    return str(value).translate(_UNICODE_NORMALISE)
+
+
 # Mode alias (legacy 'get' → 'get_details')
 MODE_ALIASES = {'get': 'get_details'}
 
@@ -361,7 +381,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
             out.append('|------|---------|------------|')
             for a in activities:
                 out.append(
-                    f"| {a.get('type') or 'N/A'} | {a.get('subject') or 'N/A'} | "
+                    f"| {a.get('type') or 'N/A'} | {_clean_text(a.get('subject')) or 'N/A'} | "
                     f"{_fmt_dt(a.get('created_at'))} |"
                 )
             out.append('')
@@ -544,8 +564,8 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
                     icon = '📋'
 
                 out.append(f"**{idx}. {icon} {a.get('type') or 'Activity'}**")
-                if a.get('subject'):     out.append(f"   Subject: {a['subject']}")
-                if a.get('description'): out.append(f"   {a['description']}")
+                if a.get('subject'):     out.append(f"   Subject: {_clean_text(a['subject'])}")
+                if a.get('description'): out.append(f"   {_clean_text(a['description'])}")
                 if a.get('completed_at'): out.append(f"   Completed: {_fmt_dt(a['completed_at'])}")
                 out.append(f"   Created: {_fmt_dt(a.get('created_at'))}")
                 out.append('')
