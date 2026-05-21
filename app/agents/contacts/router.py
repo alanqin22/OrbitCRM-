@@ -99,6 +99,7 @@ class ContactChatResponse(BaseModel):
     reportMode:     Optional[str] = None
     contact:        Optional[dict] = None
     contacts:       Optional[list] = None
+    duplicates:     Optional[dict] = None
     success:        bool = True
 
 
@@ -173,6 +174,7 @@ async def contact_chat(req: ContactChatRequest):
         parsed_db = _parse_response(db_rows) if called_db and db_rows else {}
         contacts  = parsed_db.get("contacts")
         contact   = parsed_db.get("contact")
+        duplicates = parsed_db.get("duplicates") if mode == "duplicates" else None
 
         logger.info(f"Contacts request complete — DB={called_db}, mode={mode}")
 
@@ -185,6 +187,7 @@ async def contact_chat(req: ContactChatRequest):
             reportMode=report_mode,
             contact=contact,
             contacts=contacts,
+            duplicates=duplicates,
             success=True,
         )
 
