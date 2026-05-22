@@ -169,15 +169,15 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
                 qty = bd.get('quantity')
                 params: dict = {
                     'mode':             'create',
-                    'accountId':        bd.get('account_id'),
+                    'accountId':        bd.get('accountId') or bd.get('account_id'),
                     'status':           bd.get('status') or 'Pending',
-                    'orderDate':        (bd.get('order_date') or _today()).split('T')[0],
-                    'createdBy':        bd.get('created_by'),
-                    'productId':        bd.get('product_id'),
+                    'orderDate':        (bd.get('orderDate') or bd.get('order_date') or _today()).split('T')[0],
+                    'createdBy':        bd.get('createdBy') or bd.get('created_by'),
+                    'productId':        bd.get('productId') or bd.get('product_id'),
                     'quantity':         int(qty) if qty is not None else None,
-                    'priceType':        bd.get('price_type') or 'Retail',
-                    'productPricingId': bd.get('product_pricing_id'),
-                    'contactId':        bd.get('contact_id'),
+                    'priceType':        bd.get('priceType') or bd.get('price_type') or 'Retail',
+                    'productPricingId': bd.get('productPricingId') or bd.get('product_pricing_id'),
+                    'contactId':        bd.get('contactId') or bd.get('contact_id'),
                     'context':          'create_order',
                 }
                 # Drop None values
@@ -190,8 +190,8 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
                 return _routed({
                     'mode':      'update',
                     'action':    'batch_update',
-                    'orderId':   bd.get('order_id'),
-                    'updatedBy': bd.get('updated_by'),
+                    'orderId':   bd.get('orderId') or bd.get('order_id'),
+                    'updatedBy': bd.get('updatedBy') or bd.get('updated_by'),
                     'payload':   bd.get('payload'),
                     'context':   bd.get('context') or 'update',
                 })

@@ -16,6 +16,7 @@ v4x changes:
 
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -35,10 +36,17 @@ _UNICODE_NORMALISE = str.maketrans({
     ' ': ' ',
 })
 
+_MANGLED_DASH_RE = re.compile(r' \?{2,3} ')
+
 def _clean_text(value):
     if not value:
         return value
-    return str(value).translate(_UNICODE_NORMALISE)
+    s = str(value).translate(_UNICODE_NORMALISE)
+    # Bytes E2 80 93 (UTF-8 en-dash) decoded with errors='replace' on the
+    # remote psycopg2 connection collapse to '??' or '???' between words.
+    # Restore them to a plain ASCII hyphen so "Payment complete ??? INV-..."
+    # becomes "Payment complete - INV-...".
+    return _MANGLED_DASH_RE.sub(' - ', s)
 
 
 # Mode alias (legacy 'get' → 'get_details')

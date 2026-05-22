@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -84,6 +85,8 @@ _UNICODE_NORMALISE = str.maketrans({
 })
 
 
+_MANGLED_DASH_RE = re.compile(r' \?{2,3} ')
+
 def _clean_text(value: Optional[str]) -> Optional[str]:
     """Normalise Unicode typographic characters in DB text fields to ASCII.
 
@@ -93,10 +96,16 @@ def _clean_text(value: Optional[str]) -> Optional[str]:
     byte renders as '?' in the browser — e.g. U+2013 EN DASH (3 bytes) becomes
     '???' producing 'Payment complete ??? INV-000034' instead of
     'Payment complete - INV-000034'.
+
+    Two-stage clean:
+      1. translate() — catches Unicode chars when psycopg2 decoded correctly.
+      2. regex     — catches the post-mangling " ??? " literal that lands here
+                     when psycopg2 used errors='replace' before us.
     """
     if not value:
         return value
-    return str(value).translate(_UNICODE_NORMALISE)
+    s = str(value).translate(_UNICODE_NORMALISE)
+    return _MANGLED_DASH_RE.sub(' - ', s)
 
 
 # ---------------------------------------------------------------------------
