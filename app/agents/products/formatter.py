@@ -322,6 +322,22 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
 
     out: List[str] = []
 
+    # ── UI-only marker modes (no DB hit) ─────────────────────────────────────
+    # The HTML response dispatcher matches [MODE:show_*_form] and opens the
+    # corresponding inline form instead of rendering text.
+    if mode == 'show_bulk_stock_form':
+        return ('[MODE:show_bulk_stock_form]\n'
+                'Opening the Bulk Stock Adjustment form below…')
+    if mode == 'show_price_history_form':
+        return ('[MODE:show_price_history_form]\n'
+                'Opening the Price History search form below…')
+    if mode == 'show_low_stock_form':
+        return ('[MODE:show_low_stock_form]\n'
+                'Opening the Low Stock Alert form below…')
+    if mode == 'show_product_form':
+        return ('[MODE:show_product_form]\n'
+                'Opening the Add / Update Product form below…')
+
     # ── list_categories (v3.4) — machine-readable JSON for dropdown ──────────
     # Never rendered to the user — the HTML _loadCategories() function parses
     # [MODE:list_categories] from output and populates the category <select>.
@@ -546,7 +562,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
             []
         )
         logger.info(f'inventory_summary: {len(summary)} rows. Response keys: {list(response.keys())}')
-        threshold = metadata.get('low_stock_threshold') or params.get('lowStockThreshold') or 10
+        threshold = metadata.get('low_stock_threshold') or params.get('lowStockThreshold') or 70
 
         out.append('**[MODE:inventory_summary] Inventory Summary by Category**')
         out.append('')
@@ -591,7 +607,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
         logger.info(f'low_stock: array key resolved, {len(raw_list)} items found. '
                     f'Available response keys: {list(response.keys())}')
         products    = [_normalise_product(p) for p in raw_list]
-        threshold   = metadata.get('low_stock_threshold') or params.get('lowStockThreshold') or 10
+        threshold   = metadata.get('low_stock_threshold') or params.get('lowStockThreshold') or 70
         alert_count = metadata.get('alert_count') or len(products)
 
         out.append('**[MODE:low_stock] Low Stock Alert Report**')

@@ -286,6 +286,22 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                 'account': None, 'contact': None, 'opportunity': None, 'address': None,
                 'accountId': None, 'contactId': None, 'opportunityId': None}
 
+    # ── UI-only marker modes — frontend opens the inline form ────────────────
+    _ui_form_messages = {
+        'show_lead_form':        'Opening the Create Lead form below…',
+        'show_lead_update_form': 'Opening the Update Lead form below…',
+    }
+    if mode in _ui_form_messages:
+        return {
+            'output': f'[MODE:{mode}]\n{_ui_form_messages[mode]}',
+            'mode': mode,
+            'report_mode': mode,
+            'success': True,
+            'leads': [], 'lead': None, 'pipeline': None, 'employees': [],
+            'account': None, 'contact': None, 'opportunity': None, 'address': None,
+            'accountId': None, 'contactId': None, 'opportunityId': None,
+        }
+
     # ── Mode routing ──────────────────────────────────────────────────────────
     leads:       List[dict] = []
     lead:        Optional[dict] = None

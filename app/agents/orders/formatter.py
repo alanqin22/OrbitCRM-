@@ -155,6 +155,17 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
 
     logger.info(f'Format Response (sp_orders v5.5) — mode={mode} action={action} context={context}')
 
+    # ── UI-only marker mode — frontend opens the inline form ─────────────────
+    if mode == 'show_order_form':
+        return {
+            'output': '[MODE:show_order_form]\nOpening the Create / Update Order form below…',
+            'mode': mode,
+            'reportMode': mode,
+            'entity': 'orders',
+            'result': None,
+            'success': True,
+        }
+
     # ── Error check ───────────────────────────────────────────────────────────
     if metadata.get('status') == 'error' or (metadata.get('code') and metadata.get('code') != 0):
         output = (

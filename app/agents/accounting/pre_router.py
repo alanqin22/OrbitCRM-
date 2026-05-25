@@ -319,5 +319,18 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
             return routed({'mode': 'get_payment_360', 'paymentId': payment_id})
         logger.warning('[get_payment_360] no paymentId found — falling through to AI Agent')
 
+    # ── Vague UI-form intents → emit a marker so the frontend opens the
+    # inline form instead of bouncing to the AI for a list of required
+    # fields. Each detector skips itself when a UUID is present.
+    _has_uuid = bool(_extract_uuid(raw))
+    if not _has_uuid:
+        if re.search(r'\b(generate|create|new|issue|make)\b.*\binvoice', msg):
+            return routed({'mode': 'show_invoice_form'})
+        if re.search(r'\b(record|log|enter|add)\b.*\bpayment', msg):
+            return routed({'mode': 'show_payment_form'})
+        if re.search(r'\bvoid\b.*\binvoice', msg) \
+           or re.search(r'\b(cancel|nullify)\b.*\binvoice', msg):
+            return routed({'mode': 'show_void_invoice_form'})
+
     # ── All other messages → AI Agent ─────────────────────────────────────────
     return passthru()

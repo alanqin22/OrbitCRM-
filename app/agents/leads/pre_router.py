@@ -262,5 +262,24 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
             logger.info(f'→ NL NAME SEARCH: term={term!r}')
             return _routed({'mode': 'list', 'search': term, 'pageSize': 50, 'pageNumber': 1})
 
+    # ── Vague UI-form intents → emit a marker so the frontend opens the
+    # inline form instead of bouncing to the AI for a list of required
+    # fields. Each detector skips itself when the user already supplied a
+    # UUID (so the SP/AI can act directly).
+    _has_uuid = bool(_extract_uuid(raw))
+
+    # Create lead (no UUID).
+    if not _has_uuid and (
+        re.search(r'\b(create|new|add|make)\b.*\blead', msg)
+        or re.search(r'\bcreate\s+or\s+update\s+lead', msg)
+        or re.match(r'^\s*(create|new|add)\s+lead', msg)
+    ):
+        return _routed({'mode': 'show_lead_form'})
+
+    # Update lead (no UUID) — the Update Lead form has its own built-in
+    # search bar at the top so the user can pick which lead to edit.
+    if not _has_uuid and re.search(r'\bupdate\b.*\blead', msg):
+        return _routed({'mode': 'show_lead_update_form'})
+
     # ── Fallback: AI Agent ───────────────────────────────────────────────────
     return _passthru(raw, chat_input)

@@ -259,10 +259,25 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
         if ons:
             return _routed({'mode': 'get_detail', 'orderNumber': ons[0]})
 
-    # show all orders / list orders / show orders (must precede status check)
-    if msg in ('show all orders', 'show me all orders', 'list orders',
-               'list all orders', 'show orders') or \
-       msg.startswith(('show all orders', 'list all orders')):
+    # ── Orders list intents — flexible NL matching ───────────────────────────
+    # Captures variations like:
+    #   "show pending orders"            "please show me pending orders"
+    #   "list cancelled orders"          "can you give me shipped orders"
+    #   "find all orders"                "pending orders"
+    # The leading "please / can you / could you" is optional, as is "me"
+    # after the verb. The verb itself can be any of show/list/get/find/
+    # display/give/fetch. Status orders also match without a verb at all.
+    # Allow optional "the" after the verb/me, AND optional "the" before "orders",
+    # so "show me all the orders" / "show me the pending orders" both match.
+    _verb_prefix = (
+        r'(?:please\s+)?(?:can\s+you\s+|could\s+you\s+)?'
+        r'(?:show|list|get|find|display|give|fetch)\s+'
+        r'(?:me\s+)?(?:the\s+)?'
+    )
+
+    # show all orders (or any phrasing without a status filter)
+    if re.match(rf'^{_verb_prefix}all\s+(?:the\s+)?orders?\b', msg, re.IGNORECASE) \
+       or re.match(rf'^{_verb_prefix}orders?\s*$', msg, re.IGNORECASE):
         return _routed({
             'mode': 'list', 'includeDeleted': False,
             'sortField': 'order_date', 'sortOrder': 'DESC',
@@ -270,23 +285,28 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
         })
 
     # show deleted orders
-    if msg == 'show deleted orders' or msg.startswith('show deleted orders'):
+    if re.match(rf'^{_verb_prefix}(?:all\s+(?:the\s+)?)?deleted\s+orders?\b', msg, re.IGNORECASE):
         return _routed({
             'mode': 'list', 'includeDeleted': True,
             'sortField': 'order_date', 'sortOrder': 'DESC',
             'pageSize': 50, 'pageNumber': 1,
         })
 
-    # show <status> orders
-    for s in VALID_STATUSES:
-        if msg == f'show {s} orders' or msg.startswith(f'show {s} orders'):
-            return _routed({
-                'mode': 'list',
-                'status': s.capitalize(),
-                'includeDeleted': False,
-                'sortField': 'order_date', 'sortOrder': 'DESC',
-                'pageSize': 50, 'pageNumber': 1,
-            })
+    # show <status> orders — verb-prefix OR bare "<status> orders"
+    _status_alt = '|'.join(VALID_STATUSES)
+    _status_match = (
+        re.match(rf'^{_verb_prefix}(?:all\s+(?:the\s+)?)?({_status_alt})\s+orders?\b', msg, re.IGNORECASE)
+        or re.match(rf'^({_status_alt})\s+orders?\b', msg, re.IGNORECASE)
+    )
+    if _status_match:
+        s = _status_match.group(1).lower()
+        return _routed({
+            'mode': 'list',
+            'status': s.capitalize(),
+            'includeDeleted': False,
+            'sortField': 'order_date', 'sortOrder': 'DESC',
+            'pageSize': 50, 'pageNumber': 1,
+        })
 
     # sales summary
     if msg == 'sales summary' or msg.startswith('sales summary'):
@@ -423,6 +443,19 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
         if q:
             p['search'] = q
         return _routed(p)
+
+    # ── Vague create/update order intent → open the inline form ─────────────
+    # Catches "I want to create order", "new order", "create or update order",
+    # "I want to update order", etc. Skipped when the user supplied a UUID,
+    # an account UUID (which the specific "create order for account <uuid>"
+    # branch above handles), or full structured order fields.
+    _has_uuid = bool(_uuids(raw))
+    if not _has_uuid:
+        if re.search(r'\b(create|new|add|make|open)\b.*\border', msg) \
+           or re.search(r'\bcreate\s+or\s+update\s+order', msg):
+            return _routed({'mode': 'show_order_form'})
+        if re.search(r'\bupdate\b.*\border', msg):
+            return _routed({'mode': 'show_order_form'})
 
     # ── 3. Passthru → AI Agent ────────────────────────────────────────────────
     return _passthru()

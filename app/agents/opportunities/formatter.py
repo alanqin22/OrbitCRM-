@@ -370,6 +370,20 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         )
         return {'output': output, 'mode': mode, 'report_mode': 'error'}
 
+    # ── UI-only marker modes — frontend opens the inline form ────────────────
+    _ui_form_messages = {
+        'show_opportunity_form':                'Opening the Create Opportunity form below…',
+        'show_opportunity_update_form':         'Opening the Update Opportunity search below…',
+        'show_opportunity_add_product_form':    'Opening the Add Product search below…',
+        'show_opportunity_update_product_form': 'Opening the Update Product search below…',
+    }
+    if mode in _ui_form_messages:
+        return {
+            'output': f'[MODE:{mode}]\n{_ui_form_messages[mode]}',
+            'mode': mode,
+            'report_mode': mode,
+        }
+
     # ── Mode routing ──────────────────────────────────────────────────────────
     report_mode  = 'generic'
     report_data: Dict[str, Any] = {}

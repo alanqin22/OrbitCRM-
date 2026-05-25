@@ -247,6 +247,15 @@ def format_response(db_rows: List[Dict[str, Any]], params: Dict[str, Any]) -> st
 
     logger.info(f"Formatting response for mode: {mode}")
 
+    # ── UI-only marker modes — frontend opens the inline form ────────────────
+    _ui_form_messages = {
+        'show_invoice_form':       'Opening the Generate Invoice form below…',
+        'show_payment_form':       'Opening the Record Payment form below…',
+        'show_void_invoice_form':  'Opening the Void Invoice form below…',
+    }
+    if mode in _ui_form_messages:
+        return f'[MODE:{mode}]\n{_ui_form_messages[mode]}'
+
     metadata = response.get('metadata', {})
 
     # --- Error / soft-warning classification ---
@@ -888,18 +897,34 @@ def _fmt_accounting_summary(response: Dict, metadata: Dict, params: Dict) -> lis
         lines.append('')
 
     if account_margin:
+        def _cost_badge(pct):
+            if pct is None:
+                return '-'
+            try:
+                v = float(pct)
+            except (TypeError, ValueError):
+                return '-'
+            if v >= 0.999:
+                return '✓'
+            if v > 0:
+                return '⚠'
+            return '-'
+
         lines.append('**Account Margin Analytics**')
         lines.append('')
-        lines.append('| Account Name | Revenue | Cost | Margin | Margin % |')
-        lines.append('|--------------|---------|------|--------|----------|')
+        lines.append('| Account Name | Revenue | Cost | Margin | Margin % | Data |')
+        lines.append('|--------------|---------|------|--------|----------|------|')
         for a in account_margin:
             lines.append(
                 f"| {a.get('account_name', 'N/A')} "
                 f"| {format_currency(a.get('total_revenue', 0))} "
                 f"| {format_currency(a.get('total_cost', 0))} "
                 f"| {format_currency(a.get('total_margin', 0))} "
-                f"| {format_percent(a.get('margin_pct'))} |"
+                f"| {format_percent(a.get('margin_pct'))} "
+                f"| {_cost_badge(a.get('cost_complete_pct'))} |"
             )
+        lines.append('')
+        lines.append('<span style="color:#f59e0b">_Data column: ✓ all invoices have full cost data · ⚠ partial · - none (figures below may understate cost / overstate margin)_</span>')
         lines.append('')
 
     if product_profit:

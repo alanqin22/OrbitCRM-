@@ -154,6 +154,15 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
         if not parsed_json:
             return {**state, "db_rows": []}
 
+        # ── UI-only marker modes — no DB call; formatter emits a [MODE:*]
+        # marker the frontend uses to open an inline form.
+        _ui_only_modes = {'show_order_form'}
+        if parsed_json.get("mode") in _ui_only_modes:
+            logger.info(f"db_node: UI-only mode '{parsed_json.get('mode')}' — skipping DB call")
+            return {**state, "db_rows": [{"result": {
+                "metadata": {"status": "success", "code": 0, "mode": parsed_json.get("mode")}
+            }}]}
+
         raw_message = state.get("raw_message") or state.get("user_input", "")
         query, _ = build_orders_query(dict(parsed_json), raw_message)
         logger.info(f"Built sp_orders query — mode={parsed_json.get('mode')} action={parsed_json.get('action', '')}")

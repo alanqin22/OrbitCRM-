@@ -118,6 +118,39 @@ def _match_nl(message: str) -> Optional[dict]:
     if m:
         return {'mode': 'get', 'opportunity_id': m.group(1)}
 
+    # ── Vague UI-form intents → emit a marker so the frontend opens the
+    # inline form instead of bouncing to the AI for a list of required
+    # fields. Each detector skips itself when the user already supplied a
+    # UUID (so the SP can act directly).
+    #
+    # ORDER MATTERS: the product-specific detectors run FIRST so phrases
+    # like "add product to opportunity" don't get swallowed by the looser
+    # "add … opportunity" pattern in the create-opportunity detector below.
+    _has_uuid = bool(re.search(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', raw, re.IGNORECASE))
+
+    # Add product to opportunity (no UUID) — opens the opportunity search bar.
+    if not _has_uuid and re.search(r'\b(add|attach|insert)\b.*\bproduct', msg):
+        return {'mode': 'show_opportunity_add_product_form'}
+
+    # Update product on opportunity (no opp_product_id) — opens the search bar.
+    if not _has_uuid and re.search(r'\bupdate\b.*\bproduct', msg):
+        return {'mode': 'show_opportunity_update_product_form'}
+
+    # Create opportunity — covers "create", "new", "add", "make", and the
+    # combined "create or update opportunity". Also requires that 'product'
+    # NOT appear in the message, so "add product to opportunity" is left to
+    # the product detector above.
+    if not _has_uuid and 'product' not in msg and (
+        re.search(r'\b(create|new|add|make)\b.*\bopportunit', msg)
+        or re.search(r'\bcreate\s+or\s+update\s+opportunit', msg)
+        or re.match(r'^\s*(create|new|add)\s+opportunit', msg)
+    ):
+        return {'mode': 'show_opportunity_form'}
+
+    # Update opportunity (no UUID, no product mention).
+    if not _has_uuid and 'product' not in msg and re.search(r'\bupdate\b.*\bopportunit', msg):
+        return {'mode': 'show_opportunity_update_form'}
+
     # Pipeline
     if re.search(r'\b(pipeline|sales pipeline)\b', msg):
         return {'mode': 'pipeline'}

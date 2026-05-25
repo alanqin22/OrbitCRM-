@@ -208,5 +208,23 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         if ids:
             return routed({'mode': 'get', 'accountId': ids[0]})
 
+    # ── Vague UI-form intents → emit a marker so the frontend opens the
+    # inline form instead of bouncing to the AI for a list of required
+    # fields. Each detector skips itself when a UUID is present.
+    _has_uuid = bool(_extract_uuids(raw))
+
+    # Create account (no UUID).
+    if not _has_uuid and (
+        re.search(r'\b(create|new|add|make)\b.*\baccount', msg)
+        or re.search(r'\bcreate\s+or\s+update\s+account', msg)
+        or re.match(r'^\s*(create|new|add)\s+account', msg)
+    ):
+        return routed({'mode': 'show_account_form'})
+
+    # Update account (no UUID) — the Update Account form has its own
+    # built-in search bar so the user can pick which account to edit.
+    if not _has_uuid and re.search(r'\bupdate\b.*\baccount', msg):
+        return routed({'mode': 'show_account_update_form'})
+
     # ── No match — AI Agent handles  ─────────────────────────────────────────
     return passthru()

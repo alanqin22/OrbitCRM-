@@ -289,9 +289,10 @@ Example: {"mode":"inventory_summary","lowStockThreshold":5}
 ---
 
 MODE: low_stock — LOW STOCK ALERTS
-Optional: categoryFilter (UUID), categoryNumber (int), lowStockThreshold (int, default 10)
+Optional: categoryFilter (UUID), categoryNumber (int), lowStockThreshold (int, default 70)
 
-Example: {"mode":"low_stock","categoryNumber":1,"lowStockThreshold":10}
+Example: {"mode":"low_stock"}
+Example: {"mode":"low_stock","categoryNumber":1,"lowStockThreshold":25}
 
 ---
 

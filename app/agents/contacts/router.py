@@ -117,6 +117,9 @@ _REPORT_MODE_MAP = {
     "restore":           "restore_confirmation",
     "activities":        "activities",
     "summary":           "summary",
+    # UI-only markers — frontend opens the inline form
+    "show_contact_form":         "show_contact_form",
+    "show_contact_update_form":  "show_contact_update_form",
 }
 
 

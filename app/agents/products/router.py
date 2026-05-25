@@ -154,6 +154,10 @@ _REPORT_MODE_MAP = {
     "price_matrix":       "price_matrix",
     "product_search":     "product_search",
     "list_categories":    "list_categories",   # v2.3 — Amazon-style search bar dropdown
+    "show_bulk_stock_form":   "show_bulk_stock_form",    # UI-only marker; opens inline form
+    "show_price_history_form": "show_price_history_form", # UI-only marker; opens inline form
+    "show_low_stock_form":    "show_low_stock_form",     # UI-only marker; opens inline form
+    "show_product_form":      "show_product_form",       # UI-only marker; opens Add/Update Product form
 }
 
 

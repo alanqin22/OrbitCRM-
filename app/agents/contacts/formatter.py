@@ -217,6 +217,14 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
             f"Please try again or contact support."
         )
 
+    # ── UI-only marker modes — frontend opens the inline form ────────────────
+    _ui_form_messages = {
+        'show_contact_form':        'Opening the Create Contact form below…',
+        'show_contact_update_form': 'Opening the Update Contact search below…',
+    }
+    if mode in _ui_form_messages:
+        return f'[MODE:{mode}]\n{_ui_form_messages[mode]}'
+
     out: List[str] = []
     mode_label = MODE_NAMES.get(mode, 'Unknown')
     out.append(f"[MODE:{mode}] **{mode_label.upper()}**")

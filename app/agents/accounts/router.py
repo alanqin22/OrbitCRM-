@@ -122,6 +122,9 @@ _REPORT_MODE_MAP = {
     "restore":    "restore",
     "summary":    "summary",
     "list_owner": "list_owner",
+    # UI-only markers — frontend opens the inline form
+    "show_account_form":         "show_account_form",
+    "show_account_update_form":  "show_account_update_form",
 }
 
 

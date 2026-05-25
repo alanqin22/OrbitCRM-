@@ -1,7 +1,32 @@
-# CRM Agent
+# Orbit CRM — AI-Powered CRM with Conversational Agents
 
-Orbit CRM AI Agent — all domain agents (accounts, contacts, and 8 future
-modules) running on a single FastAPI + LangGraph server.
+> ### 🚀 **Live Demo → [agentorc.ca](https://agentorc.ca/)**
+>
+> No signup required. Drop into any module and talk to the AI agents
+> directly, or use the inline forms — same experience either way.
+
+Orbit CRM is a full-stack AI CRM where every module is a **conversational
+agent**: ask in plain English, get the answer (and the chart), no menus
+to hunt through.
+
+### What you can try in the live demo
+
+| Module | What to ask / try |
+|---|---|
+| 👤 Accounts & Contacts | _"find Apple", "show me Bob Brown's contact details"_ — voice-driven typeahead, duplicate detection |
+| 🎯 Leads & Opportunities | _"convert Maria's lead", "add product to opportunity"_ — inline forms appear on vague intent |
+| 📦 Orders & Products | _"low stock under 70", "bulk stock adjustment", "price history for Lenovo"_ |
+| 💰 Accounting | _"Accounting Summary"_ — AR aging, cashflow, account-margin analytics, product profitability, forecast accuracy — all real-time |
+| 📊 Analytics | KPI dashboards driven by Postgres stored procedures, rendered with Chart.js |
+| 📧 Email & 🔔 Notifications | Outbound mail, inbox, real-time activity stream |
+
+### Why it's interesting
+
+- **11 specialised agents** (Accounts, Contacts, Leads, Opportunities, Orders, Products, Activities, Notifications, Email, Accounting, Analytics) — each a LangGraph state machine with deterministic pre-routing plus an LLM fallback.
+- **Hybrid routing** — common intents (search, list, update, delete) skip the LLM entirely for sub-second response; novel phrasings fall through to GPT-4o-mini.
+- **Voice everywhere** — Azure Speech SDK (Bing-style) primary, Web Speech API fallback, with BFCache-safe cleanup across navigation.
+- **Real analytics, not toys** — invoice-level cost/margin tracking, effective-dated wholesale/retail pricing, AR aging buckets, forecast attainment, data-quality badges.
+- **Single FastAPI + LangGraph server** — zero duplicated config, one DB connection pool, shared session memory.
 
 ---
 

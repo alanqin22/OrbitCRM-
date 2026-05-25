@@ -39,6 +39,10 @@ _REPORT_MODE_MAP = {
     "account_search":            "account_search",
     "get_invoiceable_orders":    "invoiceable_orders",
     "list_employee":             "list_employee",
+    # UI-only markers — frontend opens the inline form
+    "show_invoice_form":         "show_invoice_form",
+    "show_payment_form":         "show_payment_form",
+    "show_void_invoice_form":    "show_void_invoice_form",
 }
 
 

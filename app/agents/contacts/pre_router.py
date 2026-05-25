@@ -302,5 +302,23 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         logger.info(f'[NL->search] bare name: {raw}')
         return routed(_compact({'mode': 'list', 'search': raw, 'pageSize': 20, 'pageNumber': 1}))
 
+    # ── Vague UI-form intents → emit a marker so the frontend opens the
+    # inline form instead of bouncing to the AI for a list of required
+    # fields. Each detector skips itself when the user already supplied a
+    # UUID (so the AI/SP can act directly).
+    _has_uuid = bool(_extract_uuid(raw))
+
+    # Create contact (no UUID).
+    if not _has_uuid and (
+        re.search(r'\b(create|new|add|make)\b.*\bcontact', msg)
+        or re.search(r'\bcreate\s+or\s+update\s+contact', msg)
+        or re.match(r'^\s*(create|new|add)\s+contact', msg)
+    ):
+        return routed({'mode': 'show_contact_form'})
+
+    # Update contact (no UUID) — opens the contact search bar.
+    if not _has_uuid and re.search(r'\bupdate\b.*\bcontact', msg):
+        return routed({'mode': 'show_contact_update_form'})
+
     # -- No match -- AI Agent handles ------------------------------------------
     return passthru()

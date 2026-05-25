@@ -213,7 +213,7 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
                     'mode':              'inventory_summary',
                     'categoryFilter':    pd.get('category_id') or None,
                     'categoryNumber':    _to_num(pd.get('category_number'), int),
-                    'lowStockThreshold': _to_num(pd.get('low_stock_threshold'), int) or 10
+                    'lowStockThreshold': _to_num(pd.get('low_stock_threshold'), int) or 70
                 }
                 return routed(params)
 
@@ -223,7 +223,7 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
                     'mode':              'low_stock',
                     'categoryFilter':    pd.get('category_id') or None,
                     'categoryNumber':    _to_num(pd.get('category_number'), int),
-                    'lowStockThreshold': _to_num(pd.get('low_stock_threshold'), int) or 80,
+                    'lowStockThreshold': _to_num(pd.get('low_stock_threshold'), int) or 70,
                     'skuFilter':         pd.get('sku_filter') or None,
                     'nameFilter':        pd.get('name_filter') or None
                 }
@@ -329,19 +329,30 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
 
     # ── inventory summary ────────────────────────────────────────────────────
     if 'inventory summary' in msg or msg == 'show inventory' or msg == 'inventory summary':
-        return routed({'mode': 'inventory_summary', 'lowStockThreshold': 10})
+        return routed({'mode': 'inventory_summary', 'lowStockThreshold': 70})
 
     # ── low stock ────────────────────────────────────────────────────────────
     if 'low stock' in msg or 'stock alert' in msg or 'out of stock' in msg:
-        thresh_match = re.search(r'threshold\s+(?:of\s+)?(\d+)', raw, re.IGNORECASE)
-        threshold = int(thresh_match.group(1)) if thresh_match else 10
+        thresh_match  = re.search(r'threshold\s+(?:of\s+)?(\d+)', raw, re.IGNORECASE)
         cat_num_match = re.search(r'category\s+(?:number\s+)?(\d+)', raw, re.IGNORECASE)
+        name_match    = re.search(r'(?:named?|called|containing)\s+"?([A-Za-z][\w\s-]{0,40}?)"?(?:\s*$|[.,!?])', raw, re.IGNORECASE)
+
+        # When the user didn't pin down the threshold AND didn't pre-filter,
+        # surface the Low Stock form so they can set it interactively instead
+        # of taking the SP default and hoping it matches what they wanted.
+        if not thresh_match and not cat_num_match and not name_match:
+            return routed({'mode': 'show_low_stock_form'})
+
+        threshold = int(thresh_match.group(1)) if thresh_match else 70
         category_number = int(cat_num_match.group(1)) if cat_num_match else None
-        return routed({
+        params: Dict[str, Any] = {
             'mode': 'low_stock',
             'lowStockThreshold': threshold,
-            'categoryNumber': category_number
-        })
+            'categoryNumber': category_number,
+        }
+        if name_match:
+            params['nameFilter'] = name_match.group(1).strip()
+        return routed(params)
 
     # ── price matrix ─────────────────────────────────────────────────────────
     if 'price matrix' in msg:
@@ -367,7 +378,34 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
             if num_match:
                 params['productNumber'] = int(num_match.group(1))
             return routed(params)
-        return passthru('price history: no product identifier in message')
+        # No identifier → open the inline Price History form (typeahead +
+        # voice) so the user can pick a product without bouncing to the AI.
+        return routed({'mode': 'show_price_history_form'})
+
+    # ── bulk stock form (vague intent, no specific number) ───────────────────
+    # Catches phrases like "I want bulk stock update", "open bulk stock form",
+    # "bulk stock adjustment" — anything that mentions 'bulk' + a stock keyword
+    # but doesn't include a concrete "by N" number. Returns a marker the
+    # frontend interprets as "open the inline Bulk Stock Adjustment form".
+    if re.search(r'\bbulk\b', msg, re.IGNORECASE) \
+       and re.search(r'\b(stock|adjust|update|adjustment|form)\b', msg, re.IGNORECASE) \
+       and not re.search(r'\bby\s+[+-]?\d+', msg, re.IGNORECASE):
+        return routed({'mode': 'show_bulk_stock_form'})
+
+    # ── product add/update form (vague create-or-update intent) ──────────────
+    # Catches "I want to add a product", "create a new product", "create or
+    # update product", "open the product form", etc. Skips when the user
+    # already provided structured details (SKU + price), since those go
+    # straight to the AI's create flow which needs the explicit values.
+    if re.search(r'\b(create|new|add|make)\b.*\bproduct', msg, re.IGNORECASE) \
+       or re.search(r'\bcreate\s+or\s+update\s+product', msg, re.IGNORECASE) \
+       or re.search(r'\b(open|show)\s+(?:the\s+)?(?:add|update|new|create|product)\s+(?:product\s+)?form\b', msg, re.IGNORECASE):
+        # If the user supplied SKU + a price keyword, they likely want the
+        # AI to actually create the product — fall through.
+        has_sku   = re.search(r'\bsku[:\s]+\S', raw, re.IGNORECASE)
+        has_price = re.search(r'\$\d|\b(price|cost|retail|wholesale)\s*[:=]\s*\d', raw, re.IGNORECASE)
+        if not (has_sku and has_price):
+            return routed({'mode': 'show_product_form'})
 
     # ── bulk adjust / update stock ───────────────────────────────────────────
     bulk_match = re.match(r'^(increase|decrease|add|subtract|adjust|update)\s+stock\s+by\s+(\d+)', msg, re.IGNORECASE)
