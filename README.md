@@ -11,19 +11,23 @@ to hunt through.
 
 ### What you can try in the live demo
 
+_Listed in the same order as the launcher page on [agentorc.ca](https://agentorc.ca/) — start at Store Home, work clockwise through the planets, end at the Orchestrator._
+
 | Module | What to ask / try |
 |---|---|
-| 🧭 Orchestrator | One launcher to talk to every agent — natural-language routing across modules, with voice that survives back/forward navigation |
-| 👤 Accounts & Contacts | _"find Apple", "show me Bob Brown's contact details"_ — voice-driven typeahead, duplicate detection |
-| 🎯 Leads & Opportunities | _"convert Maria's lead", "add product to opportunity"_ — inline forms appear on vague intent |
-| 📦 Orders & Products | _"low stock under 70", "bulk stock adjustment", "price history for Lenovo"_ |
-| 📝 Activities | _"create task for Bob tomorrow"_ — typeahead Related-Name lookup across all entities |
+| 🛒 Store | **CRM Universe Hub** — the landing page. KPI tiles for Active Pipeline / Open Leads / Pending Orders / Unread Alerts, plus the module launcher |
+| 🎯 Leads | _"convert Maria's lead"_ — inline forms appear on vague intent; one-click conversion to opportunity |
+| 👤 Accounts | _"find Apple"_, _"new prospect account"_ — voice typeahead, account-type and industry analytics |
+| 📇 Contacts | _"show me Bob Brown's contact details"_ — duplicate detection, account roll-up |
+| 💼 Opportunities | _"add product to opportunity"_ — stage pipeline, weighted forecast, AI-driven win probability |
+| 📦 Products | _"low stock under 70"_, _"bulk stock adjustment"_, _"price history for Lenovo"_ — wholesale-≤-retail enforced at DB level |
+| 📑 Orders | _"create order for ABC Corp"_ — line-item editor, status workflow, invoice generation |
 | 💰 Accounting | _"Accounting Summary"_ — AR aging, cashflow, account-margin analytics, product profitability, forecast accuracy — all real-time |
+| 📝 Activities | _"create task for Bob tomorrow"_ — typeahead Related-Name lookup across every entity |
 | 📊 Analytics | KPI dashboards driven by Postgres stored procedures, rendered with Chart.js |
-| 📧 Email | Outbound mail + inbox + autonomous inbound auto-reply (SMTP/IMAP + LangGraph) |
 | 🔔 Notifications | Real-time activity stream with unread/read state |
-| 🛒 Store | Direct-SP product catalogue view (no AI) |
-| 🔐 Auth | Email-verified signup, signin, password reset (direct DB, no AI) |
+| 📧 Email | Outbound mail + inbox + autonomous inbound auto-reply (SMTP/IMAP + LangGraph) |
+| 🧭 Orchestrator | One launcher to talk to every agent in natural language — voice survives back/forward navigation |
 
 ### Why it's interesting
 
