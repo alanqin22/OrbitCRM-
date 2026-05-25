@@ -13,20 +13,26 @@ to hunt through.
 
 | Module | What to ask / try |
 |---|---|
+| 🧭 Orchestrator | One launcher to talk to every agent — natural-language routing across modules, with voice that survives back/forward navigation |
 | 👤 Accounts & Contacts | _"find Apple", "show me Bob Brown's contact details"_ — voice-driven typeahead, duplicate detection |
 | 🎯 Leads & Opportunities | _"convert Maria's lead", "add product to opportunity"_ — inline forms appear on vague intent |
 | 📦 Orders & Products | _"low stock under 70", "bulk stock adjustment", "price history for Lenovo"_ |
+| 📝 Activities | _"create task for Bob tomorrow"_ — typeahead Related-Name lookup across all entities |
 | 💰 Accounting | _"Accounting Summary"_ — AR aging, cashflow, account-margin analytics, product profitability, forecast accuracy — all real-time |
 | 📊 Analytics | KPI dashboards driven by Postgres stored procedures, rendered with Chart.js |
-| 📧 Email & 🔔 Notifications | Outbound mail, inbox, real-time activity stream |
+| 📧 Email | Outbound mail + inbox + autonomous inbound auto-reply (SMTP/IMAP + LangGraph) |
+| 🔔 Notifications | Real-time activity stream with unread/read state |
+| 🛒 Store | Direct-SP product catalogue view (no AI) |
+| 🔐 Auth | Email-verified signup, signin, password reset (direct DB, no AI) |
 
 ### Why it's interesting
 
-- **11 specialised agents** (Accounts, Contacts, Leads, Opportunities, Orders, Products, Activities, Notifications, Email, Accounting, Analytics) — each a LangGraph state machine with deterministic pre-routing plus an LLM fallback.
+- **10 conversational AI agents** (Accounts, Contacts, Leads, Opportunities, Orders, Products, Activities, Notifications, Accounting, Analytics) — each a LangGraph state machine with deterministic pre-routing plus an LLM fallback.
+- **5 supporting modules** — Orchestrator launcher, Email (SMTP/IMAP + LangGraph), Store (direct-SP catalogue), Auth (direct DB), Voice (Azure Speech token mint), plus a Home-Index KPI dashboard.
 - **Hybrid routing** — common intents (search, list, update, delete) skip the LLM entirely for sub-second response; novel phrasings fall through to GPT-4o-mini.
 - **Voice everywhere** — Azure Speech SDK (Bing-style) primary, Web Speech API fallback, with BFCache-safe cleanup across navigation.
-- **Real analytics, not toys** — invoice-level cost/margin tracking, effective-dated wholesale/retail pricing, AR aging buckets, forecast attainment, data-quality badges.
-- **Single FastAPI + LangGraph server** — zero duplicated config, one DB connection pool, shared session memory.
+- **Real analytics, not toys** — invoice-level cost/margin tracking, effective-dated wholesale/retail pricing, AR aging buckets, forecast attainment, data-quality badges, and a DB-level `wholesale ≤ retail` trigger.
+- **Single FastAPI + LangGraph server** — zero duplicated config, one DB connection pool, shared session memory across all 15 modules.
 
 ---
 
@@ -37,6 +43,8 @@ crm_agent/
 ├── main.py                        ← Top-level entry point
 ├── requirements.txt
 ├── .env                           ← Single config file for all agents
+├── sp/                            ← PostgreSQL stored procedures
+├── *-chat.html                    ← One frontend per agent (incl. orchestrator-chat.html)
 └── app/
     ├── main.py                    ← FastAPI app — registers all routers
     ├── core/                      ← Shared utilities (zero duplication)
@@ -46,21 +54,23 @@ crm_agent/
     │   └── graph_utils.py         ← AgentState, LLM factory, JSON parser,
     │                                 build_standard_graph()
     └── agents/
-        ├── accounts/              ← Accounts domain
-        │   ├── prompt.py          ← ACCOUNT_AGENT_SYSTEM_PROMPT
-        │   ├── pre_router.py      ← Deterministic routing (v3.0)
-        │   ├── sql_builder.py     ← build_accounts_query()
-        │   ├── formatter.py       ← format_response() for sp_accounts
-        │   ├── graph.py           ← LangGraph nodes + get_graph()
-        │   └── router.py          ← FastAPI routes (/account-chat)
-        ├── contacts/              ← Contacts domain
-        │   ├── prompt.py          ← CONTACT_AGENT_SYSTEM_PROMPT
-        │   ├── pre_router.py      ← Deterministic routing (v3.1)
-        │   ├── sql_builder.py     ← build_contacts_query()
-        │   ├── formatter.py       ← format_response() for sp_contacts
-        │   ├── graph.py           ← LangGraph nodes + get_graph()
-        │   └── router.py          ← FastAPI routes (/contact-chat)
-        └── <future_agent>/        ← Drop in 8 more agents here
+        │  ── 10 conversational AI agents (LangGraph + pre-router + LLM) ──
+        ├── accounts/         prompt | pre_router | sql_builder | formatter | graph | router
+        ├── contacts/
+        ├── leads/
+        ├── opportunities/
+        ├── orders/
+        ├── products/
+        ├── activities/
+        ├── notifications/
+        ├── accounting/
+        ├── analytics/
+        │  ── 5 supporting modules ──
+        ├── home/                   ← sp_home_index dashboard (direct SP, no AI)
+        ├── email/                  ← SMTP/IMAP + LangGraph + autonomous auto-reply poller
+        ├── store/                  ← Commerce catalogue view (direct SP, no AI)
+        ├── auth/                   ← Signup / signin / password-reset (direct DB, no AI)
+        └── voice/                  ← Azure Cognitive Services token mint for browser STT
 ```
 
 ---
@@ -90,21 +100,31 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 ## API Endpoints
 
-| Method | Path              | Description                        |
-|--------|-------------------|------------------------------------|
-| GET    | /                 | Service info                       |
-| GET    | /health           | Aggregate health check             |
-| POST   | /account-chat     | Accounts agent (drop-in for 8003)  |
-| GET    | /account-health   | Accounts agent health              |
-| POST   | /contact-chat     | Contacts agent (drop-in for 8004)  |
-| GET    | /contact-health   | Contacts agent health              |
-| GET    | /sessions         | List active memory sessions        |
-| DELETE | /sessions/{id}    | Clear a session's memory           |
+| Method | Path                         | Description                                    |
+|--------|------------------------------|------------------------------------------------|
+| GET    | `/`                          | Service info + endpoint catalogue              |
+| GET    | `/health`                    | Aggregate health check (all modules + DB)      |
+| GET    | `/home-index`                | Home dashboard KPIs (direct SP)                |
+| POST   | `/account-chat`              | Accounts agent                                 |
+| POST   | `/contact-chat`              | Contacts agent                                 |
+| POST   | `/lead-chat` (`/leads-chat`) | Leads agent                                    |
+| POST   | `/opportunity-chat`          | Opportunities agent                            |
+| POST   | `/order-chat` (`/orders-chat`)| Orders agent                                  |
+| POST   | `/prod-chat`                 | Products agent                                 |
+| POST   | `/activity-chat`             | Activities agent                               |
+| POST   | `/notifications-chat`        | Notifications agent                            |
+| POST   | `/accounting-chat`           | Accounting agent                               |
+| POST   | `/analytics-chat`            | Analytics agent                                |
+| POST   | `/email-chat`                | Email agent (SMTP/IMAP + LangGraph)            |
+| POST   | `/store-chat`                | Store catalogue (direct SP)                    |
+| POST   | `/auth/{signin\|signup\|signout\|...}` | Auth (direct DB, no AI)              |
+| GET    | `/voice/azure-token`         | Azure Speech short-lived token for browser STT |
+| GET    | `/sessions`                  | List active memory sessions                    |
+| DELETE | `/sessions/{id}`             | Clear a session's memory                       |
 
-### Backward Compatibility
-Existing HTML frontends only need the **port number updated** from
-`8003` / `8004` → `8000`.  The endpoint paths (`/account-chat`,
-`/contact-chat`) and request/response shapes are identical.
+Each AI agent also exposes a matching `GET /<name>-health` endpoint that
+returns `graph_ready: true/false` so a load balancer can verify the agent's
+LangGraph compiled cleanly on boot.
 
 ---
 
@@ -133,55 +153,46 @@ Shared utilities in `app/core/`:
 
 ---
 
-## Adding the Next 8 Agents
+## Adding a New Agent
 
-For each remaining agent zip (leads, opportunities, orders, products,
-activities, notifications, accounting, analytics):
+The 10 conversational agents are all in place. To add an 11th:
 
 ### 1. Create the agent package
 ```
 app/agents/<name>/
     __init__.py
-    prompt.py        ← Copy & keep domain-specific prompt as-is
-    pre_router.py    ← Copy & keep domain-specific routing as-is
-    sql_builder.py   ← Copy & keep domain-specific SP builder as-is
-    formatter.py     ← Copy & keep domain-specific formatter as-is
-    graph.py         ← Use the accounts/graph.py as a template:
-                       - Change imports to the new domain files
-                       - Change SP call in db_node (build_X_query / execute_sp)
-                       - Change graph_label
-    router.py        ← Use the accounts/router.py as a template:
-                       - Change ChatInput fields to match the new domain
-                       - Change endpoint path (/leads-chat, etc.)
-                       - Change response model fields (lead/leads, etc.)
+    prompt.py        ← Domain-specific system prompt
+    pre_router.py    ← Deterministic intent matchers (form-marker pattern supported)
+    sql_builder.py   ← build_<name>_query()  → sp_<name>(...) call
+    formatter.py     ← format_response()     → markdown the frontend renders
+    graph.py         ← LangGraph nodes; call build_standard_graph()
+    router.py        ← FastAPI POST /<name>-chat + GET /<name>-health
 ```
 
-### 2. Register in app/main.py (one line)
+### 2. Register in app/main.py
 ```python
-from app.agents.leads.router import router as leads_router
-app.include_router(leads_router)
+from app.agents.<name>.router import router as <name>_router
+app.include_router(<name>_router)
 ```
 
-### 3. Uncomment the stub in app/main.py
-The stubs for all 8 remaining agents are already written in the imports
-section of `app/main.py` — just uncomment the relevant line.
-
-That is the complete merge procedure. No changes to `core/` are ever needed.
+No changes to `app/core/` are ever needed — the shared utilities work for any agent.
 
 ---
 
 ## Shared Core — What Is Consolidated
 
-| Concern            | Standalone (per-agent)         | crm_agent (shared)             |
-|--------------------|--------------------------------|--------------------------------|
-| Settings           | `app/config.py` × 10          | `app/core/config.py` × 1      |
-| DB connection      | `app/database.py` × 10        | `app/core/database.py` × 1    |
-| Session memory     | `app/memory.py` × 10          | `app/core/memory.py` × 1      |
-| LLM factory        | `_get_llm()` duplicated × 10  | `graph_utils._get_llm()` × 1  |
-| Ollama direct call | duplicated × 10               | `graph_utils._call_ollama_direct()` × 1 |
-| JSON parser        | duplicated × 10               | `graph_utils.parse_ai_json()` × 1 |
-| Graph topology     | duplicated × 10               | `graph_utils.build_standard_graph()` × 1 |
-| Server entrypoint  | `main.py` × 10                | `app/main.py` × 1             |
+All 15 modules pull from `app/core/` rather than duplicating boilerplate.
+
+| Concern            | Per-agent duplicate (the old way)   | Consolidated in crm_agent              |
+|--------------------|--------------------------------------|----------------------------------------|
+| Settings           | `app/config.py` × 15                | `app/core/config.py` × 1              |
+| DB connection      | `app/database.py` × 15              | `app/core/database.py` × 1            |
+| Session memory     | `app/memory.py` × 15                | `app/core/memory.py` × 1              |
+| LLM factory        | `_get_llm()` duplicated × 15        | `graph_utils._get_llm()` × 1          |
+| Ollama direct call | duplicated × 15                     | `graph_utils._call_ollama_direct()` × 1 |
+| JSON parser        | duplicated × 15                     | `graph_utils.parse_ai_json()` × 1     |
+| Graph topology     | duplicated × 15                     | `graph_utils.build_standard_graph()` × 1 |
+| Server entrypoint  | `main.py` × 15                      | `app/main.py` × 1                     |
 
 Domain-specific code (prompt, pre_router, sql_builder, formatter, graph
 nodes) remains **completely isolated** inside each agent's sub-package.
