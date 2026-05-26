@@ -15,19 +15,19 @@ _Listed in the same order as the launcher page on [agentorc.ca](https://agentorc
 
 | Module | What to ask / try |
 |---|---|
-| 🛒 Store | **CRM Universe Hub** — the landing page. KPI tiles for Active Pipeline / Open Leads / Pending Orders / Unread Alerts, plus the module launcher |
-| 🎯 Leads | _"convert Maria's lead"_ — inline forms appear on vague intent; one-click conversion to opportunity |
-| 👤 Accounts | _"find Apple"_, _"new prospect account"_ — voice typeahead, account-type and industry analytics |
-| 📇 Contacts | _"show me Bob Brown's contact details"_ — duplicate detection, account roll-up |
-| 💼 Opportunities | _"add product to opportunity"_ — stage pipeline, weighted forecast, AI-driven win probability |
-| 📦 Products | _"low stock under 70"_, _"bulk stock adjustment"_, _"price history for Lenovo"_ — wholesale-≤-retail enforced at DB level |
-| 📑 Orders | _"create order for ABC Corp"_ — line-item editor, status workflow, invoice generation |
-| 💰 Accounting | _"Accounting Summary"_ — AR aging, cashflow, account-margin analytics, product profitability, forecast accuracy — all real-time |
-| 📝 Activities | _"create task for Bob tomorrow"_ — typeahead Related-Name lookup across every entity |
-| 📊 Analytics | KPI dashboards driven by Postgres stored procedures, rendered with Chart.js |
-| 🔔 Notifications | Real-time activity stream with unread/read state |
-| 📧 Email | Outbound mail + inbox + autonomous inbound auto-reply (SMTP/IMAP + LangGraph) |
-| 🧭 Orchestrator | One launcher to talk to every agent in natural language — voice survives back/forward navigation |
+| 🛒&nbsp;Store | **CRM Universe Hub** — the landing page. KPI tiles for Active Pipeline / Open Leads / Pending Orders / Unread Alerts, plus the module launcher |
+| 🎯&nbsp;Leads | _"convert Maria's lead"_ — inline forms appear on vague intent; one-click conversion to opportunity |
+| 👤&nbsp;Accounts | _"find Apple"_, _"new prospect account"_ — voice typeahead, account-type and industry analytics |
+| 📇&nbsp;Contacts | _"show me Bob Brown's contact details"_ — duplicate detection, account roll-up |
+| 💼&nbsp;Opportunities | _"add product to opportunity"_ — stage pipeline, weighted forecast, AI-driven win probability |
+| 📦&nbsp;Products | _"low stock under 70"_, _"bulk stock adjustment"_, _"price history for Lenovo"_ — wholesale-≤-retail enforced at DB level |
+| 📑&nbsp;Orders | _"create order for ABC Corp"_ — line-item editor, status workflow, invoice generation |
+| 💰&nbsp;Accounting | _"Accounting Summary"_ — AR aging, cashflow, account-margin analytics, product profitability, forecast accuracy — all real-time |
+| 📝&nbsp;Activities | _"create task for Bob tomorrow"_ — typeahead Related-Name lookup across every entity |
+| 📊&nbsp;Analytics | KPI dashboards driven by Postgres stored procedures, rendered with Chart.js |
+| 🔔&nbsp;Notifications | Real-time activity stream with unread/read state |
+| 📧&nbsp;Email | Outbound mail + inbox + autonomous inbound auto-reply (SMTP/IMAP + LangGraph) |
+| 🧭&nbsp;Orchestrator | One launcher to talk to every agent in natural language — voice survives back/forward navigation |
 
 ### Why it's interesting
 
