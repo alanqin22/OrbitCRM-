@@ -343,6 +343,8 @@ def build_products_query(params: Dict[str, Any]) -> Tuple[str, Dict]:
   p_mode                := 'low_stock',
   p_category_filter     := {_uuid(p.get('categoryFilter'))},
   p_category_number     := {_num(p.get('categoryNumber'))},
+  p_sku_filter          := {_esc(p.get('skuFilter')) if p.get('skuFilter') else 'NULL'},
+  p_name_filter         := {_esc(p.get('nameFilter')) if p.get('nameFilter') else 'NULL'},
   p_low_stock_threshold := {_num(p.get('lowStockThreshold') or 70)}
 );""".strip()
 
