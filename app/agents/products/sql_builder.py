@@ -129,6 +129,9 @@ _ALIAS_MAP = {
     'sort_order':       'sortOrder',
     'created_by':       'createdBy',
     'updated_by':       'updatedBy',
+    'created_by_uuid':  'createdByUuid',   # [v3h] employee actor for products.created_by
+    'updated_by_uuid':  'updatedByUuid',   # [v3h] employee actor for products.updated_by
+    'actor_uuid':       'actorUuid',       # [v3h] global fallback actor
     'image_url':        'imageUrl',        # v4.3
     'effective_from':   'effectiveFrom',
     'page_size':        'pageSize',
@@ -206,6 +209,9 @@ def build_products_query(params: Dict[str, Any]) -> Tuple[str, Dict]:
   p_currency        := {_esc(p.get('currency') or 'USD')},
   p_image_url       := {_esc(p['imageUrl']) if p.get('imageUrl') else 'NULL'},
   p_created_by      := {_esc(p.get('createdBy'))},
+  p_actor_uuid      := {_uuid(p.get('actorUuid'))},
+  p_created_by_uuid := {_uuid(p.get('createdByUuid'))},
+  p_updated_by_uuid := {_uuid(p.get('updatedByUuid'))},
   p_payload         := NULL,
   p_effective_from  := NULL
 );""".strip()
@@ -230,6 +236,9 @@ def build_products_query(params: Dict[str, Any]) -> Tuple[str, Dict]:
   p_currency        := {_esc(p.get('currency') or 'USD')},
   p_image_url       := {_esc(p['imageUrl']) if p.get('imageUrl') else 'NULL'},
   p_created_by      := {_esc(p.get('createdBy'))},
+  p_actor_uuid      := {_uuid(p.get('actorUuid'))},
+  p_created_by_uuid := {_uuid(p.get('createdByUuid'))},
+  p_updated_by_uuid := {_uuid(p.get('updatedByUuid'))},
   p_payload         := NULL,
   p_effective_from  := NULL
 );""".strip()
@@ -271,6 +280,9 @@ def build_products_query(params: Dict[str, Any]) -> Tuple[str, Dict]:
   p_currency        := {_esc(p.get('currency') or 'USD')},
   p_image_url       := {img_val},
   p_updated_by      := {_esc(p.get('updatedBy'))},
+  p_actor_uuid      := {_uuid(p.get('actorUuid'))},
+  p_created_by_uuid := {_uuid(p.get('createdByUuid'))},
+  p_updated_by_uuid := {_uuid(p.get('updatedByUuid'))},
   p_payload         := NULL,
   p_effective_from  := NULL
 );""".strip()

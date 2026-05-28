@@ -197,11 +197,29 @@ def _normalise_product(p: dict) -> dict:
         'promo':             p.get('promo_price'),
         'created_at':        p.get('created_at'),
         'updated_at':        p.get('updated_at'),
+        # Audit attribution — nested {employee_uuid, employee_name, first_name,
+        # last_name, email} from sp_products v3h get_details. May be {} or None
+        # for older SP versions or NULL FK rows (rendered as "—").
+        'created_by':        p.get('created_by') or {},
+        'updated_by':        p.get('updated_by') or {},
         'prices':            p.get('prices'),
         'primary_image_url': primary_image_url,
         'image_alt_text':    p.get('image_alt_text') or None,
         'images':            images,
     }
+
+
+def _employee_display(emp: Optional[dict]) -> str:
+    """Render an employee dict as a display name. Prefers 'First Last';
+    falls back to employee_name, then email, then em-dash."""
+    if not emp or not isinstance(emp, dict):
+        return '—'
+    first = (emp.get('first_name') or '').strip()
+    last  = (emp.get('last_name')  or '').strip()
+    full  = f'{first} {last}'.strip()
+    if full:
+        return full
+    return (emp.get('employee_name') or emp.get('email') or '—').strip() or '—'
 
 
 def _price_triplet(p: dict) -> str:
@@ -263,6 +281,16 @@ def _product_detail_block(out: List[str], p: dict, price_history: list, mode_lab
     out.append(f'Status: {"Active" if p.get("is_active") else "Inactive"}')
     out.append(f'Created: {_fmt_dt(p.get("created_at"))}')
     out.append(f'Updated: {_fmt_dt(p.get("updated_at"))}')
+    # v3h — audit attribution. Hyphenated keys avoid collision with the
+    # frontend's existing /Created:/ /Updated:/ regex parsers.
+    _cb = p.get('created_by') or {}
+    _ub = p.get('updated_by') or {}
+    out.append(f'Created-By: {_employee_display(_cb)}')
+    out.append(f'Updated-By: {_employee_display(_ub)}')
+    # UUID lines let the frontend pre-select the form's Created By / Updated By
+    # dropdowns by exact employee_uuid (so an untouched edit preserves created_by).
+    out.append(f'Created-By-UUID: {_full_uuid(_cb.get("employee_uuid")) if _cb.get("employee_uuid") else ""}')
+    out.append(f'Updated-By-UUID: {_full_uuid(_ub.get("employee_uuid")) if _ub.get("employee_uuid") else ""}')
     # Primary image — v3.1
     if p.get('primary_image_url'):
         out.append(f'Image-URL: {p["primary_image_url"]}')

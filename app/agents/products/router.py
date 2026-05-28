@@ -76,6 +76,12 @@ class ProductData(BaseModel):
     image_url:        Optional[str]   = None   # v2.2 — forwarded as p_image_url to sp_products
     created_by:       Optional[str]   = None
     updated_by:       Optional[str]   = None
+    # [v3h] employee-actor UUIDs from the form's Created By / Updated By dropdowns.
+    # Without these the values are silently dropped by Pydantic and never reach
+    # sp_products (products.created_by / updated_by stay at the default actor).
+    created_by_uuid:  Optional[str]   = None
+    updated_by_uuid:  Optional[str]   = None
+    actor_uuid:       Optional[str]   = None
 
 
 class ProductChatInput(BaseModel):

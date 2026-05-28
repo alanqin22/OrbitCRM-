@@ -151,7 +151,12 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
                     'description':    pd.get('description') or None,
                     'status':         pd.get('status') or 'Active',
                     'imageUrl':       pd.get('image_url') or None,   # v2.1
-                    'createdBy':      pd.get('created_by') or chat_input.get('sessionId') or None
+                    'createdBy':      pd.get('created_by') or chat_input.get('sessionId') or None,
+                    # [v3h] real employee actor from the form's Created By /
+                    # Updated By dropdowns → sp_products p_created_by_uuid /
+                    # p_updated_by_uuid (writes products.created_by/updated_by).
+                    'createdByUuid':  pd.get('created_by_uuid') or pd.get('actor_uuid') or None,
+                    'updatedByUuid':  pd.get('updated_by_uuid') or pd.get('actor_uuid') or None
                 }
                 return routed(params)
 
@@ -173,7 +178,13 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
                     'description':    pd.get('description') or None,
                     'status':         pd.get('status') or None,
                     'imageUrl':       pd.get('image_url') or None,   # v2.1
-                    'updatedBy':      pd.get('updated_by') or chat_input.get('sessionId') or None
+                    'updatedBy':      pd.get('updated_by') or chat_input.get('sessionId') or None,
+                    # [v3h] real employee actor from the form's dropdowns.
+                    # created_by_uuid is sent pre-filled with the existing
+                    # creator, so an untouched edit leaves created_by unchanged;
+                    # the SP only overwrites created_by when this is non-NULL.
+                    'createdByUuid':  pd.get('created_by_uuid') or None,
+                    'updatedByUuid':  pd.get('updated_by_uuid') or pd.get('actor_uuid') or None
                 }
                 return routed(params)
 
