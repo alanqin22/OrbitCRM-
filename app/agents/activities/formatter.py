@@ -283,6 +283,10 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
     elif mode == 'timeline':
         report_mode = 'timeline'
         activities  = response.get('timeline') or []
+        # Pass the structured events through so the frontend can render full
+        # details (amount, method, order/invoice numbers) instead of re-parsing
+        # the markdown table — which only captures the "Details" cell text.
+        report_data['timeline'] = activities
 
     elif mode == 'overdue':
         report_mode = 'overdue'

@@ -6,7 +6,7 @@ prefix so existing HTML frontends require zero URL changes.
 v2.4.0 — Added EmailAgent module (info@agentorc.ca — SMTP/IMAP + LangGraph).
   • Endpoint: POST /email-chat
   • Health:   GET  /email-health
-  • Frontend: email-chat.html
+  • Frontend: email-mgmt.html
   • SMTP: mail.agentorc.ca:465 (SSL)  IMAP: mail.agentorc.ca:993 (SSL)
 
 v2.3.0 — Added Auth module (Orbit CRM Authentication).
@@ -29,7 +29,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import settings
@@ -186,30 +186,30 @@ async def serve_auth_html():
     return FileResponse("auth.html", media_type="text/html")
 
 
-@app.get("/product-chat.html")
+@app.get("/product-mgmt.html")
 async def serve_product_chat_html():
-    """Serve product-chat.html over http so AudioWorklet / blob: URLs work for the
+    """Serve product-mgmt.html over http so AudioWorklet / blob: URLs work for the
     Azure Speech SDK (file:// origins are blocked from loading blob: workers)."""
-    return FileResponse("product-chat.html", media_type="text/html")
+    return FileResponse("product-mgmt.html", media_type="text/html")
 
 
 # ── Chat-page routes ───────────────────────────────────────────────────────
-# Serve every *-chat.html over http://<host>/<filename>.html so the Azure
+# Serve every *-mgmt.html over http://<host>/<filename>.html so the Azure
 # Speech SDK can use AudioWorklet (blocked on file:// origins). Each route
 # is registered explicitly (rather than via StaticFiles) so we don't
 # accidentally expose the whole project directory.
 _CHAT_PAGES = [
-    "account-chat.html",
-    "accounting-chat.html",
-    "activity-chat.html",
-    "analytics-chat.html",
-    "contact-chat.html",
-    "email-chat.html",
-    "lead-chat.html",
-    "notifications-chat.html",
-    "opportunity-chat.html",
-    "orchestrator-chat.html",
-    "order-chat.html",
+    "account-mgmt.html",
+    "accounting-mgmt.html",
+    "activity-mgmt.html",
+    "analytics-mgmt.html",
+    "contact-mgmt.html",
+    "email-mgmt.html",
+    "lead-mgmt.html",
+    "notifications-mgmt.html",
+    "opportunity-mgmt.html",
+    "orchestrator-mgmt.html",
+    "order-mgmt.html",
     "store-home.html",
 ]
 
@@ -220,6 +220,23 @@ def _register_chat_page(filename: str) -> None:
 
 for _page in _CHAT_PAGES:
     _register_chat_page(_page)
+
+
+# ── Legacy redirects ─────────────────────────────────────────────────────────
+# The *-chat.html modules were renamed to *-mgmt.html. Redirect the old URLs
+# (existing bookmarks / search-indexed links) to the new names permanently.
+_RENAMED_PAGES = [
+    "account", "accounting", "activity", "analytics", "contact", "email",
+    "lead", "notifications", "opportunity", "orchestrator", "order", "product",
+]
+
+def _register_legacy_redirect(slug: str) -> None:
+    @app.get(f"/{slug}-chat.html", name=f"redirect_{slug}_chat_html", include_in_schema=False)
+    async def _redirect():
+        return RedirectResponse(url=f"/{slug}-mgmt.html", status_code=301)
+
+for _slug in _RENAMED_PAGES:
+    _register_legacy_redirect(_slug)
 
 
 @app.get("/favicon.ico")

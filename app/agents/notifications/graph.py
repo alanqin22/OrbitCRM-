@@ -13,6 +13,7 @@ rather than structured side-channel arrays, so the response model is lean.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any, Dict, List, Optional, TypedDict
@@ -162,10 +163,18 @@ def formatter_node(state: Dict[str, Any]) -> Dict[str, Any]:
             }
             final_output = ai_output
 
+        # Persist a COMPACT assistant turn. For DB operations save the structured
+        # command (not the rendered list/table) so large outputs don't pollute the
+        # LLM context and bleed module/filter values into the next query.
         session_id = state.get("session_id", "default-session")
         user_input = state.get("user_input", "")
-        if user_input and final_output:
-            save_turn(session_id, user_input, final_output)
+        if user_input:
+            if state.get("should_call_api"):
+                memory_turn = json.dumps(state.get("parsed_json") or {}, separators=(",", ":"))
+            else:
+                memory_turn = final_output
+            if memory_turn:
+                save_turn(session_id, user_input, memory_turn)
 
         return {**state, "format_result": fmt_result, "final_output": final_output}
 

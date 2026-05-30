@@ -73,6 +73,7 @@ class ActivityChatResponse(BaseModel):
     success:        bool           = True
     owners:         Optional[List] = None   # populated for get_owners mode
     activity:       Optional[dict] = None   # populated for get/update/create/complete/reopen modes
+    timeline:       Optional[List] = None   # populated for timeline mode — structured events with full details
 
 
 # ============================================================================
@@ -145,6 +146,7 @@ async def activity_chat(req: ActivityChatRequest):
             success=fmt_result.get("success", True),
             owners=fmt_result.get("owners"),
             activity=fmt_result.get("activity"),
+            timeline=fmt_result.get("timeline"),
         )
 
     except Exception as e:
