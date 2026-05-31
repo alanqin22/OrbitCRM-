@@ -307,7 +307,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             out.append('| # | Order Number | Order ID | Account | Contact | Date | Status | Total | Items |')
             out.append('| --- | --- | --- | --- | --- | --- | --- | --- | --- |')
             for idx, o in enumerate(orders):
-                badge = {'Completed': '✅', 'Cancelled': '❌', 'Shipped': '🚚', 'Delivered': '📦'}.get(o.get('status'), '🕐')
+                badge = {'completed': '✅', 'cancelled': '❌', 'shipped': '🚚', 'delivered': '📦'}.get((o.get('status') or '').lower(), '🕐')
                 out.append(
                     f"| {idx+1} | {o.get('order_number') or 'N/A'} | {_full_uuid(o.get('order_id'))} {badge} "
                     f"| {o.get('account_name') or 'N/A'} | {o.get('contact_name') or 'N/A'} "
@@ -400,7 +400,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             out.append(f"**Order ID:** {_full_uuid(order.get('order_id'))}")
             out.append(f"**Account:** {order.get('account_name') or 'N/A'}")
             out.append(f"**Contact:** {order.get('contact_name') or 'N/A'}")
-            out.append(f"**Status:** {order.get('status') or 'Pending'}")
+            out.append(f"**Status:** {order.get('status') or 'pending'}")
             out.append(f"**Order Date:** {_fmt_dt(order.get('order_date'))}")
             if order.get('created_by_name') or order.get('created_by_id'):
                 out.append(f"**Created By:** {order.get('created_by_name') or order.get('created_by_id')}")

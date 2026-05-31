@@ -170,7 +170,7 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
                 params: dict = {
                     'mode':             'create',
                     'accountId':        bd.get('accountId') or bd.get('account_id'),
-                    'status':           bd.get('status') or 'Pending',
+                    'status':           bd.get('status') or 'pending',
                     'orderDate':        (bd.get('orderDate') or bd.get('order_date') or _today()).split('T')[0],
                     'createdBy':        bd.get('createdBy') or bd.get('created_by'),
                     'productId':        bd.get('productId') or bd.get('product_id'),
@@ -302,7 +302,7 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
         s = _status_match.group(1).lower()
         return _routed({
             'mode': 'list',
-            'status': s.capitalize(),
+            'status': s,
             'includeDeleted': False,
             'sortField': 'order_date', 'sortOrder': 'DESC',
             'pageSize': 50, 'pageNumber': 1,

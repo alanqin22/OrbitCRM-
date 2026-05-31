@@ -9,9 +9,9 @@ Because every store operation is deterministic, the AI agent and parse nodes
 from build_standard_graph() are not needed.  We build a custom graph here.
 
 The db_node has special handling for the checkout 'mode':
-  Step A — sp_orders create (status='Processing')
+  Step A — sp_orders create (status='processing')
   Step B — sp_store checkout_add_items (add all items with computed line values)
-  Step C — sp_orders change_status → 'Pending' (fires trigger cascade)
+  Step C — sp_orders change_status → 'pending' (fires trigger cascade)
   Step D — sp_store get_invoice_by_order (captures auto-created invoice)
 
 All other modes are a single execute_sp() call.
@@ -100,9 +100,9 @@ def _checkout_node(state: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, A
     """
     Runs the 4-step checkout sequence and returns assembled result in db_rows.
 
-    Step A — create order (status='Processing')   → no trigger
+    Step A — create order (status='processing')   → no trigger
     Step B — sp_store checkout_add_items            → trgfn_order_items_update_order
-    Step C — change_status → 'Pending'             → full trigger cascade
+    Step C — change_status → 'pending'             → full trigger cascade
     Step D — get_invoice_by_order                  → captures auto-created invoice
     """
     order_id     = None
@@ -115,7 +115,7 @@ def _checkout_node(state: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, A
     def _sp_ok(data: Dict) -> bool:
         return (data.get("metadata") or {}).get("status") == "success"
 
-    # ── Step A: create order as 'Processing' ─────────────────────────────────
+    # ── Step A: create order as 'processing' ─────────────────────────────────
     try:
         query_a, _ = build_store_query({
             "sp":        "sp_orders",
@@ -177,7 +177,7 @@ def _checkout_node(state: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, A
                 from .sql_builder import _uuid
                 execute_sp(f"""SELECT sp_orders(
                   p_mode := 'update', p_action := 'change_status',
-                  p_order_id := {_uuid(order_id)}, p_status := 'Cancelled'
+                  p_order_id := {_uuid(order_id)}, p_status := 'cancelled'
                 ) AS result;""")
                 logger.info(f"Compensation cancel sent for order {order_id}")
             except Exception:
@@ -196,7 +196,7 @@ def _checkout_node(state: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, A
         return {**state, "db_rows": [{"error": f"Step B: {exc}", "step": "B",
                                        "order_id": order_id, "order_number": order_number}]}
 
-    # ── Step C: change_status → 'Pending' — fires trigger cascade ────────────
+    # ── Step C: change_status → 'pending' — fires trigger cascade ────────────
     try:
         query_c, _ = build_store_query({
             "sp":        "sp_orders",
@@ -209,7 +209,7 @@ def _checkout_node(state: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, A
             msg = (data_c.get("metadata") or {}).get("message", "change_status failed")
             return {**state, "db_rows": [{"error": msg, "step": "C",
                                            "order_id": order_id, "order_number": order_number}]}
-        logger.info("Checkout Step C OK — status→Pending, trigger cascade fired")
+        logger.info("Checkout Step C OK — status→pending, trigger cascade fired")
 
     except Exception as exc:
         logger.error(f"Checkout Step C failed: {exc}", exc_info=True)

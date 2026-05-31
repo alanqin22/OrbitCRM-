@@ -71,8 +71,8 @@ VALID_ACTIONS = {
 }
 
 VALID_STATUSES = {
-    'Pending', 'Processing', 'Ready', 'Invoiced',
-    'Shipped', 'Delivered', 'Completed', 'Cancelled', 'Refunded',
+    'pending', 'processing', 'ready', 'invoiced',
+    'shipped', 'delivered', 'completed', 'cancelled', 'refunded',
 }
 
 VALID_PRICE_TYPES = {'Retail', 'Promo', 'Wholesale'}
@@ -243,8 +243,15 @@ def _validate(params: dict) -> List[str]:
         errors.append("'forceHardDelete' must be a boolean")
 
     status = params.get('status')
-    if status and status not in VALID_STATUSES:
-        errors.append(f"Invalid status: '{status}'. Allowed: {', '.join(sorted(VALID_STATUSES))}")
+    if status:
+        # Normalize to lowercase (DB stores order status in lowercase).
+        # Accept any case from upstream callers (HTML/AI/pre_router) and
+        # canonicalize before validation + downstream SQL build.
+        status_norm = str(status).strip().lower()
+        if status_norm not in VALID_STATUSES:
+            errors.append(f"Invalid status: '{status}'. Allowed: {', '.join(sorted(VALID_STATUSES))}")
+        else:
+            params['status'] = status_norm
 
     sort_order = params.get('sortOrder')
     if sort_order and sort_order.upper() not in ('ASC', 'DESC'):

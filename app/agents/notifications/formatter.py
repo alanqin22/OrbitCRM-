@@ -267,8 +267,25 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
     if mode == 'list':
         notifications = response.get('notifications') or []
         employee_name = response.get('employee_name') or 'All Employees'
+        # Pagination metadata (added by sp_notifications v2k2+). Fall back to
+        # a single-page view if the SP hasn't been re-deployed yet.
+        pag         = response.get('pagination') or {}
+        cur_page    = int(pag.get('page') or 1)
+        total_pages = int(pag.get('total_pages') or 1)
+        total_rec   = int(pag.get('total_records') if pag.get('total_records') is not None else len(notifications))
+        page_size   = int(pag.get('page_size') or pag.get('limit') or 50)
 
         out.append(f'**Employee:** {employee_name}')
+        # Embed page/total + bulk-action buttons in a single marker so the
+        # frontend can render them as a 2-column row: page info on the left,
+        # All Read / All Unread buttons on the right. Replaces the bottom
+        # action bar location for those two bulk actions.
+        out.append(
+            f'[LISTHEADER:page={cur_page}'
+            f':totalPages={total_pages}'
+            f':total={total_rec}'
+            f':pageSize={page_size}]'
+        )
         out.append('')
 
         if not notifications:
@@ -302,9 +319,10 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                     f'{created} | {toggle} | {inspect} |'
                 )
 
-        # Action bar replaces standard footer for list mode
+        # Action bar replaces standard footer for list mode.
+        # Embed pagination so the frontend can render Prev/Next inline.
         out.append('')
-        out.append('[ACTIONBAR]')
+        out.append(f'[ACTIONBAR:page={cur_page}:totalPages={total_pages}:pageSize={page_size}]')
 
     # ── unread_count ──────────────────────────────────────────────────────────
     elif mode == 'unread_count':

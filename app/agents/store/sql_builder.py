@@ -173,7 +173,7 @@ def build_store_query(params: Dict[str, Any]) -> Tuple[str, Dict]:
         elif mode == "create":
             sql = f"""SELECT sp_orders(
   p_mode       := 'create',
-  p_status     := 'Processing',
+  p_status     := 'processing',
   p_account_id := {_uuid(p.get("accountId"))},
   p_contact_id := {_uuid(p.get("contactId"))},
   p_created_by := {_uuid(p.get("createdBy"))}
@@ -195,7 +195,7 @@ def build_store_query(params: Dict[str, Any]) -> Tuple[str, Dict]:
   p_mode       := 'update',
   p_action     := 'change_status',
   p_order_id   := {_uuid(p.get("orderId"))},
-  p_status     := 'Pending',
+  p_status     := 'pending',
   p_updated_by := {_uuid(p.get("updatedBy"))}
 ) AS result;""".strip()
 

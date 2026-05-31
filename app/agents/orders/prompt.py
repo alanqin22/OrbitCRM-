@@ -131,8 +131,8 @@ TRIGGER EXAMPLES (copy these patterns exactly):
   Input:  "show orders for account 550e8400-e29b-41d4-a716-446655440000"
   Output: {"mode":"list","accountId":"550e8400-e29b-41d4-a716-446655440000","includeDeleted":false}
 
-  Input:  "create order for account abc-uuid status=Pending createdBy=emp-uuid"
-  Output: {"mode":"create","accountId":"abc-uuid","status":"Pending","createdBy":"emp-uuid"}
+  Input:  "create order for account abc-uuid status=pending createdBy=emp-uuid"
+  Output: {"mode":"create","accountId":"abc-uuid","status":"pending","createdBy":"emp-uuid"}
 
   Input:  "soft delete order dfc491f5-... updatedBy=emp-uuid"
   Output: {"mode":"update","action":"soft_delete","orderId":"dfc491f5-...","updatedBy":"emp-uuid"}
@@ -182,7 +182,7 @@ Optional filters:
 Examples:
 {"mode":"list","orderNumber":"SO-2026-000123"}
 {"mode":"list","search":"Acme","pageSize":20}
-{"mode":"list","accountId":"uuid","status":"Pending"}
+{"mode":"list","accountId":"uuid","status":"pending"}
 
 NOTE: Use list with accountId to show orders AFTER an account is selected
 in the unified form. Do NOT use list for the account typeahead — that is
@@ -212,7 +212,7 @@ Optional:
 
 Examples:
 {"mode":"create","accountId":"uuid","createdBy":"emp-uuid"}
-{"mode":"create","accountId":"uuid","productId":"uuid","quantity":2,"priceType":"Retail","createdBy":"emp-uuid","status":"Pending"}
+{"mode":"create","accountId":"uuid","productId":"uuid","quantity":2,"priceType":"Retail","createdBy":"emp-uuid","status":"pending"}
 
 ============================================================
 4. update
@@ -231,10 +231,10 @@ Actions:
 - batch_update    — single-call bulk edit (routed directly from web form; do NOT generate this)
 
 Examples:
-{"mode":"update","action":"update_header","orderId":"uuid","status":"Processing","updatedBy":"emp-uuid"}
+{"mode":"update","action":"update_header","orderId":"uuid","status":"processing","updatedBy":"emp-uuid"}
 {"mode":"update","action":"add_item","orderId":"uuid","productId":"uuid","quantity":3,"priceType":"Retail"}
 {"mode":"update","action":"remove_item","orderId":"uuid","orderItemId":"item-uuid"}
-{"mode":"update","action":"change_status","orderNumber":"SO-2026-000123","status":"Delivered"}
+{"mode":"update","action":"change_status","orderNumber":"SO-2026-000123","status":"delivered"}
 {"mode":"update","action":"soft_delete","orderId":"uuid","updatedBy":"emp-uuid"}
 {"mode":"update","action":"restore","orderId":"uuid"}
 {"mode":"update","action":"hard_delete","orderId":"uuid","forceHardDelete":true}
@@ -279,8 +279,8 @@ account_search queries the accounts table, not the orders table.
 🧠  KEY BUSINESS RULES
 ------------------------------------------------------------
 
-Order Status Values (exact case required):
-  Pending | Processing | Ready | Invoiced | Shipped | Delivered | Completed | Cancelled | Refunded
+Order Status Values (must be lowercase — DB stores status in lowercase):
+  pending | processing | ready | invoiced | shipped | delivered | completed | cancelled | refunded
 
 Order Number Format: SO-YYYY-XXXXXX (e.g. SO-2026-000042)
 
