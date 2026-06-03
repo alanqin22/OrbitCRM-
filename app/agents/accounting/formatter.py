@@ -516,7 +516,10 @@ def _fmt_list_invoices_for_account(response: Dict, metadata: Dict, params: Dict)
       Invoice ID  → idCol    (full UUID stored as selected value)
       Status      → statusCol
       Due Date    → date context
-      Balance Due → amountCol
+      Total       → amountCol  ← CHANGED from 'Balance Due' to 'Total'
+                                  Balance Due = $0.00 for paid invoices which caused the
+                                  dropdown to show ($0.00) for every fully-paid invoice.
+                                  Total = invoice face value regardless of payment status.
 
     Cancelled invoices are included so staff can investigate / void them.
     No pagination — all invoices are returned.
@@ -530,24 +533,26 @@ def _fmt_list_invoices_for_account(response: Dict, metadata: Dict, params: Dict)
 
     lines.append(f"**{len(invoices)} invoice{'s' if len(invoices) != 1 else ''} found**")
     lines.append('')
-    lines.append('| Invoice # | Invoice ID | Status | Due Date | Balance Due |')
-    lines.append('|-----------|------------|--------|----------|-------------|')
+    lines.append('| Invoice # | Invoice ID | Status | Due Date | Total |')
+    lines.append('|-----------|------------|--------|----------|-------|')
 
     for inv in invoices:
         raw_status = inv.get('status') or inv.get('invoice_status') or ''
         status = _normalize_status(raw_status)
         currency = inv.get('currency', 'USD')
-        balance = format_currency(
-            inv.get('computed_balance_due') if inv.get('computed_balance_due') is not None
-            else inv.get('balance_due', 0),
-            currency
-        )
+        # Prefer the authoritative stored total_amount (new SP field); fall back to
+        # invoice_revenue (pipeline aggregate) then total_payments as a last resort.
+        # Do NOT use computed_balance_due — it is $0.00 for fully-paid invoices,
+        # which made every paid invoice show ($0.00) in the dropdown.
+        raw_total = (inv.get('total_amount') or inv.get('revenue')
+                     or inv.get('total_payments') or 0)
+        total = format_currency(raw_total, currency)
         lines.append(
             f"| {inv.get('invoice_number', 'N/A')} "
             f"| {inv.get('invoice_id', 'N/A')} "
             f"| {status} "
             f"| {format_date(inv.get('due_date'))} "
-            f"| {balance} |"
+            f"| {total} |"
         )
 
     lines.append('')

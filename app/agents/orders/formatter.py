@@ -146,8 +146,38 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
     Returns dict with keys:
       output, mode, reportMode, entity, order_id, order_number, result, context, success
     """
-    response    = _parse_response(db_rows)
     params_mode = str(params.get('mode') or '').lower()
+
+    # advance_statuses: fn_advance_order_statuses() returns table rows directly
+    # (not wrapped in the sp_orders JSON envelope). Handle before _parse_response.
+    if params_mode == 'advance_statuses':
+        rows = db_rows or []
+        total = sum(r.get('orders_advanced', 0) for r in rows)
+        out = ['### 🔄 Order Status Advancement', '']
+        if total == 0:
+            out.append('No orders needed advancement — all are already at the correct stage.')
+        else:
+            out.append(f'**{total} orders advanced** across the lifecycle:')
+            out.append('')
+            out.append('| Transition | Orders Advanced |')
+            out.append('|---|---|')
+            for r in rows:
+                if r.get('orders_advanced', 0) > 0:
+                    out.append(f"| {r['transition']} | **{r['orders_advanced']}** |")
+            out.append('')
+            out.append('> ⚠️ Orders reaching **shipped** had invoices created and payments processed.')
+            out.append('> Return window: customers have **30 days** from delivery to return for a full refund.')
+            out.append('> Orders move to **completed** after 32 days (30-day window + 2-day buffer).')
+        return {
+            'output': '\n'.join(out),
+            'mode': 'advance_statuses',
+            'reportMode': 'advance_statuses',
+            'entity': 'orders',
+            'result': {'transitions': rows, 'total_advanced': total},
+            'success': True,
+        }
+
+    response    = _parse_response(db_rows)
     mode        = _detect_mode(response, params_mode)
     context     = params.get('context')
     metadata    = response.get('metadata') or {}
@@ -353,6 +383,33 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             if order.get('contact_phone'):
                 out.append(f"   Phone:   {order['contact_phone']}")
             out.append('')
+            # Billing address
+            ba = order.get('billing_address') or {}
+            if ba:
+                parts = [ba.get('line1'), ba.get('line2'),
+                         ', '.join(filter(None, [ba.get('city'), ba.get('province'), ba.get('postal_code')])),
+                         ba.get('country')]
+                addr_lines = [p for p in parts if p]
+                out.append('**Billing Address**')
+                for line in addr_lines:
+                    out.append(f"   {line}")
+                out.append('')
+            # Shipping address
+            sa = order.get('shipping_address') or {}
+            if sa:
+                # Only show if different from billing
+                same = (sa == ba)
+                parts = [sa.get('line1'), sa.get('line2'),
+                         ', '.join(filter(None, [sa.get('city'), sa.get('province'), sa.get('postal_code')])),
+                         sa.get('country')]
+                addr_lines = [p for p in parts if p]
+                out.append('**Shipping Address**')
+                if same:
+                    out.append('   Same as billing address')
+                else:
+                    for line in addr_lines:
+                        out.append(f"   {line}")
+                out.append('')
             if items_list:
                 out.append(f"**Order Items ({len(items_list)})**")
                 out.append('')

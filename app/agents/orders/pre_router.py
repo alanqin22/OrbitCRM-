@@ -308,6 +308,29 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
             'pageSize': 50, 'pageNumber': 1,
         })
 
+    # "update an order" / "update order" / "edit an order" → open the Update form
+    # Must come BEFORE the advance_statuses check so "update order" doesn't
+    # get mistaken for "advance/process orders".
+    if re.match(
+        r'^(?:i\s+want\s+to\s+)?(?:please\s+)?'
+        r'(?:update|edit|modify|change)\s+(?:an?\s+|the\s+)?orders?\s*$',
+        msg, re.IGNORECASE
+    ):
+        return _routed({'mode': 'show_order_form'})
+
+    # advance / process orders — calls fn_advance_order_statuses()
+    # Requires an explicit "advance", "auto-advance", "process", "progress",
+    # "move", or status-specific phrase. "update order" alone is excluded so
+    # it falls through to the Update form intent above.
+    if re.search(
+        r'\b(advance|auto.?advance|process|progress|move)\b.*\borders?\b'
+        r'|ship\s+(?:all\s+)?ready\s+orders?'
+        r'|\border\s+status(?:es)?\s+(?:update|advance)'
+        r'|\bupdate\s+order\s+status(?:es)?\b',
+        msg, re.IGNORECASE
+    ):
+        return _routed({'mode': 'advance_statuses'})
+
     # sales summary
     if msg == 'sales summary' or msg.startswith('sales summary'):
         yr_raw = _kv(raw, 'year')

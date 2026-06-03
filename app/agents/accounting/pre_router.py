@@ -46,6 +46,7 @@ CHANGELOG
 
 import re
 import logging
+from datetime import date, timedelta
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -331,6 +332,86 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         if re.search(r'\bvoid\b.*\binvoice', msg) \
            or re.search(r'\b(cancel|nullify)\b.*\binvoice', msg):
             return routed({'mode': 'show_void_invoice_form'})
+
+    # ── Natural-language invoice / payment listing with optional date context ──
+    # Catches phrases like:
+    #   "show me invoices this month"        "list all invoices"
+    #   "show invoices for this month"       "show invoices today"
+    #   "display payments this week"         "show overdue invoices"
+    #   "show me all invoices"               "list payments last month"
+    #
+    # Date expressions supported:
+    #   today / this week / this month / last month / this year / last year
+    #   If no date mentioned → list all (no date filter)
+    _is_invoice_query = bool(re.search(
+        r'\b(?:show|list|display|get|find|give)(?:\s+me)?(?:\s+all)?\s+(?:all\s+)?invoices?\b'
+        r'|\binvoices?\s+(?:for\s+)?(?:this|last)\s+\w+'
+        r'|\binvoices?\s+today\b'
+        r'|\boverdue\s+invoices?\b',
+        msg, re.IGNORECASE
+    ))
+    _is_payment_query = bool(re.search(
+        r'\b(?:show|list|display|get|find|give)(?:\s+me)?(?:\s+all)?\s+(?:all\s+)?payments?\b'
+        r'|\bpayments?\s+(?:for\s+)?(?:this|last)\s+\w+'
+        r'|\bpayments?\s+today\b',
+        msg, re.IGNORECASE
+    ))
+    _is_summary_query = bool(re.search(
+        r'\b(?:accounting\s+summary|accounting\s+report|account(?:ing)?\s+overview)\b',
+        msg, re.IGNORECASE
+    ))
+
+    if _is_invoice_query or _is_payment_query or _is_summary_query:
+        today = date.today()
+        start_date: Optional[str] = None
+        end_date:   Optional[str] = None
+
+        if re.search(r'\btoday\b', msg, re.IGNORECASE):
+            start_date = today.isoformat()
+            end_date   = today.isoformat()
+        elif re.search(r'\bthis\s+week\b', msg, re.IGNORECASE):
+            start_date = (today - timedelta(days=today.weekday())).isoformat()
+            end_date   = today.isoformat()
+        elif re.search(r'\blast\s+month\b', msg, re.IGNORECASE):
+            first_this  = today.replace(day=1)
+            last_month_end = first_this - timedelta(days=1)
+            start_date  = last_month_end.replace(day=1).isoformat()
+            end_date    = last_month_end.isoformat()
+        elif re.search(r'\bthis\s+month\b', msg, re.IGNORECASE):
+            start_date = today.replace(day=1).isoformat()
+            end_date   = today.isoformat()
+        elif re.search(r'\bthis\s+year\b', msg, re.IGNORECASE):
+            start_date = today.replace(month=1, day=1).isoformat()
+            end_date   = today.isoformat()
+        elif re.search(r'\blast\s+year\b', msg, re.IGNORECASE):
+            y = today.year - 1
+            start_date = f'{y}-01-01'
+            end_date   = f'{y}-12-31'
+        elif re.search(r'\blast\s+(\d+)\s+days?\b', msg, re.IGNORECASE):
+            m_days = re.search(r'\blast\s+(\d+)\s+days?\b', msg, re.IGNORECASE)
+            n = int(m_days.group(1))
+            start_date = (today - timedelta(days=n)).isoformat()
+            end_date   = today.isoformat()
+
+        # Determine mode
+        if _is_summary_query:
+            nl_mode = 'accounting_summary'
+        elif _is_payment_query:
+            nl_mode = 'list_payments'
+        else:
+            nl_mode = 'list_invoices'
+
+        params: Dict[str, Any] = {'mode': nl_mode}
+        if start_date:
+            params['startDate'] = start_date
+        if end_date:
+            params['endDate'] = end_date
+
+        logger.info(
+            f'[NL-accounting] mode={nl_mode} start={start_date} end={end_date} '
+            f'| msg={raw[:60]!r}'
+        )
+        return routed(params)
 
     # ── All other messages → AI Agent ─────────────────────────────────────────
     return passthru()

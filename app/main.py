@@ -70,11 +70,62 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _run_advance_order_statuses() -> None:
+    """Scheduled job: advance order statuses once daily.
+
+    Calls fn_advance_order_statuses() which moves orders through the
+    realistic 30-day lifecycle:
+      pending(24h) → processing(48h) → ready(12h) → shipped → delivered(7d) → completed(32d)
+    The ready→shipped transition fires trgfn_order_create_invoice, creating
+    invoices and auto-payments for newly-shipped orders.
+    """
+    try:
+        from app.core.database import execute_sp
+        rows = execute_sp(
+            "SELECT transition, orders_advanced FROM fn_advance_order_statuses()"
+        )
+        total = sum(r.get('orders_advanced', 0) for r in rows)
+        if total:
+            for r in rows:
+                if r.get('orders_advanced', 0):
+                    logger.info(f"  [OrderAdvance] {r['transition']}: {r['orders_advanced']}")
+            logger.info(f"[OrderAdvance] Daily run complete — {total} orders advanced")
+        else:
+            logger.info("[OrderAdvance] Daily run — no orders needed advancement")
+    except Exception as exc:
+        logger.error(f"[OrderAdvance] Scheduled job failed: {exc}", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("=== CRM Agent starting up (all 12 modules + home index + auth + email) ===")
     db_ok = test_connection()
     logger.info(f"Database: {'OK' if db_ok else 'FAILED -- check DB_DSN in .env'}")
+
+    # ── Daily order-status advancement scheduler (Windows-compatible) ──────────
+    # Uses APScheduler so the same code runs on Windows (no pg_cron) and on
+    # Railway/Linux. Wrapped in try/except so a missing package never crashes
+    # the server — the app starts normally and pg_cron can be used instead.
+    _scheduler = None
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from apscheduler.triggers.cron import CronTrigger
+        _scheduler = BackgroundScheduler(timezone="UTC")
+        _scheduler.add_job(
+            _run_advance_order_statuses,
+            trigger=CronTrigger(hour=2, minute=0),  # 02:00 UTC daily = pg_cron '0 2 * * *'
+            id="advance_order_statuses",
+            replace_existing=True,
+            misfire_grace_time=3600,  # allow up to 1h late if server was briefly down
+        )
+        _scheduler.start()
+        logger.info("[OrderAdvance] Scheduler started — order statuses advance daily at 02:00 UTC")
+    except ImportError:
+        logger.warning(
+            "[OrderAdvance] apscheduler not installed — daily scheduler skipped. "
+            "Install with: pip install 'apscheduler>=3.10,<4'  "
+            "Or use pg_cron on Railway/Supabase (see sql/fn_advance_order_statuses.sql)."
+        )
 
     # Start autonomous inbound-email auto-reply poller
     from app.agents.email.imap_poller import start_poller, stop_poller
@@ -87,6 +138,8 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    if _scheduler is not None:
+        _scheduler.shutdown(wait=False)
     try:
         stop_poller()
     except Exception:

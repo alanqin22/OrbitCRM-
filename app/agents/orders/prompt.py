@@ -137,6 +137,19 @@ TRIGGER EXAMPLES (copy these patterns exactly):
   Input:  "soft delete order dfc491f5-... updatedBy=emp-uuid"
   Output: {"mode":"update","action":"soft_delete","orderId":"dfc491f5-...","updatedBy":"emp-uuid"}
 
+  Input:  "I want to update an order"
+  Output: {"mode":"show_order_form"}
+
+  Input:  "update an order" / "edit an order" / "modify an order"
+  Output: {"mode":"show_order_form"}
+
+  Input:  "advance orders" / "process orders" / "update order statuses"
+  Output: {"mode":"advance_statuses"}
+
+⚠️  IMPORTANT: "update an order" (no UUID) → show_order_form (opens the form).
+    "advance orders" / "process orders" / "update order statuses" → advance_statuses.
+    These are DIFFERENT. Never confuse them.
+
 ⚠️  WARNING: "search accounts: <query>" is NOT the same as a list search.
     "search accounts: bob" MUST generate {"mode":"account_search","search":"bob"}
     NOT {"mode":"list","search":"bob"} — that is WRONG.

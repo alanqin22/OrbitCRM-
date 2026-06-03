@@ -63,6 +63,7 @@ VALID_MODES = {
     'account_summary', 'category_summary', 'sales_summary',
     'account_search', 'list_employees', 'contact_search',
     'get_pricing', 'get_category', 'get_product',
+    'advance_statuses', 'show_order_form',
 }
 
 VALID_ACTIONS = {
@@ -317,6 +318,12 @@ def build_orders_query(params: Dict[str, Any], raw_message: str = '') -> Tuple[s
 
     mode = params.get('mode', 'unknown')
     logger.info(f"Building sp_orders query — mode={mode} action={params.get('action', '')}")
+
+    # advance_statuses: call fn_advance_order_statuses() directly —
+    # not routed through sp_orders.
+    if mode == 'advance_statuses':
+        sql = "SELECT transition, orders_advanced FROM fn_advance_order_statuses() AS result(transition TEXT, orders_advanced INT);"
+        return sql, {'mode': mode, 'param_count': 0, 'params_used': []}
 
     # Build named params
     named: List[str] = []
