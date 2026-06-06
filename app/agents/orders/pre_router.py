@@ -59,6 +59,7 @@ CHANGELOG
 from __future__ import annotations
 
 import re
+import calendar
 import logging
 from datetime import date
 from typing import Any, Dict, Optional
@@ -357,12 +358,10 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
 
     # sales summary
     if msg == 'sales summary' or msg.startswith('sales summary'):
-        yr_raw = _kv(raw, 'year')
+        yr_m = re.search(r'\b(20\d{2})\b', raw)
         params = {'mode': 'sales_summary'}
-        if yr_raw and yr_raw.isdigit():
-            yr = int(yr_raw)
-            if 1900 <= yr <= 3000:
-                params['year'] = yr
+        if yr_m:
+            params['year'] = int(yr_m.group(1))
         return _routed(params)
 
     # account summary / show top spending customers
@@ -511,10 +510,18 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
     if re.search(r'\b(?:quarterly|annual|monthly|weekly)\s+(?:sales|revenue)\b', msg, re.IGNORECASE) \
        or re.search(r'\b(?:show|view|get)\s+(?:(?:quarterly|annual|monthly)\s+)?(?:sales|revenue)\s+summary\b', msg, re.IGNORECASE):
         yr_m = re.search(r'\b(20\d{2})\b', raw)
-        yr = int(yr_m.group(1)) if yr_m else None
         params: dict = {'mode': 'sales_summary'}
-        if yr:
-            params['year'] = yr
+        if yr_m:
+            params['year'] = int(yr_m.group(1))
+        elif re.search(r'\bquarterly\b', msg, re.IGNORECASE):
+            # No explicit year — use current quarter date range
+            today = date.today()
+            q = (today.month - 1) // 3 + 1
+            q_start_month = (q - 1) * 3 + 1
+            q_end_month = q_start_month + 2
+            q_end_day = calendar.monthrange(today.year, q_end_month)[1]
+            params['startDate'] = f"{today.year}-{q_start_month:02d}-01"
+            params['endDate'] = f"{today.year}-{q_end_month:02d}-{q_end_day:02d}"
         return _routed(params)
 
     # ── account revenue summary — broader phrasing ───────────────────────────
