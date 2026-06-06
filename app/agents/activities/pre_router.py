@@ -142,7 +142,8 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
         if related_type and related_id:
             logger.info(f'[timeline] relatedType={related_type} relatedId={related_id}')
             return _routed({'mode': 'timeline', 'relatedType': related_type, 'relatedId': related_id})
-        logger.warning('[timeline] missing relatedType/relatedId — falling through to AI Agent')
+        # No entity provided — passthru so the AI Agent can ask for a name
+        logger.warning('[timeline] missing relatedType/relatedId — passthru to AI Agent')
         return _passthru(raw, chat_input)
 
     # ── "get activity:" ──────────────────────────────────────────────────────

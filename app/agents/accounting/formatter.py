@@ -222,6 +222,30 @@ def format_response(db_rows: List[Dict[str, Any]], params: Dict[str, Any]) -> st
     if isinstance(response, str):
         response = safe_json(response) or {}
 
+    # ── Python-side search filter (safety net for SP versions without p_search) ─
+    # Applied here because this is guaranteed to run regardless of graph caching.
+    _search_term = (params.get('search') or '').strip().lower()
+    _mode_for_filter = (params.get('mode') or '').strip().lower()
+    if _search_term and isinstance(response, dict):
+        for _list_key in ('payments', 'invoices'):
+            if _list_key in response and isinstance(response[_list_key], list):
+                _before = len(response[_list_key])
+                response[_list_key] = [
+                    item for item in response[_list_key]
+                    if _search_term in str(item.get('account_name') or '').lower()
+                    or _search_term in str(item.get('invoice_number') or '').lower()
+                    or _search_term in str(item.get('contact_name') or '').lower()
+                ]
+                _after = len(response[_list_key])
+                if _before != _after:
+                    import logging as _log
+                    _log.getLogger(__name__).info(
+                        f'[fmt-search-filter] {_list_key}: {_before}→{_after} for {_search_term!r}'
+                    )
+                    # Update metadata total_records to match filtered count
+                    if isinstance(response.get('metadata'), dict):
+                        response['metadata']['total_records'] = _after
+
     # --- Mode resolution (3-layer) ---
     mode_from_params = (params.get('mode') or '').strip().lower()
     mode_inferred = _infer_mode_from_response(response)
@@ -544,8 +568,12 @@ def _fmt_list_invoices_for_account(response: Dict, metadata: Dict, params: Dict)
         # invoice_revenue (pipeline aggregate) then total_payments as a last resort.
         # Do NOT use computed_balance_due — it is $0.00 for fully-paid invoices,
         # which made every paid invoice show ($0.00) in the dropdown.
-        raw_total = (inv.get('total_amount') or inv.get('revenue')
-                     or inv.get('total_payments') or 0)
+        # Use `is not None` guard so a legitimate 0-value invoice is not skipped.
+        raw_total = next(
+            (inv.get(k) for k in ('total_amount', 'revenue', 'total_payments')
+             if inv.get(k) is not None),
+            0
+        )
         total = format_currency(raw_total, currency)
         lines.append(
             f"| {inv.get('invoice_number', 'N/A')} "

@@ -153,7 +153,23 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
         db_rows = execute_sp(query)
         logger.info(f"sp_leads returned {len(db_rows)} rows")
-        return {**state, "db_rows": db_rows}
+
+        # ── auto-resolve: "show details for [name]" → get mode when 1 result ─
+        if parsed_json.get('detailsRequested') and parsed_json.get('mode') == 'list':
+            sp_result = db_rows[0] if db_rows else {}
+            inner     = sp_result.get('result', {}) if isinstance(sp_result, dict) else {}
+            leads     = inner.get('leads') or []
+            if len(leads) == 1:
+                lead_id = str(leads[0].get('lead_id') or '')
+                if lead_id:
+                    get_params = {'mode': 'get', 'leadId': lead_id}
+                    get_query, _ = build_leads_query(get_params)
+                    db_rows     = execute_sp(get_query)
+                    parsed_json = get_params
+                    logger.info(f"details auto-resolved → get leadId={lead_id}")
+            state = {**state, "parsed_json": parsed_json}
+
+        return {**state, "db_rows": db_rows, "parsed_json": parsed_json}
 
     except Exception as e:
         logger.error(f"Leads database error: {e}", exc_info=True)

@@ -204,10 +204,10 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         logger.info('[list_employee] direct route')
         return routed({'mode': 'list_employee'})
 
-    # ── AccountingFilterBar: List Filtered  (v3.2) ───────────────────────────
-    #   Source: applyFilters()
+    # ── AccountingFilterBar / Search Bar: List Filtered  (v3.5) ──────────────
+    #   Source: applyFilters() and sendDirectToAcctAgent()
     #   Message prefix: "list filtered:"
-    #   chatInput: listingType, startDate, endDate
+    #   chatInput: listingType, startDate, endDate, search (optional)
     if msg.startswith('list filtered:'):
         listing_type = (chat_input.get('listingType') or 'invoice').lower().strip()
         if listing_type == 'payment':
@@ -216,12 +216,25 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
             mode = 'accounting_summary'
         else:
             mode = 'list_invoices'
-        logger.info(f'[list_filtered] listingType: {listing_type} | mode: {mode}')
-        return routed({
-            'mode':      mode,
-            'startDate': _val(chat_input.get('startDate')),
-            'endDate':   _val(chat_input.get('endDate')),
-        })
+        search_term = _val(chat_input.get('search'))
+        page_number = chat_input.get('pageNumber')
+        page_size   = chat_input.get('pageSize')
+        logger.info(
+            f'[list_filtered] listingType: {listing_type} | mode: {mode} | '
+            f'search: {search_term!r} | page: {page_number} | size: {page_size}'
+        )
+        params: dict = {
+            'mode':       mode,
+            'startDate':  _val(chat_input.get('startDate')),
+            'endDate':    _val(chat_input.get('endDate')),
+        }
+        if search_term:
+            params['search'] = search_term
+        if page_number is not None:
+            params['pageNumber'] = page_number
+        if page_size is not None:
+            params['pageSize'] = page_size
+        return routed(params)
 
     # ── Generate Invoice  (v3.0) ──────────────────────────────────────────────
     #   Source: submitGenerateInvoice()
@@ -387,8 +400,7 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
             y = today.year - 1
             start_date = f'{y}-01-01'
             end_date   = f'{y}-12-31'
-        elif re.search(r'\blast\s+(\d+)\s+days?\b', msg, re.IGNORECASE):
-            m_days = re.search(r'\blast\s+(\d+)\s+days?\b', msg, re.IGNORECASE)
+        elif m_days := re.search(r'\blast\s+(\d+)\s+days?\b', msg, re.IGNORECASE):
             n = int(m_days.group(1))
             start_date = (today - timedelta(days=n)).isoformat()
             end_date   = today.isoformat()
@@ -402,14 +414,54 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
             nl_mode = 'list_invoices'
 
         params: Dict[str, Any] = {'mode': nl_mode}
-        if start_date:
+        if start_date is not None:
             params['startDate'] = start_date
-        if end_date:
+        if end_date is not None:
             params['endDate'] = end_date
+
+        # Overdue invoice filter: pass statusFilter='unpaid' so the SP only
+        # returns unpaid invoices; Python-side will further filter by due_date.
+        _is_overdue = bool(re.search(r'\boverdue\b', msg, re.IGNORECASE))
+        if _is_overdue and nl_mode == 'list_invoices':
+            params['statusFilter'] = 'unpaid'
+            params['overdue'] = True   # signals Python graph to apply due_date filter
+
+        # Extract optional customer/account name for invoice OR payment queries.
+        # Handles:
+        #   "find invoice for Emily Brown"     → search = "Emily Brown"
+        #   "find invoices from Acme Corp"     → search = "Acme Corp"
+        #   "find payment for Bob Brown"       → search = "Bob Brown"
+        #   "show payments Bob Brown"          → search = "Bob Brown"
+        # Use raw (original case) to detect proper nouns via capitalisation.
+        _entity_word = r'(?:invoices?|payments?)'
+        _acct_name_m = re.search(
+            rf'\b{_entity_word}\s+(?:(?:for|from|by|of)\s+)?'
+            r'([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+)',
+            raw
+        )
+        if not _acct_name_m:
+            # Fallback: optional preposition, case-insensitive.
+            # Exclude matches whose first word is a date/time qualifier.
+            _fb = re.search(
+                rf'\b{_entity_word}\s+(?:(?:for|from|by|of)\s+)?'
+                r'(.+?)(?:\s+(?:this|last|in|on|at|during)\b.*)?$',
+                raw, re.IGNORECASE
+            )
+            if _fb:
+                _candidate = _fb.group(1).strip().rstrip('?.,;')
+                _first = _candidate.split()[0].lower() if _candidate else ''
+                _skip = {'this', 'last', 'today', 'all', 'any', 'a', 'an', 'the',
+                         'my', 'our', 'your', 'overdue', 'paid', 'unpaid', 'recent'}
+                if _candidate and _first not in _skip:
+                    _acct_name_m = _fb
+        if _acct_name_m:
+            acct_name = _acct_name_m.group(1).strip().rstrip('?.,;')
+            if acct_name:
+                params['search'] = acct_name
 
         logger.info(
             f'[NL-accounting] mode={nl_mode} start={start_date} end={end_date} '
-            f'| msg={raw[:60]!r}'
+            f'search={params.get("search")!r} | msg={raw[:60]!r}'
         )
         return routed(params)
 

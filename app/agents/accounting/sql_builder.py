@@ -286,6 +286,15 @@ def build_accounting_query(params: Dict[str, Any]) -> Tuple[str, Optional[Dict]]
 
     # list_employee requires no parameters beyond p_mode
 
+    # ── Ensure pagination defaults so SP doesn't receive NULL page values ───
+    # NULL overrides SP DEFAULT; always send 1/50 when caller omits them.
+    if _is_empty(_resolve_value(payload, ['pageNumber', 'page_number'])):
+        payload = dict(payload)
+        payload.setdefault('pageNumber', 1)
+    if _is_empty(_resolve_value(payload, ['pageSize', 'page_size'])):
+        payload = dict(payload)
+        payload.setdefault('pageSize', 50)
+
     # ── Build all 34 parameters ─────────────────────────────────────────────
     sql_parts = []
     for param_name, pg_type, keys in PARAM_DEFS:

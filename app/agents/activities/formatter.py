@@ -287,6 +287,9 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         # details (amount, method, order/invoice numbers) instead of re-parsing
         # the markdown table — which only captures the "Details" cell text.
         report_data['timeline'] = activities
+        # Forward entity_name so the frontend can display it in the timeline title
+        if metadata.get('entity_name'):
+            report_data['entity_name'] = metadata['entity_name']
 
     elif mode == 'overdue':
         report_mode = 'overdue'

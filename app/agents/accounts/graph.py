@@ -127,6 +127,152 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 "metadata": {"status": "success", "code": 0, "mode": parsed_json.get("mode")}
             }}]}
 
+        # ── list_no_orders — direct SQL; result shape matches sp_accounts list mode
+        if parsed_json.get("mode") == "list_no_orders":
+            logger.info("db_node: list_no_orders — running direct SQL")
+            _no_orders_sql = """
+SELECT json_build_object(
+    'accounts', COALESCE(json_agg(
+        json_build_object(
+            'account_id',        a.account_id::text,
+            'account_name',      a.account_name,
+            'type',              a.type,
+            'industry',          a.industry,
+            'status',            a.status,
+            'email',             a.email,
+            'phone',             a.phone,
+            'city',              adr.city,
+            'province',          adr.province,
+            'country',           adr.country,
+            'order_count',       0,
+            'contact_count',     (SELECT COUNT(*) FROM contacts c  WHERE c.account_id  = a.account_id),
+            'opportunity_count', (SELECT COUNT(*) FROM opportunities op WHERE op.account_id = a.account_id),
+            'total_revenue',     0,
+            'created_at',        a.created_at,
+            'updated_at',        a.updated_at
+        ) ORDER BY a.account_name
+    ), '[]'::json),
+    'metadata', json_build_object(
+        'page', 1, 'total_pages', 1,
+        'total_records', (
+            SELECT COUNT(*) FROM accounts a2
+            WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.account_id = a2.account_id)
+              AND (a2.is_deleted IS NULL OR a2.is_deleted = false)
+        )
+    )
+) AS result
+FROM accounts a
+LEFT JOIN LATERAL (
+    SELECT city, province, country FROM addresses
+    WHERE parent_id = a.account_id AND parent_type = 'account' AND label = 'billing'
+    ORDER BY is_default DESC NULLS LAST, created_at LIMIT 1
+) adr ON true
+WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.account_id = a.account_id)
+  AND (a.is_deleted IS NULL OR a.is_deleted = false)
+"""
+            db_rows = execute_sp(_no_orders_sql)
+            # Rewrite mode to 'list' so the formatter uses its list renderer
+            updated_params = {**parsed_json, "mode": "list"}
+            return {**state, "parsed_json": updated_params, "db_rows": db_rows}
+
+        # ── list_top_orders — accounts ranked by order count, direct SQL
+        if parsed_json.get("mode") == "list_top_orders":
+            logger.info("db_node: list_top_orders — running direct SQL")
+            _limit = int(parsed_json.get("pageSize") or 20)
+            _top_orders_sql = f"""
+SELECT json_build_object(
+    'accounts', COALESCE(json_agg(sub ORDER BY sub.order_count DESC), '[]'::json),
+    'metadata', json_build_object(
+        'page', 1, 'total_pages', 1,
+        'total_records', (SELECT COUNT(DISTINCT account_id) FROM orders)
+    )
+) AS result
+FROM (
+    SELECT
+        a.account_id::text,
+        a.account_name,
+        a.type,
+        a.industry,
+        a.status,
+        a.email,
+        a.phone,
+        adr.city,
+        adr.province,
+        adr.country,
+        COUNT(o.order_id)::int                                              AS order_count,
+        (SELECT COUNT(*) FROM contacts c   WHERE c.account_id  = a.account_id) AS contact_count,
+        (SELECT COUNT(*) FROM opportunities op WHERE op.account_id = a.account_id) AS opportunity_count,
+        COALESCE(SUM(o.total_amount), 0)                                    AS total_revenue,
+        a.created_at,
+        a.updated_at
+    FROM accounts a
+    JOIN orders o ON o.account_id = a.account_id
+    LEFT JOIN LATERAL (
+        SELECT city, province, country FROM addresses
+        WHERE parent_id = a.account_id AND parent_type = 'account' AND label = 'billing'
+        ORDER BY is_default DESC NULLS LAST, created_at LIMIT 1
+    ) adr ON true
+    WHERE (a.is_deleted IS NULL OR a.is_deleted = false)
+    GROUP BY a.account_id, a.account_name, a.type, a.industry, a.status,
+             a.email, a.phone, adr.city, adr.province, adr.country,
+             a.created_at, a.updated_at
+    ORDER BY order_count DESC
+    LIMIT {_limit}
+) sub
+"""
+            db_rows = execute_sp(_top_orders_sql)
+            updated_params = {**parsed_json, "mode": "list"}
+            return {**state, "parsed_json": updated_params, "db_rows": db_rows}
+
+        # ── list_top_revenue — accounts ranked by total revenue, direct SQL
+        if parsed_json.get("mode") == "list_top_revenue":
+            logger.info("db_node: list_top_revenue — running direct SQL")
+            _limit = int(parsed_json.get("pageSize") or 20)
+            _top_revenue_sql = f"""
+SELECT json_build_object(
+    'accounts', COALESCE(json_agg(sub ORDER BY sub.total_revenue DESC), '[]'::json),
+    'metadata', json_build_object(
+        'page', 1, 'total_pages', 1,
+        'total_records', (SELECT COUNT(DISTINCT account_id) FROM orders)
+    )
+) AS result
+FROM (
+    SELECT
+        a.account_id::text,
+        a.account_name,
+        a.type,
+        a.industry,
+        a.status,
+        a.email,
+        a.phone,
+        adr.city,
+        adr.province,
+        adr.country,
+        COUNT(o.order_id)::int                                                   AS order_count,
+        (SELECT COUNT(*) FROM contacts c   WHERE c.account_id  = a.account_id)  AS contact_count,
+        (SELECT COUNT(*) FROM opportunities op WHERE op.account_id = a.account_id) AS opportunity_count,
+        COALESCE(SUM(o.total_amount), 0)                                         AS total_revenue,
+        a.created_at,
+        a.updated_at
+    FROM accounts a
+    JOIN orders o ON o.account_id = a.account_id
+    LEFT JOIN LATERAL (
+        SELECT city, province, country FROM addresses
+        WHERE parent_id = a.account_id AND parent_type = 'account' AND label = 'billing'
+        ORDER BY is_default DESC NULLS LAST, created_at LIMIT 1
+    ) adr ON true
+    WHERE (a.is_deleted IS NULL OR a.is_deleted = false)
+    GROUP BY a.account_id, a.account_name, a.type, a.industry, a.status,
+             a.email, a.phone, adr.city, adr.province, adr.country,
+             a.created_at, a.updated_at
+    ORDER BY total_revenue DESC
+    LIMIT {_limit}
+) sub
+"""
+            db_rows = execute_sp(_top_revenue_sql)
+            updated_params = {**parsed_json, "mode": "list"}
+            return {**state, "parsed_json": updated_params, "db_rows": db_rows}
+
         query, _ = build_accounts_query(parsed_json)
         logger.info(f"Built sp_accounts query for mode: {parsed_json.get('mode')}")
 

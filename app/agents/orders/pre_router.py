@@ -272,6 +272,7 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
     _verb_prefix = (
         r'(?:please\s+)?(?:can\s+you\s+|could\s+you\s+)?'
         r'(?:show|list|get|find|display|give|fetch)\s+'
+        r'(?:in\s+)?'          # handles "find IN pending orders"
         r'(?:me\s+)?(?:the\s+)?'
     )
 
@@ -293,6 +294,7 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
         })
 
     # show <status> orders — verb-prefix OR bare "<status> orders"
+    # Also captures "find pending orders for David Chen" → status + search
     _status_alt = '|'.join(VALID_STATUSES)
     _status_match = (
         re.match(rf'^{_verb_prefix}(?:all\s+(?:the\s+)?)?({_status_alt})\s+orders?\b', msg, re.IGNORECASE)
@@ -300,13 +302,35 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
     )
     if _status_match:
         s = _status_match.group(1).lower()
-        return _routed({
+        params: dict = {
             'mode': 'list',
             'status': s,
             'includeDeleted': False,
             'sortField': 'order_date', 'sortOrder': 'DESC',
             'pageSize': 50, 'pageNumber': 1,
-        })
+        }
+        # Extract optional customer/account name that follows "orders".
+        # Handles both:
+        #   "find pending orders for David Chen"  (with preposition)
+        #   "find pending orders David Chen"       (no preposition — name directly after orders)
+        # Use `raw` (original case) so capitalised words identify proper nouns.
+        _name_m = re.search(
+            r'\borders?\s+(?:(?:for|from|by|of)\s+)?'        # optional preposition
+            r'([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+)',       # ≥2 capitalised words = name
+            raw
+        )
+        if not _name_m:
+            # Fallback: lowercased message with explicit preposition
+            _name_m = re.search(
+                r'\borders?\s+(?:for|from|by|of)\s+'
+                r'(.+?)(?:\s+(?:this|last|in|on|at|during)\b.*)?$',
+                raw, re.IGNORECASE
+            )
+        if _name_m:
+            name = _name_m.group(1).strip().rstrip('?.,;')
+            if name:
+                params['search'] = name
+        return _routed(params)
 
     # "update an order" / "update order" / "edit an order" → open the Update form
     # Must come BEFORE the advance_statuses check so "update order" doesn't
@@ -363,11 +387,15 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
                 params['year'] = yr
         return _routed(params)
 
-    # find orders for customer <name>
-    if msg.startswith(('find orders for customer', 'orders for customer')):
-        prefix = 'find orders for customer' if msg.startswith('find orders for customer') \
-            else 'orders for customer'
-        search_term = raw[len(prefix):].strip()
+    # find orders for <name> — with or without the word "customer"
+    # Handles: "find orders for David Chen", "orders for customer Acme Corp",
+    #          "show orders for David Chen", "orders from Acme Corp"
+    _cust_m = re.search(
+        r'\borders?\s+(?:for\s+(?:customer\s+)?|from\s+|by\s+)(.+?)(?:\s+(?:this|last|in|on|at)\b.*)?$',
+        msg, re.IGNORECASE
+    )
+    if _cust_m:
+        search_term = _cust_m.group(1).strip().rstrip('?.,;')
         if search_term:
             return _routed({
                 'mode': 'list', 'search': search_term,

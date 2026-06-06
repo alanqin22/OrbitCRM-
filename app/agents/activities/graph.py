@@ -134,8 +134,107 @@ def parse_output_node(state: Dict[str, Any]) -> Dict[str, Any]:
     return {**state, "parsed_json": None, "should_call_api": False}
 
 
+_UUID_RE = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    re.IGNORECASE
+)
+
+# Map relatedType → (SP name, id_field, result_list_key, display_name_fields)
+_ENTITY_SP_MAP = {
+    'account':     ('sp_accounts',     'account_id',     'accounts',      ['account_name']),
+    'contact':     ('sp_contacts',      'contact_id',     'contacts',      ['first_name', 'last_name']),
+    'lead':        ('sp_leads',         'lead_id',        'leads',         ['first_name', 'last_name']),
+    'opportunity': ('sp_opportunities', 'opportunity_id', 'opportunities', ['opportunity_name']),
+}
+
+# Search order when relatedType is unknown or the primary type yields no results
+_SEARCH_ORDER = ['account', 'contact', 'lead', 'opportunity']
+
+
+def _search_entity_type(entity_type: str, name: str):
+    """Search one entity type. Returns (uuid, actual_type) or (None, None).
+
+    For contacts: returns the contact's account_id with relatedType='account'
+    so that sp_activities timeline finds all account-level activities, matching
+    the behaviour of the Account Management module.
+    """
+    mapping = _ENTITY_SP_MAP.get(entity_type)
+    if not mapping:
+        return None, None
+    sp_name, id_field, list_key, name_fields = mapping
+    safe_name = name.replace("'", "''")
+    try:
+        rows = execute_sp(
+            f"SELECT {sp_name}(p_mode := 'list', p_search := '{safe_name}', p_page_size := 5) AS result;"
+        )
+        if not rows:
+            return None, None
+        result = rows[0].get('result') if isinstance(rows[0], dict) else None
+        if not isinstance(result, dict):
+            return None, None
+        entities = result.get(list_key) or []
+        if len(entities) == 1:
+            entity = entities[0]
+            # For contacts: prefer their account_id so the timeline matches
+            # what Account Management shows (activities linked at account level)
+            if entity_type == 'contact' and entity.get('account_id'):
+                acct_id = str(entity['account_id'])
+                logger.info(
+                    f"Contact '{name}' found — using account_id {acct_id} "
+                    "for account-level timeline"
+                )
+                return (acct_id, 'account')
+            uuid = entity.get(id_field)
+            return (str(uuid), entity_type) if uuid else (None, None)
+        if len(entities) > 1:
+            display = ', '.join(
+                ' '.join(filter(None, [e.get(f) for f in name_fields])) or '?'
+                for e in entities[:5]
+            )
+            return (f'__multiple__:{entity_type}:{display}', entity_type)
+    except Exception as exc:
+        logger.warning(f"Entity search failed [{entity_type}] '{name}': {exc}")
+    return None, None
+
+
+def _resolve_entity_name(
+    related_type: str, name: str
+) -> tuple[Optional[str], Optional[str], str]:
+    """Resolve a name to (uuid, resolved_type, error_msg).
+
+    Tries the given relatedType first, then falls back to other types so that
+    "show timeline for Steven Brahms" works even if the AI guessed 'account'
+    but Steven Brahms is actually a 'contact'.
+    """
+    # Build search priority: hint type first, then others
+    search_order = [related_type.lower()] + [t for t in _SEARCH_ORDER if t != related_type.lower()]
+
+    for entity_type in search_order:
+        uuid, found_type = _search_entity_type(entity_type, name)
+        if uuid and uuid.startswith('__multiple__:'):
+            _, et, display = uuid.split(':', 2)
+            return None, None, (
+                f"Multiple {et}s match '{name}': {display}. "
+                "Please be more specific (e.g. include last name or company)."
+            )
+        if uuid:
+            # found_type may differ from entity_type (e.g. contact → account_id)
+            if found_type != related_type.lower():
+                logger.info(f"Resolved '{name}' as {found_type} (searched {entity_type}) → {uuid}")
+            return uuid, found_type, ''   # return found_type, not entity_type
+
+    return None, None, (
+        f"No account, contact, or lead found matching '{name}'. "
+        "Please check the spelling or try a different name."
+    )
+
+
 def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Database node — builds and executes sp_activities()."""
+    """Database node — builds and executes sp_activities().
+
+    Auto-resolves relatedId names → UUIDs so users can say
+    'Show timeline for Bob Brown' instead of providing a UUID.
+    """
     logger.info("=== Activities Database Node ===")
     try:
         parsed_json = state.get("parsed_json") or {}
@@ -143,15 +242,138 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
             return {**state, "db_rows": []}
 
         # Safety guard: mode:get without activityId → fall back to list search
-        # using any name found in the user's input to avoid a -500 validation error.
         if parsed_json.get("mode") in ("get", "update", "complete", "reopen", "delete") \
                 and not parsed_json.get("activityId"):
             user_input = state.get("user_input", "").strip()
-            logger.warning(
-                f"mode:{parsed_json['mode']} missing activityId — "
-                f"falling back to list search for: {user_input[:80]!r}"
-            )
+            logger.warning(f"mode:{parsed_json['mode']} missing activityId — falling back to list search")
             parsed_json = {"mode": "list", "search": user_input or None, "pageSize": 20}
+
+        # ── Auto-resolve relatedId name → UUID ──────────────────────────────
+        # Triggered for any mode that uses relatedId (timeline, create, log_call, etc.)
+        # when the value is a name rather than a UUID.
+        # Falls back across entity types so "Steven Brahms" works even if AI
+        # guessed relatedType:"account" but he is actually a contact.
+        related_id   = (parsed_json.get("relatedId") or "").strip()
+        related_type = (parsed_json.get("relatedType") or "account").strip()
+        if related_id and not _UUID_RE.match(related_id):
+            logger.info(f"relatedId '{related_id}' is not UUID — resolving (hint={related_type})")
+            resolved_uuid, resolved_type, err_msg = _resolve_entity_name(related_type, related_id)
+            if not resolved_uuid:
+                mode_hint = parsed_json.get("mode", "")
+                if mode_hint in ("create", "log_call", "log_email", "schedule_meeting",
+                                 "create_task", "add_note"):
+                    err_msg += (
+                        f" To create a {mode_hint.replace('_',' ')} for this person, "
+                        "please verify their exact name in the Leads, Contacts, or Accounts module first."
+                    )
+                return {**state, "db_rows": [{"result": {
+                    "metadata": {"status": "error", "code": -404, "message": err_msg}
+                }}]}
+            logger.info(f"Resolved '{related_id}' → {resolved_type} UUID {resolved_uuid}")
+            parsed_json = {**parsed_json, "relatedId": resolved_uuid, "relatedType": resolved_type}
+        elif not related_id and parsed_json.get("mode") == "timeline":
+            # Timeline without entity — return a helpful prompt instead of a -80 SP error
+            logger.warning("timeline mode with no relatedId — returning prompt to user")
+            return {**state, "db_rows": [{"result": {
+                "metadata": {
+                    "status": "error", "code": -1,
+                    "message": (
+                        "Timeline requires an account or contact name. "
+                        "Please type a name in the search bar and try again. "
+                        "Example: 'Show timeline for Bob Brown'"
+                    )
+                }
+            }}]}
+
+        # ── Timeline bypass: use direct account_id query ─────────────────
+        _tl_mode  = parsed_json.get("mode")
+        _tl_rtype = parsed_json.get("relatedType")
+        _tl_rid   = parsed_json.get("relatedId")
+        logger.info(f"[bypass-check] mode={_tl_mode!r} relType={_tl_rtype!r} relId={str(_tl_rid)[:16]!r}")
+        if (_tl_mode == "timeline"
+                and _tl_rtype == "account"
+                and _tl_rid):
+            acct_uuid = parsed_json["relatedId"]
+            safe_id   = acct_uuid.replace("'", "")  # UUID — no injection risk
+            direct_sql = f"""
+SELECT json_build_object(
+    'metadata', json_build_object('status','success','code',0,
+                                  'timestamp',NOW(),
+                                  'entity_name',(
+                                      SELECT COALESCE(a.account_name,
+                                          c.first_name||' '||c.last_name)
+                                      FROM accounts a
+                                      FULL OUTER JOIN contacts c
+                                          ON c.account_id=a.account_id
+                                      WHERE a.account_id='{safe_id}'::uuid
+                                         OR c.account_id='{safe_id}'::uuid
+                                      LIMIT 1
+                                  )),
+    'timeline', COALESCE((
+        SELECT json_agg(
+            json_build_object(
+                'event_type', event_type,
+                'event_id',   event_id,
+                'timestamp',  ts,
+                'summary',    summary,
+                'details',    details
+            ) ORDER BY ts DESC
+        )
+        FROM (
+            SELECT a.created_at AS ts,
+                   'activity'::TEXT AS event_type,
+                   a.activity_id::TEXT AS event_id,
+                   json_build_object(
+                       'subject',    a.subject,
+                       'type',       a.type,
+                       'direction',  a.direction,
+                       'channel',    a.channel,
+                       'account_name', (SELECT account_name FROM accounts WHERE account_id='{safe_id}'::uuid),
+                       'contact_name', CASE WHEN c.contact_id IS NOT NULL
+                                       THEN c.first_name||' '||c.last_name ELSE NULL END
+                   ) AS details,
+                   'Activity: '||COALESCE(a.subject,a.type) AS summary
+            FROM activities a
+            LEFT JOIN contacts c ON c.contact_id = a.contact_id
+            WHERE a.account_id = '{safe_id}'::uuid
+               OR (a.related_type='account' AND a.related_id='{safe_id}'::uuid)
+            UNION ALL
+            SELECT o.created_at AS ts, 'order'::TEXT, o.order_id::TEXT,
+                   json_build_object(
+                       'order_number', o.order_number,
+                       'status',       o.status,
+                       'amount',       o.total_amount,
+                       'account_name', (SELECT account_name FROM accounts WHERE account_id='{safe_id}'::uuid)
+                   ),
+                   'Order: '||COALESCE(o.order_number::TEXT,o.order_id::TEXT)
+            FROM orders o WHERE o.account_id = '{safe_id}'::uuid
+            UNION ALL
+            SELECT i.created_at AS ts, 'invoice'::TEXT, i.invoice_id::TEXT,
+                   json_build_object(
+                       'invoice_number', i.invoice_number,
+                       'status',         i.status,
+                       'amount',         i.total_amount,
+                       'account_name',   (SELECT account_name FROM accounts WHERE account_id='{safe_id}'::uuid)
+                   ),
+                   'Invoice: '||COALESCE(i.invoice_number::TEXT,i.invoice_id::TEXT)
+            FROM invoices i WHERE i.account_id = '{safe_id}'::uuid
+            UNION ALL
+            SELECT p.payment_date AS ts, 'payment'::TEXT, p.payment_id::TEXT,
+                   json_build_object(
+                       'amount',       p.amount,
+                       'method',       p.payment_method,
+                       'status',       p.status,
+                       'account_name', (SELECT account_name FROM accounts WHERE account_id='{safe_id}'::uuid)
+                   ),
+                   'Payment: '||p.amount::TEXT
+            FROM payments p WHERE p.account_id = '{safe_id}'::uuid
+        ) all_events
+    ), '[]'::json)
+) AS result;"""
+            logger.info(f"Timeline direct query for account {safe_id}")
+            db_rows = execute_sp(direct_sql)
+            logger.info(f"Direct timeline returned {len(db_rows)} rows")
+            return {**state, "db_rows": db_rows}
 
         query, _ = build_activities_query(parsed_json)
         logger.info(f"Built sp_activities query for mode: {parsed_json.get('mode')}")

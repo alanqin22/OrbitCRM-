@@ -74,6 +74,7 @@ class ActivityChatResponse(BaseModel):
     owners:         Optional[List] = None   # populated for get_owners mode
     activity:       Optional[dict] = None   # populated for get/update/create/complete/reopen modes
     timeline:       Optional[List] = None   # populated for timeline mode — structured events with full details
+    entity_name:    Optional[str]  = None   # populated for timeline mode — account/contact name for title
 
 
 # ============================================================================
@@ -147,6 +148,7 @@ async def activity_chat(req: ActivityChatRequest):
             owners=fmt_result.get("owners"),
             activity=fmt_result.get("activity"),
             timeline=fmt_result.get("timeline"),
+            entity_name=fmt_result.get("entity_name"),
         )
 
     except Exception as e:

@@ -139,6 +139,31 @@ Examples:
   {"mode": "list", "search": "Acme"}
   {"mode": "list", "type": "customer", "industry": "Technology"}
 
+### MODE: list_no_orders — LIST ACCOUNTS WITH NO ORDERS
+Purpose: Return all accounts that have never placed an order.
+Required: None
+Use when user asks: "accounts with no orders", "accounts without orders", "accounts that have no orders", "zero order accounts"
+Example:
+  {"mode": "list_no_orders"}
+
+### MODE: list_top_orders — LIST TOP ACCOUNTS BY ORDER COUNT
+Purpose: Return accounts ranked by number of orders, highest first.
+Required: None
+Optional: pageSize (default 20) — how many top accounts to return
+Use when user asks: "top accounts by orders", "accounts with most orders", "highest order accounts", "ranked by orders", "top accounts by order volume"
+Examples:
+  {"mode": "list_top_orders"}
+  {"mode": "list_top_orders", "pageSize": 10}
+
+### MODE: list_top_revenue — LIST TOP ACCOUNTS BY REVENUE
+Purpose: Return accounts ranked by total revenue (sum of all order amounts), highest first.
+Required: None
+Optional: pageSize (default 20) — how many top accounts to return
+Use when user asks: "top accounts by revenue", "top-performing accounts", "accounts with highest revenue", "best accounts by revenue", "show top-performing accounts by revenue"
+Examples:
+  {"mode": "list_top_revenue"}
+  {"mode": "list_top_revenue", "pageSize": 10}
+
 ### MODE: get — ACCOUNT 360 VIEW
 Purpose: Full details including contacts, opportunities, orders, invoices, cases, stats, ALL addresses.
 Required: accountId (UUID) OR accountName OR email OR phone

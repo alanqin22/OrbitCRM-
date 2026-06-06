@@ -108,8 +108,8 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
     if msg.startswith('list contacts:'):
         return routed(_compact({
             'mode':       'list',
-            'pageNumber': _val(chat_input.get('pageNumber')) or 1,
-            'pageSize':   _val(chat_input.get('pageSize'))   or 50,
+            'pageNumber': _val(chat_input.get('pageNumber')),
+            'pageSize':   _val(chat_input.get('pageSize')),
             'search':     _val(chat_input.get('search')),
             'status':     _val(chat_input.get('status')),
             'accountId':  _val(chat_input.get('accountId')),
@@ -122,11 +122,19 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
     if msg.startswith('search contacts:'):
         query = raw[len('search contacts:'):].strip()
         if len(query) >= 2:
+            # Detect "role X" or "X role" → use p_role filter (partial LIKE match)
+            _rsm = re.match(r'^role\s+(.+)$', query, re.IGNORECASE)
+            if not _rsm:
+                _rsm = re.match(r'^(.+?)\s+role$', query, re.IGNORECASE)
+            if _rsm:
+                role_val = _rsm.group(1).strip()
+                logger.info(f'[search_contacts->role] role filter: {role_val}')
+                return routed(_compact({'mode': 'list', 'role': role_val}))
             return routed(_compact({
                 'mode':       'list',
                 'search':     query,
-                'pageSize':   _val(chat_input.get('pageSize'))   or 20,
-                'pageNumber': _val(chat_input.get('pageNumber')) or 1,
+                'pageSize':   _val(chat_input.get('pageSize')),
+                'pageNumber': _val(chat_input.get('pageNumber')),
             }))
         return passthru()
 
@@ -256,17 +264,15 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         return passthru()
 
     # "Show all contacts" / "View contacts" / "list all contacts"
-    if any(p in msg for p in (
-        'show all contacts', 'view all contacts', 'list all contacts',
-        'view contacts', 'show contacts',
-    )):
+    # Anchored to end-of-string so "show contacts with role X" is NOT caught here.
+    if re.match(r'^(?:show|view|list|display)\s+(?:all\s+)?contacts?\s*$', msg):
         logger.info('[NL->list] all contacts')
-        return routed({'mode': 'list', 'pageNumber': 1, 'pageSize': 50})
+        return routed({'mode': 'list'})
 
     # "Show archived contacts"
     if 'archived contacts' in msg or 'show archived' in msg or 'view archived' in msg:
         logger.info('[NL->list] archived contacts')
-        return routed({'mode': 'list', 'pageNumber': 1, 'pageSize': 50, 'deletedOnly': True})
+        return routed({'mode': 'list', 'deletedOnly': True})
 
     # "Show duplicate contacts report" / "Check duplicates"
     if any(p in msg for p in (
@@ -276,36 +282,131 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         logger.info('[NL->duplicates]')
         return routed({'mode': 'duplicates'})
 
-    # "find Steven" / "search for Emily" / "look up John Smith" etc.
-    # Catches voice queries that include an action verb before the name.
-    _find_m = re.match(
-        r'^(?:find|search(?:\s+for)?|look(?:\s+up)?(?:\s+for)?|'
-        r'show(?:\s+me)?|get|display|pull\s+up)\s+(.+)$',
+    # "Show contact statistics" / "Contact statistics/summary"
+    if any(p in msg for p in (
+        'contact statistics', 'contact summary', 'contact stats',
+        'show statistics', 'show contact stats',
+    )):
+        logger.info('[NL->summary]')
+        return routed({'mode': 'summary'})
+
+    # NOTE: sp_contacts list mode does NOT filter by p_role — the parameter is
+    # accepted but ignored by the SP.  Role-based queries fall through to the AI.
+
+    # "Find contacts at/for/in X" — company name lookup.
+    # Searching by company/account name requires the AI to resolve the accountId first;
+    # sp_contacts p_search only matches contact-level fields (name, email, phone).
+    # Route "at/in/from <company>" as passthru so the AI can handle it properly.
+    # "named/with name" queries search the contact's own name directly.
+    _contacts_named_m = re.match(
+        r'^(?:find|search|show|list)\s+contacts?\s+'
+        r'(?:named?|with\s+name)\s+(.+)$',
         raw, re.IGNORECASE
     )
-    if _find_m:
-        term = _find_m.group(1).strip()
+    if _contacts_named_m:
+        term = _contacts_named_m.group(1).strip()
         if len(term) >= 2:
-            logger.info(f'[NL->search] verb+name: {term}')
-            return routed(_compact({'mode': 'list', 'search': term, 'pageSize': 20, 'pageNumber': 1}))
+            logger.info(f'[NL->search] contacts named: {term}')
+            return routed(_compact({'mode': 'list', 'search': term}))
 
-    # Bare name — voice STT outputs just "Steven" or "John Smith" with no verb.
-    # Match 1–4 words made of letters/apostrophes/hyphens; skip reserved words
-    # that are handled by earlier branches so they don't get swallowed here.
-    _RESERVED = {
-        'contacts', 'contact', 'list', 'all', 'show', 'find', 'search',
-        'view', 'archive', 'archived', 'duplicate', 'duplicates', 'merge',
-        'activities', 'summary', 'statistics', 'report', 'home', 'back',
-    }
-    if re.match(r"^[A-Za-z][A-Za-z'\-]{1,}(?:\s+[A-Za-z][A-Za-z'\-]*){0,3}$", raw) \
-            and msg not in _RESERVED:
-        logger.info(f'[NL->search] bare name: {raw}')
-        return routed(_compact({'mode': 'list', 'search': raw, 'pageSize': 20, 'pageNumber': 1}))
+    # "Search by gmail.com email" / "Search contacts with gmail.com email"
+    # "Find contacts with gmail.com email"
+    _email_domain_m = re.match(
+        r'^(?:find|search|show|list)(?:\s+contacts?)?\s+'
+        r'(?:by|with|having|using)\s+(?:email\s+)?([A-Za-z0-9._%-]+\.[a-z]{2,})\s*(?:email)?',
+        raw, re.IGNORECASE
+    )
+    if _email_domain_m:
+        term = _email_domain_m.group(1).strip()
+        if len(term) >= 3:
+            logger.info(f'[NL->search] email domain: {term}')
+            return routed(_compact({'mode': 'list', 'search': term}))
+
+    # "Show activity timeline for X" / "Activities for X"
+    # Route full "First Last" names to get_details so the frontend's Activities
+    # button is immediately accessible on the 360° detail card.
+    _activities_m = re.match(
+        r'^(?:show|get|view|display)?\s*(?:activity\s+timeline|activities|recent\s+activities?)\s+'
+        r'(?:for|of|about)\s+(.+)$',
+        raw, re.IGNORECASE
+    )
+    if _activities_m:
+        term = _activities_m.group(1).strip()
+        parts = term.split()
+        if len(parts) >= 2:
+            logger.info(f'[NL->get_details] activities for full name: {term}')
+            return routed(_compact({'mode': 'get_details', 'firstName': parts[0], 'lastName': ' '.join(parts[1:])}))
+        if len(term) >= 2:
+            logger.info(f'[NL->search] activities for partial name: {term}')
+            return routed(_compact({'mode': 'list', 'search': term}))
+
+    # "Show details for X" / "Get details for X" / "View profile of X"
+    # Full name (2+ words) → get_details exact match; partial → list search.
+    _details_m = re.match(
+        r'^(?:show|get|view|display)\s+(?:full\s+)?(?:details?|info|profile|record)\s+'
+        r'(?:for|of|about)\s+(.+)$',
+        raw, re.IGNORECASE
+    )
+    if _details_m:
+        term = _details_m.group(1).strip()
+        parts = term.split()
+        if len(parts) >= 2:
+            logger.info(f'[NL->get_details] details for full name: {term}')
+            return routed(_compact({'mode': 'get_details', 'firstName': parts[0], 'lastName': ' '.join(parts[1:])}))
+        if len(term) >= 2:
+            logger.info(f'[NL->search] details for partial name: {term}')
+            return routed(_compact({'mode': 'list', 'search': term}))
+
+    # "Show unverified contacts" / "List unverified contacts"
+    if any(p in msg for p in ('unverified contacts', 'not verified', 'unverified email')):
+        logger.info('[NL->list] unverified contacts filter')
+        return routed(_compact({'mode': 'list', 'isEmailVerified': False}))
+
+    # "Inactive contacts" / "List inactive contacts"
+    if any(p in msg for p in ('inactive contacts', 'list inactive', 'show inactive contacts')):
+        logger.info('[NL->list] inactive contacts')
+        return routed(_compact({'mode': 'list', 'status': 'inactive'}))
+
+    # "Active contacts" / "Show active contacts"
+    if any(p in msg for p in ('active contacts', 'show active', 'list active contacts')):
+        logger.info('[NL->list] active contacts')
+        return routed(_compact({'mode': 'list', 'status': 'active'}))
+
+    # "Contacts with no account" / "Contacts without an account"
+    if any(p in msg for p in ('no account', 'without account', 'without an account', 'contacts per account')):
+        logger.info('[NL->summary] contacts per account query')
+        return routed({'mode': 'summary'})
+
+    # "Contacts with role Manager" / "Show contacts with role Director"
+    _role_m = re.search(
+        r'\bwith\s+(?:the\s+)?role\s+([A-Za-z][A-Za-z\s\-]{0,39}?)\s*$',
+        raw, re.IGNORECASE
+    )
+    if _role_m:
+        role_val = _role_m.group(1).strip()
+        if role_val:
+            logger.info(f'[NL->list] role filter: {role_val}')
+            return routed(_compact({'mode': 'list', 'role': role_val}))
+
+    # "Show Manager contacts" / "List Director contacts" / "Find VP contacts"
+    _STATUS_WORDS = {'all', 'active', 'inactive', 'archived', 'unverified', 'duplicate', 'new', 'deleted'}
+    _role_prefix_m = re.match(
+        r'^(?:show|list|find|display|get)\s+([A-Za-z][A-Za-z\s\-]{0,39}?)\s+contacts?\s*$',
+        raw, re.IGNORECASE
+    )
+    if _role_prefix_m:
+        role_val = _role_prefix_m.group(1).strip()
+        if role_val.lower() not in _STATUS_WORDS and len(role_val) >= 2:
+            logger.info(f'[NL->list] role prefix filter: {role_val}')
+            return routed(_compact({'mode': 'list', 'role': role_val}))
 
     # ── Vague UI-form intents → emit a marker so the frontend opens the
     # inline form instead of bouncing to the AI for a list of required
     # fields. Each detector skips itself when the user already supplied a
     # UUID (so the AI/SP can act directly).
+    # IMPORTANT: placed BEFORE _find_m and bare-name fallback so chip phrases
+    # like "Create a new contact" / "Edit contact information" don't get caught
+    # by the broad name-search patterns below.
     _has_uuid = bool(_extract_uuid(raw))
 
     # Create contact (no UUID).
@@ -316,9 +417,52 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
     ):
         return routed({'mode': 'show_contact_form'})
 
-    # Update contact (no UUID) — opens the contact search bar.
-    if not _has_uuid and re.search(r'\bupdate\b.*\bcontact', msg):
+    # Update/edit contact (no UUID) — opens the contact search bar.
+    if not _has_uuid and re.search(r'\b(update|edit)\b.*\bcontact', msg):
         return routed({'mode': 'show_contact_update_form'})
+
+    # "find Steven" / "search for Emily" / "look up John Smith" etc.
+    # Catches voice queries that include an action verb before the name.
+    # NOTE: placed after the more-specific patterns above so "find contacts at X"
+    # and "show details for X" are already handled before reaching here.
+    _find_m = re.match(
+        r'^(?:find|search(?:\s+for)?|look(?:\s+up)?(?:\s+for)?|'
+        r'show(?:\s+me)?|get|display|pull\s+up)\s+(.+)$',
+        raw, re.IGNORECASE
+    )
+    if _find_m:
+        term = _find_m.group(1).strip()
+        # Skip if term looks like a multi-word instruction: starts OR ends with
+        # "contacts", contains a detail/profile prefix, or contains "role"/"with"
+        # (e.g. "Manager contacts" or "contacts with role Manager").
+        _skip_terms = re.match(
+            r'^(?:all\s+)?contacts?|details?\s+for|info\s+(?:for|about)|'
+            r'profile\s+(?:for|of)|.*\brole\b|.*\s+contacts?\s*$',
+            term, re.IGNORECASE
+        )
+        if not _skip_terms and len(term) >= 2:
+            logger.info(f'[NL->search] verb+name: {term}')
+            return routed(_compact({'mode': 'list', 'search': term}))
+
+    # Bare name — voice STT outputs just "Steven" or "John Smith" with no verb.
+    # Match 1–4 words made of letters/apostrophes/hyphens; skip reserved words
+    # and any multi-word phrase containing prepositions/command words (which
+    # would indicate a structured query, not a name).
+    _RESERVED = {
+        'contacts', 'contact', 'list', 'all', 'show', 'find', 'search',
+        'view', 'archive', 'archived', 'duplicate', 'duplicates', 'merge',
+        'activities', 'summary', 'statistics', 'report', 'home', 'back',
+        'create', 'add', 'update', 'edit', 'new', 'make',
+    }
+    _STOP_WORDS = {'with', 'role', 'for', 'at', 'in', 'by', 'from', 'and', 'the', 'of', 'or'}
+    _msg_words   = set(msg.split())
+    _first_word  = msg.split()[0] if msg else ''
+    if re.match(r"^[A-Za-z][A-Za-z'\-]{1,}(?:\s+[A-Za-z][A-Za-z'\-]*){0,3}$", raw) \
+            and msg not in _RESERVED \
+            and _first_word not in _RESERVED \
+            and not _msg_words.intersection(_STOP_WORDS):
+        logger.info(f'[NL->search] bare name: {raw}')
+        return routed(_compact({'mode': 'list', 'search': raw}))
 
     # -- No match -- AI Agent handles ------------------------------------------
     return passthru()

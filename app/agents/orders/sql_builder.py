@@ -322,7 +322,9 @@ def build_orders_query(params: Dict[str, Any], raw_message: str = '') -> Tuple[s
     # advance_statuses: call fn_advance_order_statuses() directly —
     # not routed through sp_orders.
     if mode == 'advance_statuses':
-        sql = "SELECT transition, orders_advanced FROM fn_advance_order_statuses() AS result(transition TEXT, orders_advanced INT);"
+        # Call fn_advance_order_statuses() directly — not through sp_orders.
+        # No column alias: the function already declares RETURNS TABLE(...).
+        sql = "SELECT transition, orders_advanced FROM fn_advance_order_statuses();"
         return sql, {'mode': mode, 'param_count': 0, 'params_used': []}
 
     # Build named params

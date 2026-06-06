@@ -96,6 +96,56 @@ def _run_advance_order_statuses() -> None:
         logger.error(f"[OrderAdvance] Scheduled job failed: {exc}", exc_info=True)
 
 
+def _run_generate_daily_orders() -> None:
+    """Scheduled job: generate 20-30 new pending orders once daily."""
+    try:
+        from app.core.database import execute_sp
+        rows = execute_sp("SELECT generate_daily_orders() AS result")
+        result = rows[0].get('result', '') if rows else 'no result'
+        logger.info(f"[DailyOrders] {result}")
+    except Exception as exc:
+        logger.error(f"[DailyOrders] Scheduled job failed: {exc}", exc_info=True)
+
+
+def _run_advance_opportunity_stages() -> None:
+    """Scheduled job: advance opportunity pipeline stages nightly.
+
+    Moves opportunities through: prospecting → qualification → proposal →
+    negotiation → closed_won / closed_lost, with realistic time delays.
+    Keeps Qualification and Proposal stages populated so AI Agent searches work.
+    """
+    try:
+        from app.core.database import execute_sp
+        rows = execute_sp(
+            "SELECT transition, opportunities_advanced FROM fn_advance_opportunity_stages()"
+        )
+        total = sum(r.get('opportunities_advanced', 0) for r in rows)
+        if total:
+            for r in rows:
+                if r.get('opportunities_advanced', 0):
+                    logger.info(f"  [OppAdvance] {r['transition']}: {r['opportunities_advanced']}")
+            logger.info(f"[OppAdvance] Nightly run complete — {total} opportunities advanced")
+        else:
+            logger.info("[OppAdvance] Nightly run — no opportunities needed advancement")
+    except Exception as exc:
+        logger.error(f"[OppAdvance] Scheduled job failed: {exc}", exc_info=True)
+
+
+def _run_generate_pipeline_opportunities() -> None:
+    """Scheduled job: seed 3-5 new pipeline opportunities daily.
+
+    Creates new Prospecting/Qualification opportunities so the pipeline
+    stays populated. fn_advance_opportunity_stages() will age them forward.
+    """
+    try:
+        from app.core.database import execute_sp
+        rows = execute_sp("SELECT generate_pipeline_opportunities() AS result")
+        result = rows[0].get('result', '') if rows else 'no result'
+        logger.info(f"[PipelineGen] {result}")
+    except Exception as exc:
+        logger.error(f"[PipelineGen] Scheduled job failed: {exc}", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("=== CRM Agent starting up (all 12 modules + home index + auth + email) ===")
@@ -113,19 +163,52 @@ async def lifespan(app: FastAPI):
         _scheduler = BackgroundScheduler(timezone="UTC")
         _scheduler.add_job(
             _run_advance_order_statuses,
-            trigger=CronTrigger(hour=2, minute=0),  # 02:00 UTC daily = pg_cron '0 2 * * *'
+            trigger=CronTrigger(hour=2, minute=0),   # 02:00 UTC — advance statuses
             id="advance_order_statuses",
             replace_existing=True,
-            misfire_grace_time=3600,  # allow up to 1h late if server was briefly down
+            misfire_grace_time=3600,
+        )
+        _scheduler.add_job(
+            _run_generate_daily_orders,
+            trigger=CronTrigger(hour=8, minute=0),   # 08:00 UTC — seed 20-30 new orders
+            id="generate_daily_orders",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        _scheduler.add_job(
+            _run_advance_opportunity_stages,
+            trigger=CronTrigger(hour=0, minute=30), # 00:30 UTC — advance opp pipeline
+            id="advance_opportunity_stages",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        _scheduler.add_job(
+            _run_generate_pipeline_opportunities,
+            trigger=CronTrigger(hour=8, minute=30), # 08:30 UTC — seed 3-5 new pipeline opps
+            id="generate_pipeline_opportunities",
+            replace_existing=True,
+            misfire_grace_time=3600,
         )
         _scheduler.start()
-        logger.info("[OrderAdvance] Scheduler started — order statuses advance daily at 02:00 UTC")
+        logger.info(
+            "[Scheduler] Started — "
+            "orders advance 02:00 UTC | orders seed 08:00 UTC | "
+            "opps advance 00:30 UTC | opps seed 08:30 UTC"
+        )
     except ImportError:
         logger.warning(
             "[OrderAdvance] apscheduler not installed — daily scheduler skipped. "
             "Install with: pip install 'apscheduler>=3.10,<4'  "
             "Or use pg_cron on Railway/Supabase (see sql/fn_advance_order_statuses.sql)."
         )
+    except Exception as exc:
+        logger.error(f"[OrderAdvance] Scheduler setup failed: {exc}", exc_info=True)
+        if _scheduler is not None:
+            try:
+                _scheduler.shutdown(wait=False)
+            except Exception:
+                pass
+        _scheduler = None
 
     # Start autonomous inbound-email auto-reply poller
     from app.agents.email.imap_poller import start_poller, stop_poller

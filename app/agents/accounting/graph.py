@@ -123,6 +123,74 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
         db_rows = execute_sp(query)
         logger.info(f"sp_accounting returned {len(db_rows)} rows")
+
+        # ── Python-side overdue filter ───────────────────────────────────────
+        # sp_accounting's statusFilter='unpaid' catches unpaid invoices, but we
+        # also need due_date < today to exclude invoices not yet past due.
+        if parsed_json.get("overdue") and parsed_json.get("mode") == "list_invoices":
+            from datetime import date as _date
+            today_str = _date.today().isoformat()
+            try:
+                overdue_filtered = []
+                for row in db_rows:
+                    result = row.get("result") if isinstance(row, dict) else None
+                    if isinstance(result, dict) and "invoices" in result:
+                        invoices = result["invoices"] or []
+                        inv_f = [
+                            inv for inv in invoices
+                            if (inv.get("due_date") or "9999-12-31") < today_str
+                            and str(inv.get("payment_status") or "").lower()
+                               not in ("paid", "void")
+                        ]
+                        if len(inv_f) < len(invoices):
+                            logger.info(f"[overdue-filter] invoices: {len(invoices)} → {len(inv_f)}")
+                        result = dict(result)
+                        result["invoices"] = inv_f
+                        meta = dict(result.get("metadata") or {})
+                        meta["total_records"] = len(inv_f)
+                        result["metadata"] = meta
+                        overdue_filtered.append({"result": result})
+                    else:
+                        overdue_filtered.append(row)
+                db_rows = overdue_filtered
+            except Exception as fe:
+                logger.warning(f"[overdue-filter] skipped: {fe}")
+
+        # ── Python-side search safety filter ────────────────────────────────
+        req_search = (parsed_json.get("search") or "").strip().lower()
+        req_mode   = (parsed_json.get("mode") or "").lower()
+        if req_search and req_mode in ("list_payments", "list_invoices"):
+            _list_key = "payments" if req_mode == "list_payments" else "invoices"
+            try:
+                filtered = []
+                for row in db_rows:
+                    result = row.get("result") if isinstance(row, dict) else None
+                    if isinstance(result, dict) and _list_key in result:
+                        items = result[_list_key] or []
+                        items_filtered = [
+                            item for item in items
+                            if req_search in str(item.get("account_name") or "").lower()
+                            or req_search in str(item.get("invoice_number") or "").lower()
+                            or req_search in str(item.get("contact_name") or "").lower()
+                        ]
+                        if len(items_filtered) < len(items):
+                            logger.info(
+                                f"[search-filter] {_list_key}: "
+                                f"{len(items)} → {len(items_filtered)} "
+                                f"for search={req_search!r}"
+                            )
+                        result = dict(result)
+                        result[_list_key] = items_filtered
+                        meta = dict(result.get("metadata") or {})
+                        meta["total_records"] = len(items_filtered)
+                        result["metadata"] = meta
+                        filtered.append({"result": result})
+                    else:
+                        filtered.append(row)
+                db_rows = filtered
+            except Exception as fe:
+                logger.warning(f"[search-filter] Python filter skipped: {fe}")
+
         return {**state, "db_rows": db_rows}
 
     except Exception as e:

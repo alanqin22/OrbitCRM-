@@ -200,6 +200,20 @@ def _validate(params: dict) -> List[str]:
         if str(params['direction']).lower() not in VALID_DIRECTIONS:
             errors.append(f"Invalid direction '{params['direction']}'. Allowed: {', '.join(sorted(VALID_DIRECTIONS))}")
 
+    # UUID validation — activityId must be a UUID (relatedId is resolved upstream)
+    import re as _re
+    _UUID_PAT = _re.compile(
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+        _re.IGNORECASE
+    )
+    for uuid_key in ('activityId', 'relatedId'):
+        val = params.get(uuid_key)
+        if val and not _UUID_PAT.match(str(val)):
+            errors.append(
+                f"'{uuid_key}' must be a UUID — received '{val}'. "
+                "Name resolution should have occurred upstream; this is an unexpected state."
+            )
+
     if params.get('channel'):
         if str(params['channel']).lower() not in VALID_CHANNELS:
             errors.append(f"Invalid channel '{params['channel']}'. Allowed: {', '.join(sorted(VALID_CHANNELS))}")

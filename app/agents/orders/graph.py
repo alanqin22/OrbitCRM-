@@ -169,6 +169,40 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
         db_rows = execute_sp(query)
         logger.info(f"sp_orders returned {len(db_rows)} rows")
+
+        # ── Python-side status safety filter ─────────────────────────────────
+        # The SP applies status + search filters in SQL, but as a safety net we
+        # also enforce them here so combined queries always return correct results
+        # even if the deployed SP version doesn't AND both filters together.
+        req_status = (parsed_json.get("status") or "").strip().lower()
+        if req_status and db_rows:
+            try:
+                filtered = []
+                for row in db_rows:
+                    result = row.get("result") if isinstance(row, dict) else None
+                    if isinstance(result, dict) and "orders" in result:
+                        orders = result["orders"] or []
+                        orders_filtered = [
+                            o for o in orders
+                            if str(o.get("status") or "").lower() == req_status
+                        ]
+                        if len(orders_filtered) < len(orders):
+                            logger.info(
+                                f"[status-filter] Filtered {len(orders)} → "
+                                f"{len(orders_filtered)} orders for status={req_status!r}"
+                            )
+                        result = dict(result)
+                        result["orders"] = orders_filtered
+                        meta = dict(result.get("metadata") or {})
+                        meta["total_records"] = len(orders_filtered)
+                        result["metadata"] = meta
+                        filtered.append({"result": result})
+                    else:
+                        filtered.append(row)
+                db_rows = filtered
+            except Exception as fe:
+                logger.warning(f"[status-filter] Python filter skipped: {fe}")
+
         return {**state, "db_rows": db_rows}
 
     except ValueError as e:

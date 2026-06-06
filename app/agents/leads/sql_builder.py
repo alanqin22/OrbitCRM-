@@ -55,6 +55,8 @@ VALID_PARAMS = {
     'rating',
     'ownerId',
     'score',
+    'scoreMin',
+    'scoreMax',
     'campaignId',
     'payload',
     'createdBy',

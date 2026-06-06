@@ -109,6 +109,9 @@ class AccountingChatResponse(BaseModel):
     mode:           Optional[str]  = None
     reportMode:     Optional[str]  = None
     success:        bool           = True
+    page:           int            = 1
+    totalPages:     int            = 1
+    totalRecords:   int            = 0
 
 
 # ============================================================================
@@ -194,7 +197,31 @@ async def accounting_chat(req: AccountingChatRequest):
         report_mode  = _REPORT_MODE_MAP.get(mode, "generic")
         final_output = final_state.get("final_output") or ""
 
-        logger.info(f"Accounting complete — DB={called_db}, mode={mode}")
+        # Extract pagination metadata from SP result for structured response fields
+        page = 1
+        total_pages = 1
+        total_records = 0
+        try:
+            import json as _json
+            db_rows_state = final_state.get("db_rows") or []
+            if db_rows_state:
+                first_row = db_rows_state[0]
+                if isinstance(first_row, dict):
+                    sp_data = (first_row.get("sp_accounting")
+                               or first_row.get("result")
+                               or first_row)
+                    if isinstance(sp_data, str):
+                        try: sp_data = _json.loads(sp_data)
+                        except Exception: sp_data = {}
+                    if isinstance(sp_data, dict):
+                        meta = sp_data.get("metadata") or {}
+                        if meta.get("page")          is not None: page          = int(meta["page"])
+                        if meta.get("total_pages")   is not None: total_pages   = int(meta["total_pages"])
+                        if meta.get("total_records") is not None: total_records = int(meta["total_records"])
+        except Exception:
+            pass
+
+        logger.info(f"Accounting complete — DB={called_db}, mode={mode}, page={page}/{total_pages}, records={total_records}")
 
         return AccountingChatResponse(
             sessionId=session_id,
@@ -204,6 +231,9 @@ async def accounting_chat(req: AccountingChatRequest):
             mode=mode,
             reportMode=report_mode,
             success=True,
+            page=page,
+            totalPages=total_pages,
+            totalRecords=total_records,
         )
 
     except Exception as e:

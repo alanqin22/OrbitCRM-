@@ -236,6 +236,67 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
         logger.info('[list_employee] direct route — returning active employee list')
         return _routed({'mode': 'list_employee'})
 
+    # ── NL: bare lead list ────────────────────────────────────────────────────
+    if re.match(r'^(?:show|list|display)(?:\s+me)?\s+(?:all\s+)?leads?\s*$', msg):
+        return _routed({'mode': 'list', 'pageSize': 50, 'pageNumber': 1})
+
+    # ── NL: "show/list [status] leads" — status filter ───────────────────────
+    _status_m = re.match(
+        r'^(?:show|list|find|display|get)(?:\s+me)?\s+'
+        r'(new|working|qualified|converted|disqualified)\s+leads?\s*$',
+        msg,
+    )
+    if _status_m:
+        return _routed({
+            'mode': 'list', 'status': _status_m.group(1),
+            'pageSize': 50, 'pageNumber': 1,
+        })
+
+    # ── NL: "show/list [hot/warm/cold] leads" — rating filter ─────────────────
+    _rating_m = re.match(
+        r'^(?:show|list|find|display|get)(?:\s+me)?\s+(hot|warm|cold)\s+leads?\s*$',
+        msg,
+    )
+    if _rating_m:
+        return _routed({
+            'mode': 'list', 'rating': _rating_m.group(1),
+            'pageSize': 50, 'pageNumber': 1,
+        })
+
+    # ── NL: "show archived/deleted leads" ─────────────────────────────────────
+    if re.search(r'\b(?:archiv|delet)\w*\b', msg) and re.search(r'\bleads?\b', msg):
+        return _routed({'mode': 'list', 'deletedOnly': True, 'pageSize': 50, 'pageNumber': 1})
+
+    # ── NL: score filters — high ≥ 80, medium 50–79, low < 50 ────────────────
+    if re.search(r'\b(?:high|top)[\s\-]?scor', msg):
+        return _routed({'mode': 'list', 'scoreMin': 80, 'pageSize': 50, 'pageNumber': 1})
+    if re.search(r'\b(?:medium|mid)[\s\-]?scor', msg) or re.search(r'\bscor.*\b(?:medium|mid)\b', msg):
+        return _routed({'mode': 'list', 'scoreMin': 50, 'pageSize': 50, 'pageNumber': 1})
+    if re.search(r'\blow[\s\-]?scor', msg) or re.search(r'\bscor.*\blow\b', msg):
+        return _routed({'mode': 'list', 'scoreMin': 1, 'scoreMax': 49, 'pageSize': 50, 'pageNumber': 1})
+
+    # ── NL: "pipeline summary", "lead pipeline" ───────────────────────────────
+    if re.search(r'\bpipeline\b', msg) or re.search(r'\blead\s+summary\b', msg):
+        return _routed({'mode': 'pipeline'})
+
+    # ── NL: "find duplicate leads", "duplicates report" ──────────────────────
+    if re.search(r'\bduplicat', msg):
+        return _routed({'mode': 'duplicates'})
+
+    # ── NL: "show details for [name]" — auto-resolve name → lead detail ──────
+    _details_m = re.match(
+        r'^(?:show|get|fetch|display|find)\s+details?\s+for\s+(.+)$',
+        raw, re.IGNORECASE,
+    )
+    if _details_m:
+        name = _details_m.group(1).strip()
+        if name and not UUID_RE.search(name):
+            # detailsRequested flag tells db_node to auto-resolve single result → get mode
+            return _routed({'mode': 'list', 'search': name, 'pageSize': 10, 'pageNumber': 1,
+                            'detailsRequested': True})
+        if UUID_RE.search(name):
+            return _routed({'mode': 'get', 'leadId': _extract_uuid(name)})
+
     # ── Natural-language name search (no other prefix matched) ───────────────
     # Catches: "find Sophia", "search Smith", "show me Chen", "look up Alice"
     # Strips the verb prefix and routes as a list search so the AI never
@@ -278,7 +339,7 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
 
     # Update lead (no UUID) — the Update Lead form has its own built-in
     # search bar at the top so the user can pick which lead to edit.
-    if not _has_uuid and re.search(r'\bupdate\b.*\blead', msg):
+    if not _has_uuid and re.search(r'\b(update|edit)\b.*\blead', msg):
         return _routed({'mode': 'show_lead_update_form'})
 
     # ── Fallback: AI Agent ───────────────────────────────────────────────────

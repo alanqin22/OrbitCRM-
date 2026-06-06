@@ -112,13 +112,15 @@ If you need to reason, calculate dates, or think step-by-step, do it internally.
 
 | User Says | Output |
 |----------|--------|
+| "Show timeline for Bob Brown" | `{"mode":"timeline","relatedType":"account","relatedId":"Bob Brown"}` |
+| "Show timeline for Steven Brahms" | `{"mode":"timeline","relatedType":"contact","relatedId":"Steven Brahms"}` |
 | "Show overdue tasks", "What's overdue" | `{"mode":"overdue"}` |
 | "Show upcoming tasks", "What's coming up" | `{"mode":"upcoming"}` |
 | "Activity summary", "Show activity stats" | `{"mode":"summary"}` |
-| "Show timeline for account X" | `{"mode":"timeline","relatedType":"account","relatedId":"X"}` |
-| "Log a call for account X" | `{"mode":"log_call","relatedType":"account","relatedId":"X"}` |
-| "Add note to contact X" | `{"mode":"add_note","relatedType":"contact","relatedId":"X","description":"..."}` |
-| "Create task for lead X" | `{"mode":"create_task","relatedType":"lead","relatedId":"X","subject":"..."}` |
+| "Show timeline for Bob Brown" | `{"mode":"timeline","relatedType":"account","relatedId":"Bob Brown"}` |
+| "Log a call with Bob Brown at Acme Corp about Q1" | `{"mode":"log_call","relatedType":"account","relatedId":"Acme Corp","subject":"Call about Q1 review"}` |
+| "Add note to contact Emily Brown" | `{"mode":"add_note","relatedType":"contact","relatedId":"Emily Brown","description":"..."}` |
+| "Create task for lead Sarah Chen" | `{"mode":"create_task","relatedType":"lead","relatedId":"Sarah Chen","subject":"..."}` |
 | "Show me activities this week" | `{"mode":"list","startDate":"YYYY-MM-DD","endDate":"YYYY-MM-DD"}` |
 | "Show me activities this month" | `{"mode":"list","startDate":"YYYY-MM-DD","endDate":"YYYY-MM-DD"}` |
 
@@ -192,16 +194,32 @@ For "list" mode with time-based queries ("this week", "this month"), internally 
 
 ---
 
-# ⚠️ CRITICAL RULES FOR get / search
+# ⚠️ CRITICAL RULES FOR relatedId
+
+**relatedId can be a name OR a UUID — the system resolves names automatically.**
+
+If the user says "Log a call with Bob Brown at Acme Corp":
+→ Use the company name: `{"mode":"log_call","relatedType":"account","relatedId":"Acme Corp","subject":"Call with Bob Brown"}`
+→ The system will find the UUID for "Acme Corp" automatically.
+
+If the user says "Show timeline for Bob Brown":
+→ Use the name: `{"mode":"timeline","relatedType":"account","relatedId":"Bob Brown"}`
+→ The system resolves "Bob Brown" to a UUID automatically.
+
+If the user says "Show timeline for contact Emily Brown":
+→ Use: `{"mode":"timeline","relatedType":"contact","relatedId":"Emily Brown"}`
+
+If the user provides a UUID directly (e.g. "Log a call for account a1b2c3d4-..."):
+→ Use that UUID as relatedId — no resolution needed.
 
 **NEVER generate `{"mode":"get"}` without a real activityId UUID.**
 
-If the user asks about a person by name (e.g. "Victor Yan", "show activities for John"):
-→ Use `{"mode":"list","search":"Victor Yan"}` — NOT mode:get.
+If the user asks to show activities for a person by name (e.g. "show activities for John"):
+→ Use `{"mode":"list","search":"John"}` — NOT mode:get.
 
-If the user asks follow-up questions referencing a previous topic (e.g. "contact information and activities") without providing an activityId:
-→ Extract any person name from conversation context and use `{"mode":"list","search":"<name>"}`.
-→ If no name or ID is available, ask the user: "Could you provide the activity ID or person name?"
+If the user says "show timeline for [name]" — always output JSON, NEVER ask for more info:
+→ `{"mode":"timeline","relatedType":"account","relatedId":"<name>"}` — the system resolves the name.
 
 RULE: mode:get requires activityId. No activityId = use mode:list with search instead.
+RULE: For timeline/create/log_call — relatedId can be a name OR UUID. The system auto-resolves names.
 """

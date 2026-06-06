@@ -397,8 +397,13 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             # Shipping address
             sa = order.get('shipping_address') or {}
             if sa:
-                # Only show if different from billing
-                same = (sa == ba)
+                # Only show if different from billing.
+                # Strip None-valued keys before comparing so that
+                # {'line2': None} and {} (None dropped on serialization)
+                # are treated as identical.
+                def _compact(d: dict) -> dict:
+                    return {k: v for k, v in d.items() if v is not None}
+                same = (_compact(sa) == _compact(ba))
                 parts = [sa.get('line1'), sa.get('line2'),
                          ', '.join(filter(None, [sa.get('city'), sa.get('province'), sa.get('postal_code')])),
                          sa.get('country')]

@@ -172,6 +172,26 @@ def _match_nl(message: str) -> Optional[dict]:
         pg = re.search(r'\bpage\s+(\d+)\b', msg)
         if pg:
             params['page_number'] = int(pg.group(1))
+        # Extract account/contact name: "for X", "from X", "of X", or proper-noun name after "opportunit*"
+        _name_m = re.search(
+            r'\bopportunit\w*\s+(?:(?:for|from|by|of)\s+)?([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+)',
+            raw
+        )
+        if not _name_m:
+            _name_m = re.search(
+                r'\bopportunit\w*\s+(?:for|from|by|of)\s+(.+?)(?:\s+(?:in|at|this|last|by)\b.*)?$',
+                raw, re.IGNORECASE
+            )
+        if not _name_m:
+            # "details for X" / "info for X" before the word "opportunity"
+            _name_m = re.search(
+                r'(?:details?|info|information)\s+for\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+)',
+                raw
+            )
+        if _name_m:
+            name = _name_m.group(1).strip().rstrip('?.,;')
+            if name:
+                params['search'] = name
         return params
 
     # Search / find opportunities
@@ -182,12 +202,18 @@ def _match_nl(message: str) -> Optional[dict]:
         if nm:
             params['search'] = nm.group(1).strip()
         else:
-            # "find opportunities: David"  or  "find opportunities David"
+            # "find opportunities: David" or "find opportunities David" or "find opps for Sophia"
             colon = re.search(r'opportunit\w*[:\s]+(.+)', msg, re.IGNORECASE)
             if colon:
                 term = colon.group(1).strip().strip('"\'')
                 if term:
                     params['search'] = term
+            else:
+                # "find opportunities for Sophia Pat"
+                for_m = re.search(r'\bopportunit\w*\s+(?:for|from|by)\s+(.+?)(?:\s+(?:in|at|this|last)\b.*)?$',
+                                   raw, re.IGNORECASE)
+                if for_m:
+                    params['search'] = for_m.group(1).strip().rstrip('?.,;')
         return params
 
     return None

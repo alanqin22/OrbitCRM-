@@ -183,11 +183,70 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         logger.warning(f'[AccountSearch] query too short ("{query}") — passthru')
         return passthru()
 
-    # ── "list accounts" / "list accounts: …" — bare list  ────────────────────
+    # ── "list accounts" / "show all accounts" — bare list  ───────────────────
     if msg == 'list accounts' or msg.startswith('list accounts:'):
         page_size = int(chat_input.get('pageSize') or 20)
         page_num  = int(chat_input.get('pageNumber') or 1)
         return routed({'mode': 'list', 'pageSize': page_size, 'pageNumber': page_num})
+
+    if re.match(r'^(show|list|display)\s+(all\s+)?accounts?\s*$', msg):
+        page_size = int(chat_input.get('pageSize') or 20)
+        page_num  = int(chat_input.get('pageNumber') or 1)
+        return routed({'mode': 'list', 'pageSize': page_size, 'pageNumber': page_num})
+
+    # ── "list accounts in <X> industry" → industry filter  ───────────────────
+    _m = re.match(r'^(?:list|show|display)\s+accounts?\s+in\s+([\w\s]+?)\s+industry\s*$', msg)
+    if _m:
+        industry = _m.group(1).strip().title()
+        return routed({'mode': 'list', 'industry': industry, 'pageSize': 20, 'pageNumber': 1})
+
+    # ── "list <X> industry accounts" → industry filter  ──────────────────────
+    _m = re.match(r'^(?:list|show|display)\s+([\w\s]+?)\s+industry\s+accounts?\s*$', msg)
+    if _m:
+        industry = _m.group(1).strip().title()
+        return routed({'mode': 'list', 'industry': industry, 'pageSize': 20, 'pageNumber': 1})
+
+    # ── "accounts with no/zero/without orders" → list_no_orders  ────────────
+    if re.search(r'\b(no|zero|without|0)\s+orders?\b', msg):
+        return routed({'mode': 'list_no_orders'})
+    if re.search(r'\baccounts?\s+(that\s+)?(have\s+)?no\s+orders?\b', msg):
+        return routed({'mode': 'list_no_orders'})
+
+    # ── "top accounts by revenue / top-performing" → list_top_revenue  ────────
+    if re.search(r'\b(top|most|highest|best|biggest|largest|performing)\b.*\brevenue\b', msg):
+        return routed({'mode': 'list_top_revenue'})
+    if re.search(r'\brevenue\b.*\b(top|most|highest|ranked|sorted|performing)\b', msg):
+        return routed({'mode': 'list_top_revenue'})
+    if re.search(r'\btop[\s\-]?performing\s+accounts?\b', msg):
+        return routed({'mode': 'list_top_revenue'})
+
+    # ── "top accounts by/with most orders" → list_top_orders  ────────────────
+    if re.search(r'\b(top|most|highest|best|biggest|largest)\b.*\borders?\b', msg):
+        return routed({'mode': 'list_top_orders'})
+    if re.search(r'\borders?\b.*\b(top|most|highest|ranked|sorted)\b', msg):
+        return routed({'mode': 'list_top_orders'})
+
+    # ── "list inactive/active/archived accounts" → status filter  ───────────
+    _STATUS_MAP = {'inactive': 'inactive', 'active': 'active', 'archived': 'archived'}
+    _m = re.match(r'^(?:list|show|display)\s+(inactive|active|archived)\s+accounts?\s*$', msg)
+    if _m:
+        return routed({'mode': 'list', 'status': _m.group(1), 'pageSize': 20, 'pageNumber': 1})
+
+    # ── "list accounts with no orders" → passthru (AI handles)  ─────────────
+    # (Kept as passthru — SP list doesn't have a zero-orders filter parameter)
+
+    # ── "list <X> accounts" (single word X, likely industry) ─────────────────
+    _GENERIC = {'all', 'the', 'my', 'these', 'some', 'active', 'inactive', 'archived'}
+    _m = re.match(r'^(?:list|show|display)\s+([a-z]+)\s+accounts?\s*$', msg)
+    if _m and _m.group(1) not in _GENERIC:
+        industry = _m.group(1).strip().title()
+        return routed({'mode': 'list', 'industry': industry, 'pageSize': 20, 'pageNumber': 1})
+
+    # ── "show accounts in <city/location>" → search  ─────────────────────────
+    _m = re.match(r'^(?:show|list|display)\s+accounts?\s+in\s+([\w\s]+?)\s*$', msg)
+    if _m:
+        location = _m.group(1).strip().title()
+        return routed({'mode': 'list', 'search': location, 'pageSize': 20, 'pageNumber': 1})
 
     # ── "get account: <uuid>" — Update-form fetchAccountGetMode()  (v2.1) ─────
     if re.match(r'^get account:\s+', raw, re.IGNORECASE):
@@ -225,6 +284,15 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
     # built-in search bar so the user can pick which account to edit.
     if not _has_uuid and re.search(r'\bupdate\b.*\baccount', msg):
         return routed({'mode': 'show_account_update_form'})
+
+    # ── "update <name>" without "account" keyword — open Update form
+    # pre-searched for that name (hint_name forwarded to frontend).
+    if not _has_uuid:
+        _upd_m = re.match(r'^update\s+(.+)$', msg)
+        if _upd_m:
+            hint = _upd_m.group(1).strip()
+            if hint and 'account' not in hint.lower():
+                return routed({'mode': 'show_account_update_form', 'hint_name': raw[len('update '):].strip()})
 
     # ── No match — AI Agent handles  ─────────────────────────────────────────
     return passthru()
