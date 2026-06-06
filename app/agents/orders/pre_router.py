@@ -495,6 +495,32 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
             p['search'] = q
         return _routed(p)
 
+    # ── "show order details" (bare, no UUID) → ask for identifier ────────────
+    if re.match(r'^(?:show|view|get|display|fetch)\s+(?:order\s+)?details?\s*$', msg, re.IGNORECASE):
+        return _routed({'mode': 'ask_order_identifier'})
+
+    # ── recent orders → list sorted by date DESC ─────────────────────────────
+    if re.search(r'\brecent\b', msg, re.IGNORECASE) and re.search(r'\borders?\b', msg, re.IGNORECASE):
+        return _routed({
+            'mode': 'list', 'includeDeleted': False,
+            'sortField': 'order_date', 'sortOrder': 'DESC',
+            'pageSize': 20, 'pageNumber': 1,
+        })
+
+    # ── quarterly / annual / monthly sales → sales_summary ───────────────────
+    if re.search(r'\b(?:quarterly|annual|monthly|weekly)\s+(?:sales|revenue)\b', msg, re.IGNORECASE) \
+       or re.search(r'\b(?:show|view|get)\s+(?:(?:quarterly|annual|monthly)\s+)?(?:sales|revenue)\s+summary\b', msg, re.IGNORECASE):
+        yr_m = re.search(r'\b(20\d{2})\b', raw)
+        yr = int(yr_m.group(1)) if yr_m else None
+        params: dict = {'mode': 'sales_summary'}
+        if yr:
+            params['year'] = yr
+        return _routed(params)
+
+    # ── account revenue summary — broader phrasing ───────────────────────────
+    if msg.startswith(('account revenue', 'revenue by account', 'revenue summary by account')):
+        return _routed({'mode': 'account_summary'})
+
     # ── Vague create/update order intent → open the inline form ─────────────
     # Catches "I want to create order", "new order", "create or update order",
     # "I want to update order", etc. Skipped when the user supplied a UUID,

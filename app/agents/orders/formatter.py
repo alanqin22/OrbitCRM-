@@ -185,10 +185,20 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
 
     logger.info(f'Format Response (sp_orders v5.5) — mode={mode} action={action} context={context}')
 
-    # ── UI-only marker mode — frontend opens the inline form ─────────────────
+    # ── UI-only marker modes — frontend opens inline form or shows message ─────
     if mode == 'show_order_form':
         return {
             'output': '[MODE:show_order_form]\nOpening the Create / Update Order form below…',
+            'mode': mode,
+            'reportMode': mode,
+            'entity': 'orders',
+            'result': None,
+            'success': True,
+        }
+    if mode == 'ask_order_identifier':
+        return {
+            'output': ('Please provide the specific order ID, order number (e.g. SO-2025-000123), '
+                       'or customer name for which you would like to see the order details.'),
             'mode': mode,
             'reportMode': mode,
             'entity': 'orders',
