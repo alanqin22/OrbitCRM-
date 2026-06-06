@@ -365,6 +365,9 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
     if mode == 'show_product_form':
         return ('[MODE:show_product_form]\n'
                 'Opening the Add / Update Product form below…')
+    if mode == 'ask_product_identifier':
+        return ('Please provide the specific product name, ID, or SKU for which '
+                'you would like to see the details.')
 
     # ── list_categories (v3.4) — machine-readable JSON for dropdown ──────────
     # Never rendered to the user — the HTML _loadCategories() function parses

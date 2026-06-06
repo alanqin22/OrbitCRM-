@@ -118,6 +118,7 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
             'show_price_history_form',
             'show_low_stock_form',
             'show_product_form',
+            'ask_product_identifier',
         }
         if parsed_json.get("mode") in _ui_only_modes:
             logger.info(f"db_node: UI-only mode '{parsed_json.get('mode')}' — skipping DB call")
@@ -135,7 +136,14 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
         # → automatically fetch price_history for that product.
         if parsed_json.get('priceHistoryRequested') and parsed_json.get('mode') == 'list':
             sp_result = db_rows[0] if db_rows else {}
-            inner = sp_result.get('result', {}) if isinstance(sp_result, dict) else {}
+            # Products SQL builder emits SELECT sp_products(...) without AS result,
+            # so the row key is 'sp_products'; leads uses AS result → 'result'.
+            inner = {}
+            for _key in ('sp_products', 'result'):
+                _val = sp_result.get(_key) if isinstance(sp_result, dict) else None
+                if _val and isinstance(_val, dict):
+                    inner = _val
+                    break
             products = inner.get('products') or []
             if len(products) == 1:
                 product_id = str(products[0].get('product_id') or '')

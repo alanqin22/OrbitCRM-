@@ -164,6 +164,7 @@ _REPORT_MODE_MAP = {
     "show_price_history_form": "show_price_history_form", # UI-only marker; opens inline form
     "show_low_stock_form":    "show_low_stock_form",     # UI-only marker; opens inline form
     "show_product_form":      "show_product_form",       # UI-only marker; opens Add/Update Product form
+    "ask_product_identifier": "ask_product_identifier",  # conversational: ask for name/ID/SKU
 }
 
 

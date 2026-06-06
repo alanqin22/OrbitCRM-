@@ -326,6 +326,10 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
             logger.info(f'[list/search] query: {query}')
             return routed({'mode': 'list', 'search': query, 'pageSize': 20, 'pageNumber': 1})
 
+    # ── "show product details" (bare, no identifier) → ask which product ────
+    if re.match(r'^(?:show|view|get|display|fetch)\s+(?:product\s+)?details?\s*$', msg, re.IGNORECASE):
+        return routed({'mode': 'ask_product_identifier'})
+
     # ── get / show product details for <uuid-or-number> ──────────────────────
     if msg.startswith('show product details for') or msg.startswith('get product details for'):
         ids = _extract_uuids(raw)
