@@ -118,12 +118,14 @@ User says list/show/get products in/by/for category [number] N   → list (categ
 User says find/search/look for/match product by NAME             → list (nameFilter: <name>)
 User says find/search/look for product by keyword                → list (search: <keyword>)
 User says filter products by category (no number given)          → list (search or conversational)
-User wants details/info for a specific product                   → get_details
+User says "show/view/get product details" without specifying     → conversational: ask for product
+  which product (no name, SKU, UUID, or product number given)      name, SKU, or product number
+User wants details/info for a SPECIFIC named/numbered product    → get_details (productId, productNumber, or sku required)
 User wants to add/create a new product                           → add
 User wants to update/change/edit/modify a product                → update
 User wants to adjust/add/reduce stock in bulk                    → bulk_adjust_stock
 User asks for inventory summary/analytics                        → inventory_summary
-User asks about low stock / stock alerts                         → low_stock
+User asks about low stock / stock alerts / reorder               → low_stock
 User wants price history for a product                           → price_history
 User wants price matrix/comparison                               → price_matrix
 Greeting or unrecognised request                                 → conversational
@@ -151,6 +153,12 @@ EXAMPLES:
 
   Input:  List all products
   Output: {"mode":"list","pageSize":50,"pageNumber":1}
+
+  Input:  Show product details
+  Output: Which product would you like to see details for? Please provide the product name, SKU, or product number.
+
+  Input:  View product details
+  Output: Which product would you like to see details for? Please provide the product name, SKU, or product number.
 
 ====================================================================
 DATABASE & CATEGORIES

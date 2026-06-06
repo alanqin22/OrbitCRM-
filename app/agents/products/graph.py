@@ -130,7 +130,24 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
         db_rows = execute_sp(query)
         logger.info(f"sp_products returned {len(db_rows)} rows")
-        return {**state, "db_rows": db_rows}
+
+        # Auto-resolve: "pricing history for <name>" → list search with 1 result
+        # → automatically fetch price_history for that product.
+        if parsed_json.get('priceHistoryRequested') and parsed_json.get('mode') == 'list':
+            sp_result = db_rows[0] if db_rows else {}
+            inner = sp_result.get('result', {}) if isinstance(sp_result, dict) else {}
+            products = inner.get('products') or []
+            if len(products) == 1:
+                product_id = str(products[0].get('product_id') or '')
+                if product_id:
+                    ph_params = {'mode': 'price_history', 'productId': product_id}
+                    ph_query, _ = build_products_query(ph_params)
+                    db_rows = execute_sp(ph_query)
+                    parsed_json = ph_params
+                    logger.info(f"priceHistoryRequested auto-resolved → price_history productId={product_id}")
+            state = {**state, 'parsed_json': parsed_json}
+
+        return {**state, "db_rows": db_rows, "parsed_json": parsed_json}
 
     except Exception as e:
         logger.error(f"Products database error: {e}", exc_info=True)

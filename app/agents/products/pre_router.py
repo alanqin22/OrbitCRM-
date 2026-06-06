@@ -379,7 +379,7 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         })
 
     # ── price history ────────────────────────────────────────────────────────
-    if 'price history' in msg:
+    if re.search(r'\bpric(?:e|ing)\s+history\b', msg, re.IGNORECASE):
         ids = _extract_uuids(raw)
         num_match = re.search(r'(?:product\s+)?(?:number|#)\s*(\d+)', raw, re.IGNORECASE)
         if ids or num_match:
@@ -389,6 +389,14 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
             if num_match:
                 params['productNumber'] = int(num_match.group(1))
             return routed(params)
+        # Name-based: "pricing history for AirPods Pro" → search by name,
+        # auto-resolve to price_history in graph.py if exactly 1 result.
+        name_m = re.search(r'\bfor\s+(.+?)(?:\s*[?.!,]|$)', raw, re.IGNORECASE)
+        if name_m:
+            pname = name_m.group(1).strip()
+            if pname:
+                return routed({'mode': 'list', 'search': pname, 'pageSize': 5,
+                               'pageNumber': 1, 'priceHistoryRequested': True})
         # No identifier → open the inline Price History form (typeahead +
         # voice) so the user can pick a product without bouncing to the AI.
         return routed({'mode': 'show_price_history_form'})
@@ -404,13 +412,15 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         return routed({'mode': 'show_bulk_stock_form'})
 
     # ── product add/update form (vague create-or-update intent) ──────────────
-    # Catches "I want to add a product", "create a new product", "create or
-    # update product", "open the product form", etc. Skips when the user
-    # already provided structured details (SKU + price), since those go
-    # straight to the AI's create flow which needs the explicit values.
+    # Catches "I want to add a product", "create a new product", "update a
+    # product", "edit product information", "open the product form", etc.
+    # Skips when the user already provided structured details (SKU + price),
+    # since those go straight to the AI's create flow which needs the values.
     if re.search(r'\b(create|new|add|make)\b.*\bproduct', msg, re.IGNORECASE) \
        or re.search(r'\bcreate\s+or\s+update\s+product', msg, re.IGNORECASE) \
-       or re.search(r'\b(open|show)\s+(?:the\s+)?(?:add|update|new|create|product)\s+(?:product\s+)?form\b', msg, re.IGNORECASE):
+       or re.search(r'\b(open|show)\s+(?:the\s+)?(?:add|update|new|create|product)\s+(?:product\s+)?form\b', msg, re.IGNORECASE) \
+       or re.search(r'\b(update|edit|modify)\b\s+(?:a\s+|an\s+|the\s+)?product\b', msg, re.IGNORECASE) \
+       or re.search(r'\bedit\s+product\s+info', msg, re.IGNORECASE):
         # If the user supplied SKU + a price keyword, they likely want the
         # AI to actually create the product — fall through.
         has_sku   = re.search(r'\bsku[:\s]+\S', raw, re.IGNORECASE)
@@ -440,6 +450,10 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
             'skuFilter': sku_filter,
             'nameFilter': name_filter
         })
+
+    # ── reorder recommendations → low stock report ───────────────────────────
+    if re.search(r'\breorder\b', msg, re.IGNORECASE):
+        return routed({'mode': 'low_stock', 'lowStockThreshold': 70})
 
     # ── No match — AI Agent handles ───────────────────────────────────────────
     return passthru()
