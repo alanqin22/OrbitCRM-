@@ -153,6 +153,13 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     db_rows = execute_sp(ph_query)
                     parsed_json = ph_params
                     logger.info(f"priceHistoryRequested auto-resolved → price_history productId={product_id}")
+            else:
+                # 0 or 2+ matches — can't auto-resolve; open price history search
+                # form so the user can pick the exact product via typeahead.
+                parsed_json = {'mode': 'show_price_history_form'}
+                db_rows = [{"result": {"metadata": {"status": "success", "code": 0,
+                                                    "mode": "show_price_history_form"}}}]
+                logger.info(f"priceHistoryRequested: {len(products)} match(es) → show_price_history_form")
             state = {**state, 'parsed_json': parsed_json}
 
         return {**state, "db_rows": db_rows, "parsed_json": parsed_json}
