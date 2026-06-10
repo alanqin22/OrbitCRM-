@@ -16,10 +16,10 @@ _Listed in the same order as the launcher page on [agentorc.ca](https://agentorc
 | Module | What to ask / try |
 |---|---|
 | 🛒&nbsp;Store | **CRM Universe Hub** — the landing page. KPI tiles for Active Pipeline / Open Leads / Pending Orders / Unread Alerts, plus the module launcher |
-| 🎯&nbsp;Leads | _"convert Maria's lead"_ — inline forms appear on vague intent; one-click conversion to opportunity |
-| 👤&nbsp;Accounts | _"find Apple"_, _"new prospect account"_ — voice typeahead, account-type and industry analytics |
-| 📇&nbsp;Contacts | _"show me Bob Brown's contact details"_ — duplicate detection, account roll-up |
-| 💼&nbsp;Opportunities | _"add product to opportunity"_ — stage pipeline, weighted forecast, AI-driven win probability |
+| 🎯&nbsp;Leads | _"convert Maria's lead"_ — inline forms on vague intent, one-click conversion, qualify/disqualify, archive & restore |
+| 👤&nbsp;Accounts | _"find Apple"_, _"new prospect account"_ — voice typeahead, 360° timeline & financials, overdue-invoice and no-phone drill-downs |
+| 📇&nbsp;Contacts | _"show me Bob Brown's contact details"_ — duplicate detection, account roll-up, archive & restore |
+| 💼&nbsp;Opportunities | _"add product to opportunity"_ — stage pipeline, weighted forecast, win-rate analytics by owner & lead source |
 | 📦&nbsp;Products | _"low stock under 70"_, _"bulk stock adjustment"_, _"price history for Lenovo"_ — wholesale-≤-retail enforced at DB level |
 | 📑&nbsp;Orders | _"create order for ABC Corp"_ — line-item editor, status workflow, invoice generation |
 | 💰&nbsp;Accounting | _"Accounting Summary"_ — AR aging, cashflow, account-margin analytics, product profitability, forecast accuracy — all real-time |
@@ -48,7 +48,7 @@ crm_agent/
 ├── requirements.txt
 ├── .env                           ← Single config file for all agents
 ├── sp/                            ← PostgreSQL stored procedures
-├── *-chat.html                    ← One frontend per agent (incl. orchestrator-chat.html)
+├── *-mgmt.html                    ← One frontend per agent (incl. orchestrator-mgmt.html)
 └── app/
     ├── main.py                    ← FastAPI app — registers all routers
     ├── core/                      ← Shared utilities (zero duplication)

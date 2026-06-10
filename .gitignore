@@ -107,3 +107,7 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Deployment
+deploy_config.ps1
+deploy_winscp.log
