@@ -661,11 +661,15 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
                     forecast = r.get('forecast_next_month', '')
                     fc_chg   = _pct_change(forecast, r.get('value'))
                     fc_trend = _trend_arrow(forecast, r.get('value'))
+                    prev_v   = r.get('value_prev')
+                    prev_str = str(prev_v) if prev_v is not None else '—'
+                    chg_str  = f"{chg}%" if chg is not None else '—'
+                    fc_str   = f"{fc_chg}%" if fc_chg is not None else '—'
                     out.append(
                         f"| {r.get('rank')} | {r.get('label')} | {r.get('value')} | "
-                        f"{r.get('value_prev', '')} | {chg if chg is not None else ''}% | "
+                        f"{prev_str} | {chg_str} | "
                         f"{arrow} | {spark} | {score} | {pct_tot} | "
-                        f"{forecast} | {fc_chg if fc_chg is not None else ''}% | {fc_trend} |"
+                        f"{forecast} | {fc_str} | {fc_trend} |"
                     )
                 out.append('')
 
@@ -690,11 +694,15 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
                     forecast = b.get('forecast_next_month', '')
                     fc_chg   = _pct_change(forecast, b.get('value'))
                     fc_trend = _trend_arrow(forecast, b.get('value'))
+                    prev_v   = b.get('value_prev')
+                    prev_str = str(prev_v) if prev_v is not None else '—'
+                    chg_str  = f"{chg}%" if chg is not None else '—'
+                    fc_str   = f"{fc_chg}%" if fc_chg is not None else '—'
                     out.append(
-                        f"| {label} | {b.get('value')} | {b.get('value_prev', '')} | "
-                        f"{chg if chg is not None else ''}% | {arrow} | {spark} | "
+                        f"| {label} | {b.get('value')} | {prev_str} | "
+                        f"{chg_str} | {arrow} | {spark} | "
                         f"{score} | {pct_tot} | {severity} | "
-                        f"{forecast} | {fc_chg if fc_chg is not None else ''}% | {fc_trend} |"
+                        f"{forecast} | {fc_str} | {fc_trend} |"
                     )
                 out.append('')
 

@@ -78,6 +78,9 @@ class OpportunityChatRequest(BaseModel):
     date_to:         Optional[str]   = None
     min_probability: Optional[int]   = None
     max_probability: Optional[int]   = None
+    min_amount:      Optional[float] = None
+    max_amount:      Optional[float] = None
+    sort_by:         Optional[str]   = None
 
 
 class OpportunityChatResponse(BaseModel):
@@ -103,7 +106,7 @@ _SP_FIELDS = [
     "owner_id", "status", "product_id", "quantity", "selling_price",
     "discount", "opp_product_id", "payload", "created_by", "updated_by",
     "page_size", "page_number", "search", "date_from", "date_to",
-    "min_probability", "max_probability",
+    "min_probability", "max_probability", "min_amount", "max_amount", "sort_by",
 ]
 
 

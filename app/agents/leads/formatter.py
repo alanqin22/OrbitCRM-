@@ -181,6 +181,7 @@ def _lead_dict(l: dict) -> dict:
         'company':               l.get('company'),
         'email':                 l.get('email'),
         'phone':                 _clean_phone(l.get('phone')),
+        'role':                  l.get('role'),
         'address_line1':         l.get('address_line1'),
         'address_line2':         l.get('address_line2'),
         'city':                  l.get('city'),
@@ -208,6 +209,8 @@ def _lead_dict(l: dict) -> dict:
         'converted_opportunity_id': l.get('converted_opportunity_id'),
         'dedupe_group_id':       l.get('dedupe_group_id'),
         'dedupe_confidence':     l.get('dedupe_confidence'),
+        'is_deleted':            l.get('is_deleted') or False,
+        'deleted_at':            l.get('deleted_at'),
     }
 
 
@@ -335,6 +338,10 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         report_mode = 'lead_qualified'
         lead        = response.get('lead')
 
+    elif mode == 'disqualify':
+        report_mode = 'lead_disqualified'
+        lead        = response.get('lead')
+
     elif mode == 'score':
         report_mode = 'lead_scored'
         lead        = response.get('lead')
@@ -361,6 +368,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
 
     elif mode == 'restore':
         report_mode = 'lead_restored'
+        lead        = response.get('lead')
 
     elif mode == 'duplicates':
         report_mode = 'duplicates'
@@ -455,8 +463,39 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
 
                 out.append(f"Created: {_fmt_dt(l.get('created_at'))} | Updated: {_fmt_dt(l.get('updated_at'))}")
                 out.append('')
+
+            # ── convertRequested qualification gate ───────────────────────────
+            if params.get('convertRequested'):
+                if len(leads) == 1:
+                    _l = leads[0]
+                    _lead_status = (_l.get('status') or '').lower()
+                    _lead_name   = f"{_l.get('first_name') or ''} {_l.get('last_name') or ''}".strip() or 'This lead'
+                    if _lead_status == 'qualified':
+                        out.append('---')
+                        out.append(f'✅ **{_lead_name}** is qualified and ready to convert.')
+                        out.append(f"Click **Convert** on the lead above, or say `convert lead: {{\"leadId\": \"{_l.get('lead_id')}\"}}`.")
+                    else:
+                        out.append('---')
+                        out.append(f'⚠️ **{_lead_name}** has status **{_lead_status or "unknown"}** and must be **qualified first** before converting.')
+                        out.append('Please click the **Qualify** button on the lead above, or say "Qualify lead for [name]".')
+                elif len(leads) > 1:
+                    out.append('---')
+                    out.append(f'⚠️ Found **{len(leads)} leads** matching that name. Please click the correct lead, qualify it if needed, then convert from the detail view.')
         else:
-            out.append('No leads found.')
+            # Build a contextual empty-state message from active filters
+            _filter_parts = []
+            if params.get('status'):
+                _filter_parts.append(f"with status **{params['status']}**")
+            if params.get('rating'):
+                _filter_parts.append(f"with rating **{params['rating']}**")
+            if params.get('source'):
+                _filter_parts.append(f"from source **{params['source']}**")
+            if params.get('search') and not params.get('convertRequested'):
+                _filter_parts.append(f"matching **\"{params['search']}\"**")
+            if _filter_parts:
+                out.append(f"No leads found {' '.join(_filter_parts)}.")
+            else:
+                out.append('No leads found.')
 
     # ── Lead Detail ───────────────────────────────────────────────────────────
     elif report_mode == 'lead_detail' and lead:
@@ -474,6 +513,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         if lead.get('company'):  out.append(f"| **Company** | {lead['company']} |")
         if lead.get('email'):    out.append(f"| **Email** | {lead['email']} |")
         if lead.get('phone'):    out.append(f"| **Phone** | {(_clean_phone(lead['phone']))} |")
+        if lead.get('role'):     out.append(f"| **Role** | {lead['role']} |")
 
         # Address block
         if lead.get('address_line1'):
@@ -547,6 +587,25 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         if lead.get('company'):          out.append(f"| **Company** | {lead['company']} |")
         if lead.get('email'):            out.append(f"| **Email** | {lead['email']} |")
 
+    # ── Lead Disqualified ─────────────────────────────────────────────────────
+    elif report_mode == 'lead_disqualified' and lead:
+        full_name  = f"{lead.get('first_name') or ''} {lead.get('last_name') or ''}".strip()
+        updated_by = _updated_by_name(lead)
+
+        out.append('🚫 **Lead Disqualified**')
+        out.append('')
+        out.append(f"<!--LEAD_ID:{lead.get('lead_id')}-->")
+        out.append('| Field | Value |')
+        out.append('|-------|-------|')
+        out.append(f"| **Lead ID** | {lead.get('lead_id')} |")
+        if full_name:                            out.append(f'| **Name** | {full_name} |')
+        out.append('| **Status** | 🚫 DISQUALIFIED |')
+        if lead.get('disqualification_reason'):
+            out.append(f"| **Reason** | {lead['disqualification_reason']} |")
+        if updated_by:                           out.append(f'| **Updated By** | {updated_by} |')
+        if lead.get('company'):                  out.append(f"| **Company** | {lead['company']} |")
+        if lead.get('email'):                    out.append(f"| **Email** | {lead['email']} |")
+
     # ── Lead Created ──────────────────────────────────────────────────────────
     elif report_mode == 'lead_created':
         dups = report_data.get('possibleDuplicates') or []
@@ -573,6 +632,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                 if lead.get('company'):    out.append(f"| **Company** | {lead['company']} |")
                 if lead.get('email'):      out.append(f"| **Email** | {lead['email']} |")
                 if lead.get('phone'):      out.append(f"| **Phone** | {(_clean_phone(lead['phone']))} |")
+                if lead.get('role'):       out.append(f"| **Role** | {lead['role']} |")
                 if lead.get('address_line1'):
                     addr2 = f", {lead['address_line2']}" if lead.get('address_line2') else ''
                     out.append(f"| **Address** | {lead['address_line1']}{addr2} |")
@@ -598,6 +658,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         if lead.get('company'):    out.append(f"| **Company** | {lead['company']} |")
         if lead.get('email'):      out.append(f"| **Email** | {lead['email']} |")
         if lead.get('phone'):      out.append(f"| **Phone** | {(_clean_phone(lead['phone']))} |")
+        if lead.get('role'):       out.append(f"| **Role** | {lead['role']} |")
         if lead.get('address_line1'):
             addr2 = f", {lead['address_line2']}" if lead.get('address_line2') else ''
             out.append(f"| **Address** | {lead['address_line1']}{addr2} |")
@@ -718,12 +779,35 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
 
     # ── Archive / Restore ─────────────────────────────────────────────────────
     elif report_mode in ('lead_archived', 'lead_restored'):
-        action = 'Archived' if report_mode == 'lead_archived' else 'Restored'
-        icon   = '🗑' if report_mode == 'lead_archived' else '♻️'
-        out.append(f'{icon} **Lead {action} Successfully!**')
+        is_archived = report_mode == 'lead_archived'
+        action      = 'Archived' if is_archived else 'Restored'
+        color_word  = 'soft-deleted and archived' if is_archived else 'restored and reactivated'
+
+        out.append('**ARCHIVED**' if is_archived else '**RESTORED**')
         out.append('')
-        if metadata.get('message'):
-            out.append(f"**Message:** {metadata['message']}")
+        out.append(f'The lead has been successfully {color_word}.')
+        out.append('')
+
+        lead_id_val = response.get('lead_id') or params.get('leadId') or ''
+        lead_rec    = response.get('lead') or {}
+        fn          = lead_rec.get('first_name') or ''
+        ln          = lead_rec.get('last_name')  or ''
+        lead_name   = f'{fn} {ln}'.strip()
+
+        out.append('| Field | Details |')
+        out.append('|-------|---------|')
+        if lead_name:
+            out.append(f'| **Name** | {lead_name} |')
+        if lead_id_val:
+            out.append(f'| **Lead ID** | `{lead_id_val}` |')
+        out.append(f'| **Action** | Lead {action} |')
+        out.append(f'| **Timestamp** | {_fmt_dt(datetime.utcnow().isoformat())} |')
+        out.append('')
+        if is_archived:
+            out.append('> ℹ️ This lead is no longer visible in standard lists. '
+                       'To view or restore it, ask: **"Show archived leads"**.')
+        else:
+            out.append('> ✅ This lead is now fully active and visible in your lead list.')
 
     # ── Duplicates ────────────────────────────────────────────────────────────
     elif report_mode == 'duplicates':
@@ -862,4 +946,6 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         'accountId':     report_data.get('accountId'),
         'contactId':     report_data.get('contactId'),
         'opportunityId': report_data.get('opportunityId'),
+        'lead_id':       response.get('lead_id') or (response.get('lead') or {}).get('lead_id'),
+        'metadata':      metadata,
     }

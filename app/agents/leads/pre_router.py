@@ -122,6 +122,10 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
             'status':     _val(chat_input.get('status')),
             'rating':     _val(chat_input.get('rating')),
             'source':     _val(chat_input.get('source')),
+            'city':       _val(chat_input.get('city')),
+            'province':   _val(chat_input.get('province')),
+            'postalCode': _val(chat_input.get('postalCode')),
+            'country':    _val(chat_input.get('country')),
         })
 
     # ── "get lead:" ──────────────────────────────────────────────────────────
@@ -226,6 +230,24 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
         logger.warning('[convert] no leadId — falling through to AI Agent')
         return _passthru(raw, chat_input)
 
+    # ── "archive lead:" ──────────────────────────────────────────────────────
+    if msg.startswith('archive lead:'):
+        lead_id = _val(chat_input.get('leadId')) or _extract_uuid(raw)
+        if lead_id:
+            logger.info(f'[archive] leadId={lead_id}')
+            return _routed({'mode': 'archive', 'leadId': lead_id})
+        logger.warning('[archive] no leadId — falling through to AI Agent')
+        return _passthru(raw, chat_input)
+
+    # ── "restore lead:" ──────────────────────────────────────────────────────
+    if msg.startswith('restore lead:'):
+        lead_id = _val(chat_input.get('leadId')) or _extract_uuid(raw)
+        if lead_id:
+            logger.info(f'[restore] leadId={lead_id}')
+            return _routed({'mode': 'restore', 'leadId': lead_id})
+        logger.warning('[restore] no leadId — falling through to AI Agent')
+        return _passthru(raw, chat_input)
+
     # ── "pipeline leads:" ────────────────────────────────────────────────────
     if msg.startswith('pipeline leads:'):
         logger.info('[pipeline] direct route')
@@ -275,6 +297,62 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
     if re.search(r'\blow[\s\-]?scor', msg) or re.search(r'\bscor.*\blow\b', msg):
         return _routed({'mode': 'list', 'scoreMin': 1, 'scoreMax': 49, 'pageSize': 50, 'pageNumber': 1})
 
+    # ── NL: score above / below N ────────────────────────────────────────────
+    _score_above_m = re.search(r'\bscor[e]?\s+(?:above|over|greater\s+than|>)\s*(\d+)', msg)
+    if _score_above_m:
+        return _routed({'mode': 'list', 'scoreMin': int(_score_above_m.group(1)),
+                        'pageSize': 50, 'pageNumber': 1})
+    _score_below_m = re.search(r'\bscor[e]?\s+(?:below|under|less\s+than|<)\s*(\d+)', msg)
+    if _score_below_m:
+        return _routed({'mode': 'list', 'scoreMax': int(_score_below_m.group(1)),
+                        'pageSize': 50, 'pageNumber': 1})
+
+    # ── NL: "show leads from [source]" — source filter ───────────────────────
+    _KNOWN_SOURCES = {
+        'website': 'website', 'referral': 'referral',
+        'google ads': 'google_ads', 'google_ads': 'google_ads',
+        'facebook ads': 'facebook_ads', 'facebook_ads': 'facebook_ads',
+        'linkedin': 'linkedin',
+        'social media': 'social_media', 'social_media': 'social_media', 'social': 'social_media',
+        'email campaign': 'email_campaign', 'email_campaign': 'email_campaign',
+        'cold call': 'cold_call', 'cold_call': 'cold_call',
+        'trade show': 'trade_show', 'trade_show': 'trade_show',
+        'advertisement': 'advertisement', 'ads': 'advertisement',
+        'partner': 'partner', 'import': 'import', 'other': 'other',
+    }
+    _source_m = re.search(r'\bfrom\s+(?:the\s+)?([\w][\w\s]*)$', msg)
+    if _source_m:
+        _raw = _source_m.group(1).strip().rstrip('s').strip()  # strip trailing 's' e.g. "leads"
+        _raw = re.sub(r'\s+leads?$', '', _raw).strip()
+        _src = _KNOWN_SOURCES.get(_raw) or _KNOWN_SOURCES.get(_raw.replace('_', ' '))
+        if _src:
+            return _routed({
+                'mode': 'list', 'source': _src,
+                'pageSize': 50, 'pageNumber': 1,
+            })
+
+    # ── NL: "show leads in <city/province>" — address filter ─────────────────
+    _CA_PROV_MAP = {
+        'ontario': 'ON', 'british columbia': 'BC', 'quebec': 'QC', 'alberta': 'AB',
+        'manitoba': 'MB', 'saskatchewan': 'SK', 'nova scotia': 'NS', 'new brunswick': 'NB',
+        'newfoundland': 'NL', 'prince edward island': 'PE', 'northwest territories': 'NT',
+        'yukon': 'YT', 'nunavut': 'NU',
+    }
+    _in_m = re.search(r'\bin\s+([a-z][a-z\s]{1,40}?)(?:\s+leads?)?(?:,\s*([a-z]{2,}))?\s*$', msg)
+    if _in_m:
+        _loc  = _in_m.group(1).strip()
+        _loc2 = (_in_m.group(2) or '').strip()
+        _loc  = re.sub(r'\s+leads?$', '', _loc).strip()
+        _prov = _CA_PROV_MAP.get(_loc) or (_loc.upper() if len(_loc) == 2 else None)
+        if _prov:
+            return _routed({'mode': 'list', 'province': _prov, 'pageSize': 50, 'pageNumber': 1})
+        _city_val = _loc.title()
+        _prov_val = _CA_PROV_MAP.get(_loc2) or (_loc2.upper() if _loc2 else None)
+        _addr_params = {'mode': 'list', 'city': _city_val, 'pageSize': 50, 'pageNumber': 1}
+        if _prov_val:
+            _addr_params['province'] = _prov_val
+        return _routed(_addr_params)
+
     # ── NL: "pipeline summary", "lead pipeline" ───────────────────────────────
     if re.search(r'\bpipeline\b', msg) or re.search(r'\blead\s+summary\b', msg):
         return _routed({'mode': 'pipeline'})
@@ -297,6 +375,21 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
         if UUID_RE.search(name):
             return _routed({'mode': 'get', 'leadId': _extract_uuid(name)})
 
+    # ── NL: "convert lead for [name]" — look up lead, check qualification ────
+    # Routes as a list search with convertRequested=True so the formatter can
+    # warn if the lead is not yet qualified, instead of blindly attempting convert.
+    _convert_nl_m = re.match(
+        r'^convert(?:\s+lead)?\s+for\s+(.+)$',
+        raw, re.IGNORECASE,
+    )
+    if _convert_nl_m:
+        name = _convert_nl_m.group(1).strip()
+        if UUID_RE.search(name):
+            return _routed({'mode': 'convert', 'leadId': _extract_uuid(name)})
+        if name:
+            return _routed({'mode': 'list', 'search': name, 'pageSize': 5,
+                            'pageNumber': 1, 'convertRequested': True})
+
     # ── Natural-language name search (no other prefix matched) ───────────────
     # Catches: "find Sophia", "search Smith", "show me Chen", "look up Alice"
     # Strips the verb prefix and routes as a list search so the AI never
@@ -305,10 +398,25 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
     # EXCLUDED: any term containing a known command keyword (pipeline, duplicate,
     # summary, report, list, hot, warm, cold, status names, etc.) — those must
     # pass through to the AI so it can pick the correct mode.
+    # ── NL: "show/list leads assigned to <name>" — owner filter ─────────────
+    _assigned_m = re.search(
+        r'\bassigned\s+to\s+([A-Za-z][A-Za-z\s\-\.]{1,40}?)(?:\s*$|[.,?!])',
+        raw, re.IGNORECASE,
+    )
+    if _assigned_m:
+        owner_name = _assigned_m.group(1).strip()
+        if len(owner_name) > 1:
+            logger.info(f'→ OWNER FILTER: ownerSearch={owner_name!r}')
+            return _routed({'mode': 'list', 'ownerSearch': owner_name,
+                            'pageSize': 50, 'pageNumber': 1})
+
     _COMMAND_KEYWORDS = re.compile(
         r'\b(?:pipeline|duplicat|summary|report|statistic|convert|qualify|archiv|restor'
         r'|hot|warm|cold|new|working|qualified|converted|disqualified'
-        r'|all leads?|lead list|lead pipeline|lead summary)\b',
+        r'|website|referral|google|facebook|linkedin|social|email|campaign'
+        r'|cold\s+call|trade\s+show|advertisement|partner|import'
+        r'|all leads?|lead list|lead pipeline|lead summary'
+        r'|assigned\s+to)\b',
         re.IGNORECASE,
     )
     _SEARCH_VERBS = re.compile(

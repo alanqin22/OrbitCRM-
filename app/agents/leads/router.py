@@ -107,6 +107,10 @@ class LeadChatResponse(BaseModel):
     contactId:      Optional[str]  = None
     opportunityId:  Optional[str]  = None
 
+    # Archive / restore
+    lead_id:        Optional[str]  = None
+    metadata:       Optional[dict] = None
+
 
 # ============================================================================
 # ROUTES
@@ -181,6 +185,8 @@ async def _handle_lead_chat(req: LeadChatRequest) -> LeadChatResponse:
             accountId=fmt_result.get("accountId"),
             contactId=fmt_result.get("contactId"),
             opportunityId=fmt_result.get("opportunityId"),
+            lead_id=fmt_result.get("lead_id"),
+            metadata=fmt_result.get("metadata"),
         )
 
     except Exception as e:

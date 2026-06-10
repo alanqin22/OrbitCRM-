@@ -42,12 +42,14 @@ ALLOWED_PARAMS = {
     # list filters
     'page_size', 'page_number', 'search', 'date_from', 'date_to',
     'min_probability', 'max_probability',
+    'min_amount', 'max_amount', 'sort_by',
 }
 
 # Routing-only keys — stripped before the SP call
 ROUTING_ONLY_PARAMS = {
     'bypassAgent', 'sessionId', 'currentMessage',
     'chatInput', 'chatHistory', 'originalBody',
+    'top_n',
 }
 
 REQUIRED_BY_MODE: Dict[str, list] = {
@@ -64,6 +66,7 @@ REQUIRED_BY_MODE: Dict[str, list] = {
     'remove_product':     ['opp_product_id'],
     'pipeline':           [],
     'forecast':           [],
+    'win_rate':           [],
     'search_accounts':    [],
     'search_products':    [],
     'search_opportunities': [],
@@ -76,9 +79,11 @@ UUID_FIELDS = {
 }
 DATE_FIELDS    = {'close_date', 'date_from', 'date_to'}
 INTEGER_FIELDS = {'probability', 'page_size', 'page_number', 'min_probability', 'max_probability'}
-NUMERIC_FIELDS = {'amount', 'quantity', 'selling_price', 'discount'}
+NUMERIC_FIELDS = {'amount', 'quantity', 'selling_price', 'discount', 'min_amount', 'max_amount'}
 JSONB_FIELDS   = {'payload'}
-TEXT_FIELDS    = {'mode', 'name', 'stage', 'description', 'lead_source', 'status', 'search'}
+TEXT_FIELDS    = {'mode', 'name', 'stage', 'description', 'lead_source', 'status', 'search', 'sort_by'}
+
+VALID_SORT_BY  = {'amount_desc', 'amount_asc', 'close_date_asc', 'close_date_desc', 'probability_desc'}
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +200,10 @@ def _validate(params: dict) -> list:
                 errors.append('amount must be non-negative')
         except (TypeError, ValueError):
             errors.append('amount must be a number')
+
+    if 'sort_by' in params and params['sort_by'] is not None:
+        if str(params['sort_by']).lower() not in VALID_SORT_BY:
+            errors.append(f"sort_by must be one of: {', '.join(sorted(VALID_SORT_BY))}")
 
     if 'discount' in params and params['discount'] is not None:
         try:

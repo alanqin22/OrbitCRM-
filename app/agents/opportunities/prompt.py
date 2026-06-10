@@ -106,15 +106,22 @@ When building JSON, use these exact parameter names:
 - updatedBy → updated_by
 - minProbability → min_probability
 - maxProbability → max_probability
+- minAmount → min_amount
+- maxAmount → max_amount
+- sortBy → sort_by
 
 ## AVAILABLE MODES
 
 ### list - Browse opportunities
 Required: none
-Optional: status, stage, account_id, owner_id, search, page_size, page_number, date_from, date_to, min_probability, max_probability
+Optional: status, stage, account_id, owner_id, search, page_size, page_number, date_from, date_to, min_probability, max_probability, min_amount, max_amount, sort_by
+sort_by values: amount_desc, amount_asc, close_date_asc, close_date_desc, probability_desc
 Example: {"mode":"list"}
 Example: {"mode":"list","status":"open","page_size":50}
 Example: {"mode":"list","stage":"proposal"}
+Example: {"mode":"list","min_amount":50000}
+Example: {"mode":"list","min_amount":100000,"max_amount":500000}
+Example: {"mode":"list","page_size":10,"sort_by":"amount_desc"}
 
 ### get - Get opportunity details
 Required: opportunity_id
@@ -171,6 +178,13 @@ Example: {"mode":"forecast","date_from":"2026-01-01","date_to":"2026-06-30"}
 "Show open opportunities"                         → {"mode":"list","status":"open"}
 "Show opportunities in proposal stage"            → {"mode":"list","stage":"proposal"}
 "Search for enterprise"                           → {"mode":"list","search":"enterprise"}
+"Show opportunities over $50000"                  → {"mode":"list","min_amount":50000}
+"Show opportunities over $100000"                 → {"mode":"list","min_amount":100000}
+"Show opportunities between $50k and $200k"       → {"mode":"list","min_amount":50000,"max_amount":200000}
+"Show opportunities under $10000"                 → {"mode":"list","max_amount":10000}
+"Show top 10 opportunities by value"              → {"mode":"list","page_size":10,"sort_by":"amount_desc"}
+"Show the highest value opportunities"            → {"mode":"list","sort_by":"amount_desc"}
+"Show the smallest deals"                         → {"mode":"list","sort_by":"amount_asc"}
 "Show sales pipeline"                             → {"mode":"pipeline"}
 "Pipeline summary"                                → {"mode":"pipeline"}
 "Show revenue forecast"                           → {"mode":"forecast"}

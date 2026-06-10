@@ -148,6 +148,40 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 "metadata": {"status": "success", "code": 0, "mode": parsed_json.get("mode")}
             }}]}
 
+        # ── Owner name → UUID resolution (ownerSearch → ownerId) ─────────────
+        # Pre-router sets ownerSearch when user says "assigned to <name>".
+        # Resolve to owner_id UUID before SQL builder validation.
+        _owner_search = parsed_json.pop('ownerSearch', None)
+        if _owner_search:
+            logger.info(f"db_node: resolving ownerSearch={_owner_search!r}")
+            _owner_rows = execute_sp(
+                "SELECT owner_id::text, first_name, last_name FROM owners "
+                "WHERE is_active = TRUE "
+                "  AND (LOWER(first_name) = %(name)s "
+                "       OR LOWER(first_name || ' ' || last_name) = %(full)s "
+                "       OR LOWER(first_name) LIKE %(partial)s) "
+                "ORDER BY first_name, last_name LIMIT 5",
+                params={
+                    'name':    _owner_search.lower(),
+                    'full':    _owner_search.lower(),
+                    'partial': f'{_owner_search.lower()}%',
+                },
+            )
+            if _owner_rows:
+                _exact = [r for r in _owner_rows
+                          if r['first_name'].lower() == _owner_search.lower()]
+                _resolved = (_exact or _owner_rows)[0]
+                parsed_json['ownerId'] = _resolved['owner_id']
+                logger.info(f"db_node: owner resolved → {_resolved['first_name']} {_resolved['last_name']} ({_resolved['owner_id']})")
+            else:
+                logger.warning(f"db_node: ownerSearch {_owner_search!r} — no owner found")
+                return {**state, "parsed_json": parsed_json, "db_rows": [{"result": {
+                    "metadata": {"status": "success", "code": 0,
+                                 "total_records": 0, "total_pages": 1, "page": 1},
+                    "leads": [],
+                    "message": f"No owner named '{_owner_search}' found.",
+                }}]}
+
         query, _ = build_leads_query(parsed_json)
         logger.info(f"Built sp_leads query for mode: {parsed_json.get('mode')}")
 

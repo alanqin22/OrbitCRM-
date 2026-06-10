@@ -137,6 +137,7 @@ def _mode_name(mode: str) -> str:
         'search_opportunities': 'Opportunity Search',
         'pipeline':             'Sales Pipeline Summary',
         'forecast':             'Revenue Forecast',
+        'win_rate':             'Win Rate Statistics',
         'delete':               'Opportunity Deleted',
     }.get(mode, 'Unknown')
 
@@ -497,6 +498,14 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             'top_accounts':         response.get('top_accounts') or [],
         }
 
+    elif mode == 'win_rate':
+        report_mode = 'win_rate'
+        report_data['win_rate'] = {
+            'summary':        response.get('summary') or {},
+            'by_owner':       response.get('by_owner') or [],
+            'by_lead_source': response.get('by_lead_source') or [],
+        }
+
     elif mode == 'search_accounts':
         report_mode = 'search_accounts'
         report_data['searchResults'] = response.get('accounts') or []
@@ -521,6 +530,16 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
     title = _mode_name(mode)
     if report_mode == 'contact_created': title = 'Contact Created'
     if report_mode == 'contact_updated': title = 'Contact Updated'
+    if report_mode == 'opportunity_list' and params.get('top_n') and opportunities:
+        n = len(opportunities)
+        sort_label = {
+            'amount_desc':      'by Value',
+            'amount_asc':       'by Value (Lowest First)',
+            'probability_desc': 'by Probability',
+            'close_date_asc':   'by Close Date',
+            'close_date_desc':  'by Close Date',
+        }.get(params.get('sort_by'), '')
+        title = f'Top {n} Opportunities {sort_label}'.strip()
 
     out.append(f'### {title}')
     out.append(f'**Time:** {_fmt_dt(datetime.utcnow().isoformat())}')
@@ -529,11 +548,18 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
     # ── Opportunity List ──────────────────────────────────────────────────────
     if report_mode == 'opportunity_list':
         pg = report_data['pagination']
-        out.append(
-            f'**Page:** {pg["page"]} of {pg["totalPages"]} | '
-            f'**Total:** {pg["totalRecords"]} opportunities | '
-            f'**Pipeline Value:** {_fmt_currency(pg["totalAmount"])}'
-        )
+        if params.get('top_n') and opportunities:
+            top_total = sum(_safe_num(opp.get('amount')) for opp in opportunities)
+            out.append(
+                f'**Total:** {len(opportunities)} opportunities | '
+                f'**Pipeline Value:** {_fmt_currency(top_total)}'
+            )
+        else:
+            out.append(
+                f'**Page:** {pg["page"]} of {pg["totalPages"]} | '
+                f'**Total:** {pg["totalRecords"]} opportunities | '
+                f'**Pipeline Value:** {_fmt_currency(pg["totalAmount"])}'
+            )
         out.append('')
 
         if not opportunities:
@@ -542,7 +568,8 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         else:
             out.append(_md_header([
                 'Opportunity', 'Stage', 'Probability', 'Amount', 'Weighted',
-                'Account', 'Contact', 'Lead Source', 'Owner', 'Close Date', 'Opportunity ID',
+                'Account', 'Contact', 'Lead Source', 'Owner', 'Close Date',
+                'Created At', 'Updated At', 'Opportunity ID',
             ]))
             for opp in opportunities:
                 stage = opp.get('stage') or ''
@@ -560,6 +587,8 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                     opp.get('lead_source')  or '—',
                     opp.get('owner_name')   or '—',
                     _fmt_date(opp.get('close_date')),
+                    _fmt_dt(opp.get('created_at')),
+                    _fmt_dt(opp.get('updated_at')),
                     opp.get('opportunity_id') or 'N/A',
                 ]))
             out.append('')
@@ -775,6 +804,44 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                 out.append(_md_row([f'{_health_icon(h)} {h}', _fmt_currency(m)]))
             out.append(_md_row(['**Total**', _fmt_currency(total_health)]))
             out.append('')
+
+    # ── Win Rate ──────────────────────────────────────────────────────────────
+    elif report_mode == 'win_rate' and report_data.get('win_rate'):
+        wr = report_data['win_rate']
+        s  = wr.get('summary') or {}
+
+        out.append('#### Key Metrics')
+        out.append('')
+        out.append(_md_header(['Metric', 'Value']))
+        out.append(_md_row(['Won',                 int(_safe_num(s.get('won_count')))]))
+        out.append(_md_row(['Lost',                int(_safe_num(s.get('lost_count')))]))
+        out.append(_md_row(['Total Closed',        int(_safe_num(s.get('total_count')))]))
+        out.append(_md_row(['Win Rate (by Count)', f"{_safe_num(s.get('win_rate_count_pct')):.1f}%"]))
+        out.append(_md_row(['Won Amount',          _fmt_currency(s.get('won_amount', 0))]))
+        out.append(_md_row(['Lost Amount',         _fmt_currency(s.get('lost_amount', 0))]))
+        out.append(_md_row(['Win Rate (by Value)', f"{_safe_num(s.get('win_rate_amount_pct')):.1f}%"]))
+        out.append('')
+
+        def _win_rate_table(title: str, data: list, name_col: str, name_label: str):
+            if not data:
+                return
+            out.append(f'#### {title}')
+            out.append('')
+            out.append(_md_header([name_label, 'Won', 'Lost', 'Win Rate %', 'Won Amount', 'Lost Amount', 'Win Rate % (Value)']))
+            for r in data:
+                out.append(_md_row([
+                    r.get(name_col) or 'N/A',
+                    int(_safe_num(r.get('won_count'))),
+                    int(_safe_num(r.get('lost_count'))),
+                    f"{_safe_num(r.get('win_rate_count_pct')):.1f}%",
+                    _fmt_currency(r.get('won_amount', 0)),
+                    _fmt_currency(r.get('lost_amount', 0)),
+                    f"{_safe_num(r.get('win_rate_amount_pct')):.1f}%",
+                ]))
+            out.append('')
+
+        _win_rate_table('Win Rate by Owner',       wr.get('by_owner', []),       'owner_name',  'Owner')
+        _win_rate_table('Win Rate by Lead Source', wr.get('by_lead_source', []), 'lead_source', 'Lead Source')
 
     # ── Forecast ──────────────────────────────────────────────────────────────
     elif report_mode == 'forecast' and report_data.get('forecast'):

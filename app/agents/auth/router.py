@@ -194,6 +194,7 @@ class SignUpRequest(BaseModel):
     last_name:      Optional[str] = None
     company_name:   Optional[str] = None
     phone:          Optional[str] = None
+    role:           Optional[str] = None
     address_line1:  Optional[str] = None
     address_line2:  Optional[str] = None
     city:           Optional[str] = None
@@ -365,12 +366,12 @@ async def signup(req: SignUpRequest):
         row = _db_fetchone(
             "SELECT public.sp_signup_with_lead("
             "  %s::text, %s::text,"
-            "  %s::text, %s::text, %s::text, %s::text,"
+            "  %s::text, %s::text, %s::text, %s::text, %s::text,"
             "  %s::text, %s::text, %s::text, %s::text, %s::text, %s::text"
             ") AS payload",
             (
                 identifier, req.password,
-                req.first_name, req.last_name, req.company_name, req.phone,
+                req.first_name, req.last_name, req.company_name, req.phone, req.role,
                 req.address_line1, req.address_line2,
                 req.city, req.province, req.postal_code, req.country,
             ),

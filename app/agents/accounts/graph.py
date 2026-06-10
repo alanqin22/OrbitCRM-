@@ -171,8 +171,7 @@ WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.account_id = a.account_id)
   AND (a.is_deleted IS NULL OR a.is_deleted = false)
 """
             db_rows = execute_sp(_no_orders_sql)
-            # Rewrite mode to 'list' so the formatter uses its list renderer
-            updated_params = {**parsed_json, "mode": "list"}
+            updated_params = {**parsed_json, "mode": "list", "_listMode": "list_no_orders"}
             return {**state, "parsed_json": updated_params, "db_rows": db_rows}
 
         # ── list_top_orders — accounts ranked by order count, direct SQL
@@ -221,7 +220,7 @@ FROM (
 ) sub
 """
             db_rows = execute_sp(_top_orders_sql)
-            updated_params = {**parsed_json, "mode": "list"}
+            updated_params = {**parsed_json, "mode": "list", "_listMode": "list_top_orders"}
             return {**state, "parsed_json": updated_params, "db_rows": db_rows}
 
         # ── list_top_revenue — accounts ranked by total revenue, direct SQL
@@ -270,15 +269,251 @@ FROM (
 ) sub
 """
             db_rows = execute_sp(_top_revenue_sql)
-            updated_params = {**parsed_json, "mode": "list"}
+            updated_params = {**parsed_json, "mode": "list", "_listMode": "list_top_revenue"}
             return {**state, "parsed_json": updated_params, "db_rows": db_rows}
+
+        # ── list_no_phone — accounts with no phone number, direct SQL
+        if parsed_json.get("mode") == "list_no_phone":
+            logger.info("db_node: list_no_phone — running direct SQL")
+            _no_phone_sql = """
+SELECT json_build_object(
+    'accounts', COALESCE(json_agg(
+        json_build_object(
+            'account_id',        a.account_id::text,
+            'account_name',      a.account_name,
+            'type',              a.type,
+            'industry',          a.industry,
+            'status',            a.status,
+            'email',             a.email,
+            'phone',             a.phone,
+            'city',              adr.city,
+            'province',          adr.province,
+            'country',           adr.country,
+            'order_count',       (SELECT COUNT(*) FROM orders o WHERE o.account_id = a.account_id),
+            'contact_count',     (SELECT COUNT(*) FROM contacts c WHERE c.account_id = a.account_id),
+            'opportunity_count', (SELECT COUNT(*) FROM opportunities op WHERE op.account_id = a.account_id),
+            'total_revenue',     COALESCE((SELECT SUM(o2.total_amount) FROM orders o2 WHERE o2.account_id = a.account_id), 0),
+            'created_at',        a.created_at,
+            'updated_at',        a.updated_at
+        ) ORDER BY a.account_name
+    ), '[]'::json),
+    'metadata', json_build_object(
+        'page', 1, 'total_pages', 1,
+        'total_records', (
+            SELECT COUNT(*) FROM accounts a2
+            WHERE (a2.phone IS NULL OR TRIM(a2.phone) = '')
+              AND (a2.is_deleted IS NULL OR a2.is_deleted = false)
+        )
+    )
+) AS result
+FROM accounts a
+LEFT JOIN LATERAL (
+    SELECT city, province, country FROM addresses
+    WHERE parent_id = a.account_id AND parent_type = 'account' AND label = 'billing'
+    ORDER BY is_default DESC NULLS LAST, created_at LIMIT 1
+) adr ON true
+WHERE (a.phone IS NULL OR TRIM(a.phone) = '')
+  AND (a.is_deleted IS NULL OR a.is_deleted = false)
+"""
+            db_rows = execute_sp(_no_phone_sql)
+            updated_params = {**parsed_json, "mode": "list", "_listMode": "list_no_phone"}
+            return {**state, "parsed_json": updated_params, "db_rows": db_rows}
+
+        # ── list_overdue_invoices — accounts with invoices past due_date  ────────
+        if parsed_json.get("mode") == "list_overdue_invoices":
+            logger.info("db_node: list_overdue_invoices — running direct SQL")
+            _overdue_sql = """
+SELECT json_build_object(
+    'accounts', COALESCE(json_agg(
+        json_build_object(
+            'account_id',          a.account_id::text,
+            'account_name',        a.account_name,
+            'type',                a.type,
+            'industry',            a.industry,
+            'status',              a.status,
+            'email',               a.email,
+            'phone',               a.phone,
+            'city',                adr.city,
+            'province',            adr.province,
+            'country',             adr.country,
+            'order_count',         (SELECT COUNT(*) FROM orders o WHERE o.account_id = a.account_id),
+            'contact_count',       (SELECT COUNT(*) FROM contacts c WHERE c.account_id = a.account_id),
+            'opportunity_count',   (SELECT COUNT(*) FROM opportunities op WHERE op.account_id = a.account_id),
+            'total_revenue',       COALESCE((SELECT SUM(o2.total_amount) FROM orders o2 WHERE o2.account_id = a.account_id), 0),
+            'overdue_invoices',    inv.overdue_count,
+            'overdue_balance',     inv.overdue_balance,
+            'created_at',          a.created_at,
+            'updated_at',          a.updated_at
+        ) ORDER BY inv.overdue_balance DESC
+    ), '[]'::json),
+    'metadata', json_build_object(
+        'page', 1, 'total_pages', 1,
+        'total_records', (
+            SELECT COUNT(DISTINCT account_id) FROM invoices
+            WHERE due_date < NOW() AND status != 'paid'
+        )
+    )
+) AS result
+FROM accounts a
+JOIN LATERAL (
+    SELECT COUNT(*)::int                    AS overdue_count,
+           COALESCE(SUM(balance_due), 0)   AS overdue_balance
+    FROM   invoices i
+    WHERE  i.account_id = a.account_id
+      AND  i.due_date  < NOW()
+      AND  i.status   != 'paid'
+) inv ON inv.overdue_count > 0
+LEFT JOIN LATERAL (
+    SELECT city, province, country FROM addresses
+    WHERE parent_id = a.account_id AND parent_type = 'account' AND label = 'billing'
+    ORDER BY is_default DESC NULLS LAST, created_at LIMIT 1
+) adr ON true
+WHERE (a.is_deleted IS NULL OR a.is_deleted = false)
+"""
+            db_rows = execute_sp(_overdue_sql)
+            updated_params = {**parsed_json, "mode": "list", "_listMode": "list_overdue_invoices"}
+            return {**state, "parsed_json": updated_params, "db_rows": db_rows}
+
+        # ── list_min_orders — accounts with at least N orders, paginated  ──────
+        if parsed_json.get("mode") == "list_min_orders":
+            logger.info("db_node: list_min_orders — running direct SQL")
+            try:
+                _min = max(0, int(parsed_json.get('minOrders') or 1))
+            except (ValueError, TypeError):
+                _min = 1
+            _page  = max(1, int(parsed_json.get('pageNumber') or 1))
+            _limit = min(max(1, int(parsed_json.get('pageSize') or 20)), 200)
+            _offset = (_page - 1) * _limit
+            logger.info(f"list_min_orders: minOrders={parsed_json.get('minOrders')!r} → _min={_min}, page={_page}, limit={_limit}, offset={_offset}")
+            _min_orders_sql = f"""
+SELECT json_build_object(
+    'accounts', COALESCE(json_agg(
+        json_build_object(
+            'account_id',        sub.account_id::text,
+            'account_name',      sub.account_name,
+            'type',              sub.type,
+            'industry',          sub.industry,
+            'status',            sub.status,
+            'email',             sub.email,
+            'phone',             sub.phone,
+            'city',              adr.city,
+            'province',          adr.province,
+            'country',           adr.country,
+            'order_count',       sub.order_count,
+            'contact_count',     sub.contact_count,
+            'opportunity_count', sub.opportunity_count,
+            'total_revenue',     sub.total_revenue,
+            'created_at',        sub.created_at,
+            'updated_at',        sub.updated_at
+        ) ORDER BY sub.order_count DESC
+    ), '[]'::json),
+    'metadata', json_build_object(
+        'page', {_page},
+        'total_pages', GREATEST(1, CEIL(
+            (SELECT COUNT(*)::float FROM (
+                SELECT a2.account_id
+                FROM accounts a2
+                LEFT JOIN orders o2 ON o2.account_id = a2.account_id AND o2.deleted_at IS NULL
+                WHERE (a2.is_deleted IS NULL OR a2.is_deleted = false)
+                GROUP BY a2.account_id
+                HAVING COUNT(o2.order_id) > {_min}
+            ) _tc) / {_limit}
+        )::int),
+        'total_records', (
+            SELECT COUNT(*) FROM (
+                SELECT a2.account_id
+                FROM accounts a2
+                LEFT JOIN orders o2 ON o2.account_id = a2.account_id AND o2.deleted_at IS NULL
+                WHERE (a2.is_deleted IS NULL OR a2.is_deleted = false)
+                GROUP BY a2.account_id
+                HAVING COUNT(o2.order_id) > {_min}
+            ) t
+        )
+    )
+) AS result
+FROM (
+    SELECT
+        a.account_id,
+        a.account_name,
+        a.type,
+        a.industry,
+        a.status,
+        a.email,
+        a.phone,
+        COUNT(o.order_id)::int AS order_count,
+        (SELECT COUNT(*) FROM contacts c  WHERE c.account_id  = a.account_id)      AS contact_count,
+        (SELECT COUNT(*) FROM opportunities op WHERE op.account_id = a.account_id) AS opportunity_count,
+        COALESCE(SUM(o.total_amount), 0) AS total_revenue,
+        a.created_at,
+        a.updated_at
+    FROM accounts a
+    LEFT JOIN orders o ON o.account_id = a.account_id AND o.deleted_at IS NULL
+    WHERE (a.is_deleted IS NULL OR a.is_deleted = false)
+    GROUP BY a.account_id, a.account_name, a.type, a.industry, a.status,
+             a.email, a.phone, a.created_at, a.updated_at
+    HAVING COUNT(o.order_id) > {_min}
+    ORDER BY order_count DESC
+    LIMIT {_limit} OFFSET {_offset}
+) sub
+LEFT JOIN LATERAL (
+    SELECT city, province, country FROM addresses
+    WHERE parent_id = sub.account_id AND parent_type = 'account' AND label = 'billing'
+    ORDER BY is_default DESC NULLS LAST, created_at LIMIT 1
+) adr ON true
+"""
+            db_rows = execute_sp(_min_orders_sql)
+            updated_params = {**parsed_json, "mode": "list", "_listMode": "list_min_orders"}
+            return {**state, "parsed_json": updated_params, "db_rows": db_rows}
+
+        # ── Name → accountId resolution ──────────────────────────────────────
+        # For get/timeline/financials/update: if only accountName is present,
+        # resolve to UUID via direct SQL before calling sp_accounts.
+        # Tries exact match first, then word-based ILIKE (e.g. "Apex Solutions"
+        # matches "Apex Digital Solutions") — only accepts unambiguous results.
+        _lookup_modes = {'get', 'timeline', 'financials', 'update'}
+        if (parsed_json.get('mode') in _lookup_modes and
+                parsed_json.get('accountName') and
+                not parsed_json.get('accountId')):
+            _aname = parsed_json['accountName']
+            try:
+                _lookup_rows = execute_sp(
+                    "SELECT account_id::text FROM accounts"
+                    " WHERE LOWER(TRIM(account_name)) = LOWER(TRIM(%(name)s))"
+                    "   AND (is_deleted IS NULL OR is_deleted = false)"
+                    " LIMIT 1",
+                    params={'name': _aname},
+                )
+                if not _lookup_rows:
+                    # Word-based fallback: all significant words must appear in name
+                    _words = [w for w in re.split(r'\s+', _aname.lower()) if len(w) >= 3]
+                    if _words:
+                        _conds = " AND ".join(
+                            f"LOWER(account_name) LIKE %(w{i})s" for i in range(len(_words))
+                        )
+                        _wparams = {f'w{i}': f'%{w}%' for i, w in enumerate(_words)}
+                        _fallback = execute_sp(
+                            f"SELECT account_id::text FROM accounts WHERE ({_conds})"
+                            "   AND (is_deleted IS NULL OR is_deleted = false) LIMIT 2",
+                            params=_wparams,
+                        )
+                        if len(_fallback) == 1:
+                            _lookup_rows = _fallback
+                if _lookup_rows and _lookup_rows[0].get('account_id'):
+                    _aid = str(_lookup_rows[0]['account_id'])
+                    logger.info(f"Name resolved: '{_aname}' → {_aid}")
+                    parsed_json = {**parsed_json, 'accountId': _aid}
+                    # For update: remove accountName so the SP doesn't rename the account
+                    if parsed_json.get('mode') == 'update':
+                        parsed_json = {k: v for k, v in parsed_json.items() if k != 'accountName'}
+            except Exception as _ne:
+                logger.warning(f"Name resolution failed for '{_aname}': {_ne}")
 
         query, _ = build_accounts_query(parsed_json)
         logger.info(f"Built sp_accounts query for mode: {parsed_json.get('mode')}")
 
         db_rows = execute_sp(query)
         logger.info(f"sp_accounts returned {len(db_rows)} rows")
-        return {**state, "db_rows": db_rows}
+        return {**state, "parsed_json": parsed_json, "db_rows": db_rows}
 
     except Exception as e:
         logger.error(f"Accounts database error: {e}", exc_info=True)

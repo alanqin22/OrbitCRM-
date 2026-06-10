@@ -48,6 +48,8 @@ VALID_DIRECT_MODES = {
     'create', 'update', 'get', 'list',
     'timeline', 'financials', 'duplicates', 'summary',
     'archive', 'restore', 'merge', 'list_owner',
+    'list_no_orders', 'list_top_orders', 'list_top_revenue',
+    'list_no_phone', 'list_overdue_invoices', 'list_min_orders',
 }
 
 # Keys injected by the pre-router itself that must NOT be forwarded to sp_accounts
@@ -212,6 +214,30 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
     if re.search(r'\baccounts?\s+(that\s+)?(have\s+)?no\s+orders?\b', msg):
         return routed({'mode': 'list_no_orders'})
 
+    # ── "accounts with no phone / missing phone number" → list_no_phone  ─────
+    if re.search(r'\bno\s+phone\b|\bwithout\s+(?:a\s+)?phone\b', msg):
+        return routed({'mode': 'list_no_phone'})
+    if re.search(r'\bphone\s+(?:number\s+)?(?:is\s+)?(?:missing|null|empty|blank|not\s+set)\b', msg):
+        return routed({'mode': 'list_no_phone'})
+    if re.search(r'\bmissing\s+(?:a\s+)?phone\b|\bphone\s+(?:number\s+)?not\s+(?:set|filled|provided)\b', msg):
+        return routed({'mode': 'list_no_phone'})
+
+    # ── "accounts with overdue invoices" → list_overdue_invoices  ───────────────
+    if re.search(r'\boverdue\b', msg):
+        return routed({'mode': 'list_overdue_invoices'})
+    if re.search(r'\binvoices?\s+(?:not\s+)?(?:unpaid|past\s+due|outstanding)\b', msg):
+        return routed({'mode': 'list_overdue_invoices'})
+
+    # ── "more than N orders / at least N orders" → list_min_orders  ──────────
+    _m = re.search(r'\bmore\s+than\s+(\d+)\s+orders?\b', msg)
+    if not _m:
+        _m = re.search(r'\bat\s+least\s+(\d+)\s+orders?\b', msg)
+    if not _m:
+        _m = re.search(r'\b(\d+)\s+or\s+more\s+orders?\b', msg)
+    if _m:
+        return routed({'mode': 'list_min_orders', 'minOrders': int(_m.group(1)),
+                       'pageSize': 20, 'pageNumber': 1})
+
     # ── "top accounts by revenue / top-performing" → list_top_revenue  ────────
     if re.search(r'\b(top|most|highest|best|biggest|largest|performing)\b.*\brevenue\b', msg):
         return routed({'mode': 'list_top_revenue'})
@@ -226,11 +252,11 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
     if re.search(r'\borders?\b.*\b(top|most|highest|ranked|sorted)\b', msg):
         return routed({'mode': 'list_top_orders'})
 
-    # ── "list inactive/active/archived accounts" → status filter  ───────────
-    _STATUS_MAP = {'inactive': 'inactive', 'active': 'active', 'archived': 'archived'}
-    _m = re.match(r'^(?:list|show|display)\s+(inactive|active|archived)\s+accounts?\s*$', msg)
+    # ── "list [all] inactive/active/archived accounts [sorted/by/...]" ─────────
+    # Broader than the old exact-end match: allows "all", trailing sort hints, etc.
+    _m = re.search(r'\b(?:list|show|display)\b.{0,8}\b(inactive|active|archived)\s+accounts?\b', msg)
     if _m:
-        return routed({'mode': 'list', 'status': _m.group(1), 'pageSize': 20, 'pageNumber': 1})
+        return routed({'mode': 'list', 'status': _m.group(1), 'pageSize': 50, 'pageNumber': 1})
 
     # ── "list accounts with no orders" → passthru (AI handles)  ─────────────
     # (Kept as passthru — SP list doesn't have a zero-orders filter parameter)
@@ -272,6 +298,49 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
     # fields. Each detector skips itself when a UUID is present.
     _has_uuid = bool(_extract_uuids(raw))
 
+    # ── "timeline / activity timeline for <name>" → timeline  ────────────────
+    _m = re.search(r'\btimeline\b.{0,30}\bfor\b\s+(.+?)(?:\s*$|[.,?!])', msg)
+    if not _m:
+        _m = re.search(r'\bactivit(?:y|ies)\b.{0,30}\bfor\b\s+(.+?)(?:\s*$|[.,?!])', msg)
+    if _m and not _has_uuid:
+        _name = raw[_m.start(1):_m.end(1)].strip()
+        if len(_name) > 2:
+            return routed({'mode': 'timeline', 'accountName': _name})
+
+    # ── "orders for/does <name> have" → financials  ───────────────────────────
+    _m = re.search(r'\borders?\s+does\s+(.+?)\s+have\b', msg)
+    if not _m:
+        _m = re.search(r'\borders?\s+(?:for|of)\s+(.+?)(?:\s*$|[.,?!])', msg)
+    if _m and not _has_uuid:
+        _name = raw[_m.start(1):_m.end(1)].strip()
+        if len(_name) > 2:
+            return routed({'mode': 'financials', 'accountName': _name})
+
+    # ── "balance / financials for <name>" → financials  ───────────────────────
+    _m = re.search(r'\bbalance\s+(?:for|of)\s+(.+?)(?:\s*$|[.,?!])', msg)
+    if not _m:
+        _m = re.search(r'\bfinancials?\b.{0,15}\b(?:for|of)\b\s+(.+?)(?:\s*$|[.,?!])', msg)
+    if _m and not _has_uuid:
+        _name = raw[_m.start(1):_m.end(1)].strip()
+        if len(_name) > 2:
+            return routed({'mode': 'financials', 'accountName': _name})
+
+    # ── "show/get details for <name>" → get (360 view)  ───────────────────────
+    _m = re.search(r'\bdetails?\b\s+for\s+(.+?)(?:\s*$|[.,?!])', msg)
+    if _m and not _has_uuid:
+        _name = raw[_m.start(1):_m.end(1)].strip()
+        if len(_name) > 2:
+            return routed({'mode': 'get', 'accountName': _name})
+
+    # ── "show/list contacts for <name>" → get (360 view includes contacts)  ───
+    _m = re.search(r'\bcontacts?\s+(?:for|of)\s+(.+?)(?:\s*$|[.,?!])', msg)
+    if not _m:
+        _m = re.search(r'\bfor\b\s+(.+?)\s+\bcontacts?\b(?:\s|$)', msg)
+    if _m and not _has_uuid:
+        _name = raw[_m.start(1):_m.end(1)].strip()
+        if len(_name) > 2:
+            return routed({'mode': 'get', 'accountName': _name})
+
     # Create account (no UUID).
     if not _has_uuid and (
         re.search(r'\b(create|new|add|make)\b.*\baccount', msg)
@@ -282,17 +351,43 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
 
     # Update account (no UUID) — the Update Account form has its own
     # built-in search bar so the user can pick which account to edit.
-    if not _has_uuid and re.search(r'\bupdate\b.*\baccount', msg):
+    if not _has_uuid and re.search(r'\b(?:update|change|set|modify)\b.*\baccount', msg):
         return routed({'mode': 'show_account_update_form'})
 
-    # ── "update <name>" without "account" keyword — open Update form
-    # pre-searched for that name (hint_name forwarded to frontend).
+    # ── "update/change <field> for <name> to <value>" → direct field update  ──
+    # Handles: "update phone for Brooks Education to 416-555-0100"
+    #          "change industry for Apex Solutions to Technology"
+    # Must come BEFORE the broad ^(update|change)\s+(.+)$ catch-all below.
+    _FIELD_MAP = {
+        'phone': 'phone', 'phone number': 'phone',
+        'email': 'email', 'email address': 'email',
+        'website': 'website',
+        'industry': 'industry',
+        'status': 'status',
+        'type': 'type',
+    }
+    _fupd_m = re.search(
+        r'\b(?:update|change|set|modify)\b\s+(?:the\s+)?'
+        r'(phone(?:\s+number)?|email(?:\s+address)?|website|industry|status|type)'
+        r'\s+(?:for|of)\s+(.+?)\s+to\s+(.+?)(?:\s*$|[.,?!])',
+        msg,
+    )
+    if _fupd_m and not _has_uuid:
+        _sp_key = _FIELD_MAP.get(_fupd_m.group(1))
+        if _sp_key:
+            _acct_name = raw[_fupd_m.start(2):_fupd_m.end(2)].strip()
+            _new_val   = raw[_fupd_m.start(3):_fupd_m.end(3)].strip()
+            if len(_acct_name) > 2 and _new_val:
+                return routed({'mode': 'update', 'accountName': _acct_name, _sp_key: _new_val})
+
+    # ── "update/change <name>" without "account" keyword — open Update form ───
     if not _has_uuid:
-        _upd_m = re.match(r'^update\s+(.+)$', msg)
+        _upd_m = re.match(r'^(?:update|change)\s+(.+)$', msg)
         if _upd_m:
             hint = _upd_m.group(1).strip()
             if hint and 'account' not in hint.lower():
-                return routed({'mode': 'show_account_update_form', 'hint_name': raw[len('update '):].strip()})
+                kw_len = len(_upd_m.group(0)) - len(_upd_m.group(1))
+                return routed({'mode': 'show_account_update_form', 'hint_name': raw[kw_len:].strip()})
 
     # ── No match — AI Agent handles  ─────────────────────────────────────────
     return passthru()

@@ -107,15 +107,17 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
     # -- List Contacts ---------------------------------------------------------
     if msg.startswith('list contacts:'):
         return routed(_compact({
-            'mode':       'list',
-            'pageNumber': _val(chat_input.get('pageNumber')),
-            'pageSize':   _val(chat_input.get('pageSize')),
-            'search':     _val(chat_input.get('search')),
-            'status':     _val(chat_input.get('status')),
-            'accountId':  _val(chat_input.get('accountId')),
-            'ownerId':    _val(chat_input.get('ownerId')),
-            'dateFrom':   _val(chat_input.get('dateFrom')),
-            'dateTo':     _val(chat_input.get('dateTo')),
+            'mode':           'list',
+            'pageNumber':     _val(chat_input.get('pageNumber')),
+            'pageSize':       _val(chat_input.get('pageSize')),
+            'search':         _val(chat_input.get('search')),
+            'status':         _val(chat_input.get('status')),
+            'accountId':      _val(chat_input.get('accountId')),
+            'ownerId':        _val(chat_input.get('ownerId')),
+            'dateFrom':       _val(chat_input.get('dateFrom')),
+            'dateTo':         _val(chat_input.get('dateTo')),
+            'deletedOnly':    True if chat_input.get('deletedOnly') is True else None,
+            'includeDeleted': True if chat_input.get('includeDeleted') is True else None,
         }))
 
     # -- Search Contacts (legacy typeahead alias) ------------------------------
@@ -140,11 +142,12 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
 
     # -- Get Contact Detail ----------------------------------------------------
     if msg.startswith('get contact:') or msg.startswith('get details:'):
-        contact_id = _val(chat_input.get('contactId')) or _extract_uuid(raw)
-        email      = _val(chat_input.get('email'))
+        contact_id      = _val(chat_input.get('contactId')) or _extract_uuid(raw)
+        email           = _val(chat_input.get('email'))
+        incl_deleted    = True if chat_input.get('includeDeleted') is True else None
         if contact_id or email:
             logger.info(f'[get_details] contactId={contact_id} email={email}')
-            return routed(_compact({'mode': 'get_details', 'contactId': contact_id, 'email': email}))
+            return routed(_compact({'mode': 'get_details', 'contactId': contact_id, 'email': email, 'includeDeleted': incl_deleted}))
         return passthru()
 
     # -- Create Contact --------------------------------------------------------
@@ -199,6 +202,20 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         email      = _val(chat_input.get('email'))
         if contact_id or email:
             return routed(_compact({'mode': 'activities', 'contactId': contact_id, 'email': email}))
+        return passthru()
+
+    # -- Archive Contact -------------------------------------------------------
+    if msg.startswith('archive contact:'):
+        contact_id = _val(chat_input.get('contactId')) or _extract_uuid(raw)
+        if contact_id:
+            return routed(_compact({'mode': 'archive', 'contactId': contact_id}))
+        return passthru()
+
+    # -- Restore Contact -------------------------------------------------------
+    if msg.startswith('restore contact:'):
+        contact_id = _val(chat_input.get('contactId')) or _extract_uuid(raw)
+        if contact_id:
+            return routed(_compact({'mode': 'restore', 'contactId': contact_id}))
         return passthru()
 
     # -- Find Duplicates -------------------------------------------------------
@@ -274,6 +291,18 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         logger.info('[NL->list] archived contacts')
         return routed({'mode': 'list', 'deletedOnly': True})
 
+    # "Show duplicate contacts for Chen" — SP can't filter duplicates by name;
+    # route to list search so the user sees matching contacts instead.
+    _dupes_for_m = re.match(
+        r'^(?:show|find|check|display)?\s*(?:duplicate\s+contacts?|duplicates)\s+for\s+(.+)$',
+        raw, re.IGNORECASE,
+    )
+    if _dupes_for_m:
+        term = _dupes_for_m.group(1).strip()
+        if len(term) >= 2:
+            logger.info(f'[NL->search] duplicates-for: searching contacts named {term!r}')
+            return routed(_compact({'mode': 'list', 'search': term}))
+
     # "Show duplicate contacts report" / "Check duplicates"
     if any(p in msg for p in (
         'duplicate contacts', 'duplicates report', 'check duplicates',
@@ -323,10 +352,9 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
             return routed(_compact({'mode': 'list', 'search': term}))
 
     # "Show activity timeline for X" / "Activities for X"
-    # Route full "First Last" names to get_details so the frontend's Activities
-    # button is immediately accessible on the 360° detail card.
+    # Route directly to activities mode so the timeline is shown immediately.
     _activities_m = re.match(
-        r'^(?:show|get|view|display)?\s*(?:activity\s+timeline|activities|recent\s+activities?)\s+'
+        r'^(?:show|get|view|display)?\s*(?:activity\s+timeline|activities|recent\s+activities?|email\s+activity)\s+'
         r'(?:for|of|about)\s+(.+)$',
         raw, re.IGNORECASE
     )
@@ -334,16 +362,16 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         term = _activities_m.group(1).strip()
         parts = term.split()
         if len(parts) >= 2:
-            logger.info(f'[NL->get_details] activities for full name: {term}')
-            return routed(_compact({'mode': 'get_details', 'firstName': parts[0], 'lastName': ' '.join(parts[1:])}))
+            logger.info(f'[NL->activities] activities for full name: {term}')
+            return routed(_compact({'mode': 'activities', 'firstName': parts[0], 'lastName': ' '.join(parts[1:])}))
         if len(term) >= 2:
             logger.info(f'[NL->search] activities for partial name: {term}')
             return routed(_compact({'mode': 'list', 'search': term}))
 
-    # "Show details for X" / "Get details for X" / "View profile of X"
+    # "Show details for X" / "Get details for X" / "Contact details for X"
     # Full name (2+ words) → get_details exact match; partial → list search.
     _details_m = re.match(
-        r'^(?:show|get|view|display)\s+(?:full\s+)?(?:details?|info|profile|record)\s+'
+        r'^(?:show|get|view|display|contact)\s+(?:full\s+)?(?:details?|info|profile|record)\s+'
         r'(?:for|of|about)\s+(.+)$',
         raw, re.IGNORECASE
     )
@@ -371,6 +399,13 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
     if any(p in msg for p in ('active contacts', 'show active', 'list active contacts')):
         logger.info('[NL->list] active contacts')
         return routed(_compact({'mode': 'list', 'status': 'active'}))
+
+    # "Show contacts with status inactive/active" — explicit status= phrase
+    _status_m = re.search(r'\bwith\s+(?:the\s+)?status\s+(active|inactive)\b', msg)
+    if _status_m:
+        status_val = _status_m.group(1).lower()
+        logger.info(f'[NL->list] with-status filter: {status_val}')
+        return routed(_compact({'mode': 'list', 'status': status_val}))
 
     # "Contacts with no account" / "Contacts without an account"
     if any(p in msg for p in ('no account', 'without account', 'without an account', 'contacts per account')):
@@ -400,6 +435,32 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
             logger.info(f'[NL->list] role prefix filter: {role_val}')
             return routed(_compact({'mode': 'list', 'role': role_val}))
 
+    # "Archive contact Tom Williams" — archive by name: look up first; SP requires UUID
+    _archive_m = re.match(
+        r'^(?:archive|soft.?delete|deactivate)\s+(?:contact\s+)?(.+)$',
+        raw, re.IGNORECASE,
+    )
+    if _archive_m:
+        term = _archive_m.group(1).strip()
+        parts = term.split()
+        if len(parts) >= 2:
+            logger.info(f'[NL->get_details] archive intent for: {term!r}')
+            return routed(_compact({'mode': 'get_details', 'firstName': parts[0], 'lastName': ' '.join(parts[1:])}))
+        if len(term) >= 2:
+            logger.info(f'[NL->search] archive intent partial: {term!r}')
+            return routed(_compact({'mode': 'list', 'search': term}))
+
+    # "Restore archived contact Sarah Brown" — list archived contacts filtered by name
+    _restore_m = re.match(
+        r'^(?:restore|unarchive|reactivate)\s+(?:archived\s+)?(?:contact\s+)?(.+)$',
+        raw, re.IGNORECASE,
+    )
+    if _restore_m:
+        term = _restore_m.group(1).strip()
+        if len(term) >= 2:
+            logger.info(f'[NL->list] restore intent for: {term!r}')
+            return routed(_compact({'mode': 'list', 'deletedOnly': True, 'search': term}))
+
     # ── Vague UI-form intents → emit a marker so the frontend opens the
     # inline form instead of bouncing to the AI for a list of required
     # fields. Each detector skips itself when the user already supplied a
@@ -418,8 +479,19 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         return routed({'mode': 'show_contact_form'})
 
     # Update/edit contact (no UUID) — opens the contact search bar.
-    if not _has_uuid and re.search(r'\b(update|edit)\b.*\bcontact', msg):
-        return routed({'mode': 'show_contact_update_form'})
+    # Catches "update phone/email/address/name for [person]" as well as
+    # the explicit "update/edit contact" phrases.
+    # Extracts the contact name (if present) so the form can pre-populate its search.
+    if not _has_uuid and (
+        re.search(r'\b(update|edit)\b.*\bcontact', msg) or
+        re.search(r'\b(update|change|edit)\b.*\b(phone|email|address|name|role|status)\b', msg)
+    ):
+        _for_name_m = re.search(r'\bfor\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s*$', raw)
+        params = {'mode': 'show_contact_update_form'}
+        if _for_name_m:
+            params['prefillSearch'] = _for_name_m.group(1).strip()
+            logger.info(f'[NL->show_contact_update_form] prefillSearch={params["prefillSearch"]!r}')
+        return routed(params)
 
     # "find Steven" / "search for Emily" / "look up John Smith" etc.
     # Catches voice queries that include an action verb before the name.

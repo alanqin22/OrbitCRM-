@@ -46,7 +46,7 @@ LEAD AGENT — MODULE INSTRUCTIONS
 ─────────────────────────────────────────────────────────────────
 
 PRIMARY SP: sp_leads
-MODES: list, get, create, update, qualify, score, convert, pipeline,
+MODES: list, get, create, update, qualify, disqualify, score, convert, pipeline,
        archive, restore, duplicates, merge
 
 YOUR DOMAIN: leads table
@@ -149,6 +149,33 @@ Never pass a name to MODE:get. leadId must be a UUID — names will always fail.
 - Working → `{"mode":"list","status":"working"}`
 - Qualified → `{"mode":"list","status":"qualified"}`
 - Converted → `{"mode":"list","status":"converted"}`
+- Disqualified → `{"mode":"list","status":"disqualified"}`
+
+### Filter by City / Province / Country
+When the user asks to "show leads in <city>", "leads in <province>", etc., use the address parameters.
+- City → `{"mode":"list","city":"Toronto"}` (partial ILIKE match — "Tor" finds "Toronto")
+- Province → `{"mode":"list","province":"ON"}` (use 2-letter abbreviation)
+- City + Province → `{"mode":"list","city":"Hamilton","province":"ON"}`
+- Country → `{"mode":"list","country":"Canada"}`
+- Postal code prefix → `{"mode":"list","postalCode":"M5V"}`
+⚠️ Province must be the 2-letter code (ON, BC, QC, AB, …). City is case-insensitive partial match.
+
+### Filter by Source
+When the user asks to "show leads from <source>" or "filter by source <source>", use the `source` parameter with the underscore form.
+- Website → `{"mode":"list","source":"website"}`
+- Referral → `{"mode":"list","source":"referral"}`
+- Google Ads → `{"mode":"list","source":"google_ads"}`
+- Facebook Ads → `{"mode":"list","source":"facebook_ads"}`
+- LinkedIn → `{"mode":"list","source":"linkedin"}`
+- Social Media → `{"mode":"list","source":"social_media"}`
+- Email Campaign → `{"mode":"list","source":"email_campaign"}`
+- Cold Call → `{"mode":"list","source":"cold_call"}`
+- Trade Show → `{"mode":"list","source":"trade_show"}`
+- Advertisement → `{"mode":"list","source":"advertisement"}`
+- Partner → `{"mode":"list","source":"partner"}`
+- Import → `{"mode":"list","source":"import"}`
+- Other → `{"mode":"list","source":"other"}`
+⚠️ Always use underscore form (e.g. `google_ads` not `google ads`). Do NOT use `search` for source filtering — always use `source`.
 
 ### Search by Name, Company, or Email
 ⚠️ When the user provides a name (first name, last name, or full name), ALWAYS use mode:list with search.
@@ -179,6 +206,10 @@ NEVER use mode:get for a name — mode:get requires a UUID leadId.
 `{"mode":"score","leadId":"UUID","score":85}`
 Score is a **number**, no quotes.
 
+### Disqualify Lead
+- Without reason → `{"mode":"disqualify","leadId":"UUID"}`
+- With reason → `{"mode":"disqualify","leadId":"UUID","reason":"No budget"}`
+
 ### Archive / Restore
 - Archive → `{"mode":"archive","leadId":"UUID"}`
 - Restore → `{"mode":"restore","leadId":"UUID"}`
@@ -202,10 +233,10 @@ Score is a **number**, no quotes.
   `search` (string), `source` (string), `ownerId` (string),
   `includeDeleted` (boolean), `deletedOnly` (boolean)
 
-### Mode: get, qualify, convert, archive, restore
+### Mode: get, qualify, disqualify, convert, archive, restore
 - `leadId` (string, required)
 
-### Mode: qualify
+### Mode: qualify / disqualify
 - `reason` (string, optional)
 
 ### Mode: score
@@ -213,7 +244,7 @@ Score is a **number**, no quotes.
 
 ### Mode: create
 - `firstName` (string), `lastName` (string), `email` (string), `phone` (string),
-  `company` (string), `source` (string), `rating` (string), `score` (number)
+  `role` (string), `company` (string), `source` (string), `rating` (string), `score` (number)
 
 ### Mode: update
 - `leadId` (string, required), plus any field from create mode

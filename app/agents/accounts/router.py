@@ -86,6 +86,9 @@ class AccountChatInput(BaseModel):
     date_from:      Optional[str] = None
     date_to:        Optional[str] = None
 
+    # ── Direct-SQL list mode params ───────────────────────────────────────────
+    minOrders:      Optional[int] = None   # list_min_orders: HAVING COUNT(orders) > N
+
     # ── Generic payload ───────────────────────────────────────────────────────
     payload: Optional[Dict[str, Any]] = None
 

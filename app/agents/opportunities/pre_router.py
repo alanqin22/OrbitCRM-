@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import re
 import logging
+import calendar
+from datetime import date, timedelta
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -39,7 +41,7 @@ logger = logging.getLogger(__name__)
 DIRECT_MODES = {
     'list', 'get', 'create', 'update', 'delete',
     'add_product', 'update_product', 'remove_product',
-    'pipeline', 'forecast',
+    'pipeline', 'forecast', 'win_rate',
     'search_accounts', 'search_products',
     'search_opportunities',
     'get_owners',
@@ -56,6 +58,7 @@ SP_PARAMS = {
     'payload', 'created_by', 'updated_by',
     'page_size', 'page_number', 'search', 'date_from', 'date_to',
     'min_probability', 'max_probability',
+    'min_amount', 'max_amount', 'sort_by',
 }
 
 UUID_RE = re.compile(
@@ -93,6 +96,129 @@ def _routed(params: dict) -> dict:
 def _passthru(message: str) -> dict:
     logger.info(f"→ PASSTHRU: AI Agent  msg={message[:80]!r}")
     return {'router_action': False}
+
+
+# ---------------------------------------------------------------------------
+# Amount filter helpers — "over $50000", "under $10k", "between $50k and $100k"
+# ---------------------------------------------------------------------------
+_AMT_RE = r'\$?\s*([\d,]+(?:\.\d+)?)\s*([kKmM]?)\b'
+
+
+def _amt_to_num(num_str: str, suffix: str) -> float:
+    val = float(num_str.replace(',', ''))
+    if suffix.lower() == 'k':
+        val *= 1_000
+    elif suffix.lower() == 'm':
+        val *= 1_000_000
+    return val
+
+
+def _extract_amount_filters(msg: str, params: dict) -> None:
+    """Detect amount-range phrases and add min_amount/max_amount to params."""
+    between_m = re.search(
+        rf'\bbetween\s+{_AMT_RE}\s*(?:and|-|to)\s+{_AMT_RE}',
+        msg, re.IGNORECASE
+    )
+    if between_m:
+        v1 = _amt_to_num(between_m.group(1), between_m.group(2))
+        v2 = _amt_to_num(between_m.group(3), between_m.group(4))
+        params['min_amount'] = min(v1, v2)
+        params['max_amount'] = max(v1, v2)
+        return
+
+    min_m = re.search(
+        rf'\b(?:over|above|more than|greater than|at least|exceeding)\s+{_AMT_RE}',
+        msg, re.IGNORECASE
+    )
+    if min_m:
+        params['min_amount'] = _amt_to_num(min_m.group(1), min_m.group(2))
+
+    max_m = re.search(
+        rf'\b(?:under|below|less than|at most|up to)\s+{_AMT_RE}',
+        msg, re.IGNORECASE
+    )
+    if max_m:
+        params['max_amount'] = _amt_to_num(max_m.group(1), max_m.group(2))
+
+
+# ---------------------------------------------------------------------------
+# Sort/ranking helpers — "top 10 ... by value", "highest value", "smallest deals"
+# ---------------------------------------------------------------------------
+def _extract_sort_by(msg: str, params: dict) -> None:
+    """Detect ranking/sort phrases and add sort_by to params."""
+    if re.search(r'\b(highest|largest|biggest|greatest)\b.*\b(value|amount|deal|deals)\b', msg) \
+            or re.search(r'\bby\s+(value|amount)\b', msg) \
+            or re.search(r'\btop\b.*\b(value|amount|deal|deals)\b', msg):
+        params['sort_by'] = 'amount_desc'
+    elif re.search(r'\b(lowest|smallest)\b.*\b(value|amount|deal|deals)\b', msg):
+        params['sort_by'] = 'amount_asc'
+    elif re.search(r'\bhighest\s+probability\b', msg):
+        params['sort_by'] = 'probability_desc'
+    elif re.search(r'\b(closing soonest|soonest to close|closest close date)\b', msg):
+        params['sort_by'] = 'close_date_asc'
+
+
+# ---------------------------------------------------------------------------
+# Relative date-range helpers — "this month", "this quarter", "next quarter"...
+# ---------------------------------------------------------------------------
+def _month_bounds(d: date, offset: int = 0) -> tuple:
+    total = d.year * 12 + (d.month - 1) + offset
+    year, month0 = divmod(total, 12)
+    month = month0 + 1
+    start = date(year, month, 1)
+    end = date(year, month, calendar.monthrange(year, month)[1])
+    return start, end
+
+
+def _quarter_bounds(d: date, offset: int = 0) -> tuple:
+    q = (d.month - 1) // 3 + offset
+    year = d.year + q // 4
+    q %= 4
+    start_month = q * 3 + 1
+    end_month = start_month + 2
+    start = date(year, start_month, 1)
+    end = date(year, end_month, calendar.monthrange(year, end_month)[1])
+    return start, end
+
+
+_REL_DATE_RE = re.compile(r'\b(this|next|last)\s+(week|month|quarter|year)\b', re.IGNORECASE)
+
+
+def _extract_date_range(msg: str, params: dict) -> None:
+    """Detect 'this/next/last week|month|quarter|year' and set date_from/date_to
+    (applied to close_date by the SP's list-mode filters)."""
+    if 'date_from' in params or 'date_to' in params:
+        return
+    m = _REL_DATE_RE.search(msg)
+    if not m:
+        return
+    rel  = m.group(1).lower()
+    unit = m.group(2).lower()
+    offset = {'this': 0, 'next': 1, 'last': -1}[rel]
+    today = date.today()
+
+    if unit == 'month':
+        start, end = _month_bounds(today, offset)
+    elif unit == 'quarter':
+        start, end = _quarter_bounds(today, offset)
+    elif unit == 'week':
+        monday = today - timedelta(days=today.weekday()) + timedelta(weeks=offset)
+        start, end = monday, monday + timedelta(days=6)
+    else:  # year
+        year = today.year + offset
+        start, end = date(year, 1, 1), date(year, 12, 31)
+
+    params['date_from'] = start.isoformat()
+    params['date_to']   = end.isoformat()
+
+
+# Generic words that can follow "opportunities by/for/from/of" but are NOT
+# account/contact names — e.g. "top 10 opportunities by value".
+_NON_NAME_TERMS = {
+    'value', 'amount', 'amounts', 'price', 'date', 'dates', 'name', 'names',
+    'size', 'stage', 'stages', 'probability', 'owner', 'owners', 'source',
+    'sources', 'status', 'rating', 'score', 'margin', 'weight', 'weighted',
+}
 
 
 # ---------------------------------------------------------------------------
@@ -151,9 +277,15 @@ def _match_nl(message: str) -> Optional[dict]:
     if not _has_uuid and 'product' not in msg and re.search(r'\bupdate\b.*\bopportunit', msg):
         return {'mode': 'show_opportunity_update_form'}
 
-    # Pipeline
-    if re.search(r'\b(pipeline|sales pipeline)\b', msg):
+    # Pipeline / opportunity summary
+    if re.search(r'\b(pipeline|sales pipeline)\b', msg) \
+            or re.search(r'\bopportunit\w*\s+summary\b', msg) \
+            or re.search(r'\bsummary\b.*\bopportunit', msg):
         return {'mode': 'pipeline'}
+
+    # Win rate / win-loss statistics
+    if re.search(r'\bwin.?(rate|loss)\b', msg) or re.search(r'\bwin\s*/\s*loss\b', msg):
+        return {'mode': 'win_rate'}
 
     # Forecast
     if re.search(r'\bforecast\b', msg):
@@ -166,12 +298,33 @@ def _match_nl(message: str) -> Optional[dict]:
             if pattern.search(msg):
                 params['stage'] = stage
                 break
+        # Bare "won"/"lost" (without "closed") → stage filter
+        if 'stage' not in params:
+            if re.search(r'\bwon\b', msg):
+                params['stage'] = 'closed_won'
+            elif re.search(r'\blost\b', msg):
+                params['stage'] = 'closed_lost'
+        # "unassigned opportunities" → owner_id IS NULL (sentinel UUID)
+        if re.search(r'\bunassigned\b', msg):
+            params['owner_id'] = '00000000-0000-0000-0000-000000000000'
+        _extract_date_range(msg, params)
         ps = re.search(r'\bpage.?size\s+(\d+)\b', msg)
         if ps:
             params['page_size'] = int(ps.group(1))
         pg = re.search(r'\bpage\s+(\d+)\b', msg)
         if pg:
             params['page_number'] = int(pg.group(1))
+        # "top N opportunities" / "top N ... by value" → page_size = N
+        top_m = re.search(r'\btop\s+(\d+)\b', msg)
+        if top_m:
+            params['page_size'] = max(1, min(int(top_m.group(1)), 200))
+            params['top_n'] = True
+        _extract_amount_filters(msg, params)
+        _extract_sort_by(msg, params)
+        # Value-filter queries ("Deals over $50k", "Deals under $10k") default
+        # to highest-value-first unless the user requested a different order.
+        if ('min_amount' in params or 'max_amount' in params) and 'sort_by' not in params:
+            params['sort_by'] = 'amount_desc'
         # Extract account/contact name: "for X", "from X", "of X", or proper-noun name after "opportunit*"
         _name_m = re.search(
             r'\bopportunit\w*\s+(?:(?:for|from|by|of)\s+)?([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+)',
@@ -190,7 +343,7 @@ def _match_nl(message: str) -> Optional[dict]:
             )
         if _name_m:
             name = _name_m.group(1).strip().rstrip('?.,;')
-            if name:
+            if name and name.lower() not in _NON_NAME_TERMS:
                 params['search'] = name
         return params
 

@@ -571,8 +571,8 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             out.append('')
             out.append('| Period | Count |')
             out.append('|--------|-------|')
-            out.append(f'| This Week | **{summary.get("this_week", 0)}** |')
-            out.append(f'| This Month | **{summary.get("this_month", 0)}** |')
+            out.append(f'| Last 7 Days | **{summary.get("this_week", 0)}** |')
+            out.append(f'| Last 30 Days | **{summary.get("this_month", 0)}** |')
             out.append('')
 
     # ── get_owners — early return (no footer actions) ─────────────────────────
