@@ -874,7 +874,7 @@
     .details-record {
       background: white;
       border-radius: 8px;
-      max-width: 1100px;        /* centered column, matches summary pages */
+      max-width: 1080px;        /* centered column, matches summary pages */
       margin: 1rem auto;
       border: 1px solid #e0e6ed;
       box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
@@ -883,6 +883,261 @@
 
     .details-record.with-padding {
       padding: 1.5rem;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       EXECUTIVE REPORT — formal report layout for the Order AI Agent's
+       "Executive" question chips
+       ═══════════════════════════════════════════════════════════════ */
+    .exec-report {
+      max-width: 900px;
+      margin: 1.25rem auto 2rem;
+      background: #ffffff;
+      border-radius: 14px;
+      box-shadow: 0 8px 30px rgba(15, 35, 65, 0.10);
+      border: 1px solid #e6ebf2;
+      overflow: hidden;
+    }
+
+    .exec-report-header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      padding: 1.5rem 2rem 1.15rem;
+      background: linear-gradient(135deg, #f4f8ff 0%, #eef3fb 100%);
+      border-bottom: 4px solid #0078d7;
+      border-image: linear-gradient(90deg, #0078d7 0%, #6f42c1 35%, #e83e8c 70%, #fd7e14 100%) 1;
+    }
+
+    .exec-report-icon {
+      font-size: 2.3rem;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+
+    .exec-report-title {
+      margin: 0;
+      font-family: Georgia, 'Times New Roman', serif;
+      font-size: 1.2rem;            /* match header h1 ("📦 Orders") */
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      background: linear-gradient(90deg, #0078d7 0%, #6f42c1 35%, #e83e8c 70%, #fd7e14 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      color: transparent;
+    }
+
+    .exec-report-asof {
+      margin-top: 0.3rem;
+      font-size: 0.83rem;
+      font-style: italic;
+      color: #6b7280;
+    }
+
+    .exec-report-headline {
+      display: flex;
+      gap: 0.85rem;
+      align-items: flex-start;
+      margin: 1.5rem 2rem 0;
+      padding: 1rem 1.25rem;
+      background: #fff8ec;
+      border-left: 4px solid #fd7e14;
+      border-radius: 0 8px 8px 0;
+    }
+
+    .exec-headline-icon {
+      font-size: 1.35rem;
+      line-height: 1.4;
+      flex-shrink: 0;
+    }
+
+    .exec-headline-label {
+      display: block;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #b45309;
+      margin-bottom: 0.25rem;
+    }
+
+    .exec-headline-text {
+      font-size: 1.02rem;
+      line-height: 1.6;
+      color: #333;
+    }
+
+    .exec-decision-panel {
+      margin: 1.25rem 2rem 0;
+      padding: 1.1rem 1.25rem;
+      background: #f8f9fc;
+      border: 1px solid #e6ebf2;
+      border-radius: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.9rem;
+    }
+
+    .exec-decision-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: 0.6rem 1rem;
+    }
+
+    .exec-recommended-row,
+    .exec-drilldown-row {
+      align-items: center;
+    }
+
+    .exec-confidence-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.3rem 0.85rem;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      white-space: nowrap;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .exec-confidence-high { background: #e6f7ec; color: #1a7f43; }
+    .exec-confidence-medium { background: #fff4e0; color: #b45309; }
+    .exec-confidence-low { background: #fde8e8; color: #b3261e; }
+
+    .exec-drivers { flex: 1; min-width: 220px; }
+
+    .exec-drivers-label,
+    .exec-recommended-label {
+      display: block;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: #6b7280;
+    }
+
+    .exec-recommended-label { display: inline-block; margin-right: 0.4rem; }
+
+    .exec-drivers ol {
+      margin: 0.25rem 0 0;
+      padding-left: 1.2rem;
+      font-size: 0.88rem;
+      color: #374151;
+      line-height: 1.6;
+    }
+
+    .exec-owner-badge {
+      background: #e8f0fe;
+      color: #0b5cab;
+      font-weight: 700;
+      font-size: 0.78rem;
+      padding: 0.2rem 0.6rem;
+      border-radius: 14px;
+      white-space: nowrap;
+    }
+
+    .exec-recommended-text { font-size: 0.92rem; color: #333; }
+
+    .exec-drilldown-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      color: #0078d7;
+      font-weight: 600;
+      font-size: 0.88rem;
+      text-decoration: none;
+      border-bottom: 1px solid transparent;
+      transition: border-color 0.15s ease;
+    }
+
+    .exec-drilldown-link:hover { border-color: #0078d7; }
+
+    .exec-scope-note {
+      display: flex;
+      gap: 0.6rem;
+      align-items: flex-start;
+      margin: 1.25rem 2rem 0;
+      padding: 0.85rem 1.1rem;
+      background: #eef6ff;
+      border: 1px solid #d6e7fb;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      color: #355070;
+      line-height: 1.55;
+    }
+
+    .exec-scope-icon { font-size: 1.05rem; flex-shrink: 0; }
+
+    .exec-report-body {
+      padding: 1.5rem 2rem 0.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .exec-section {
+      border: 1px solid #e6ebf2;
+      border-radius: 10px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .exec-section-header {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.65rem 1.1rem;
+      background: linear-gradient(135deg, #f8f9fa 0%, #eef1f5 100%);
+      border-bottom: 1px solid #e6ebf2;
+    }
+
+    .exec-section-icon { font-size: 1.1rem; line-height: 1; }
+
+    .exec-section-title {
+      margin: 0;
+      font-size: 0.96rem;
+      font-weight: 700;
+      background: linear-gradient(90deg, #0078d7 0%, #6f42c1 35%, #e83e8c 70%, #fd7e14 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      color: transparent;
+    }
+
+    .exec-section-body { padding: 0.6rem 1.1rem 0.9rem; }
+
+    .exec-report-footer {
+      margin: 0.25rem 2rem 0;
+      padding: 1rem 0;
+      border-top: 1px solid #eef0f3;
+      text-align: center;
+      font-size: 0.78rem;
+      font-style: italic;
+      color: #9aa3b2;
+    }
+
+    .exec-report-actions {
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+      padding: 1.25rem 2rem 1.75rem;
+      flex-wrap: wrap;
+    }
+
+    @media (max-width: 640px) {
+      .exec-report { margin: 0.75rem auto 1.5rem; border-radius: 10px; }
+      .exec-report-header { padding: 1.1rem 1.25rem 0.9rem; gap: 0.75rem; }
+      .exec-report-icon { font-size: 1.8rem; }
+      .exec-report-title { font-size: 1.2rem; }
+      .exec-report-headline,
+      .exec-decision-panel,
+      .exec-scope-note,
+      .exec-report-footer { margin-left: 1.25rem; margin-right: 1.25rem; }
+      .exec-report-body { padding: 1.1rem 1.25rem 0.5rem; gap: 1rem; }
+      .exec-report-actions { padding: 1rem 1.25rem 1.5rem; }
     }
 
     .tier-bronze {
@@ -1666,7 +1921,7 @@
       border-radius: 14px;
       box-shadow: 0 4px 32px rgba(0, 0, 0, 0.13), 0 1.5px 6px rgba(0, 120, 215, 0.08);
       overflow: hidden;
-      max-width: 1100px;        /* centered column, matches summary pages */
+      max-width: 1080px;        /* centered column, matches summary pages */
       margin: 1rem auto;
       border: 1px solid #e4e9f0;
       position: relative;
@@ -2730,10 +2985,14 @@
     .order-home-search-bar .ai-search-btn {
         border: none !important;
         border-right: 1.5px solid #dde0e8 !important;
-        border-radius: 0 !important;
+        border-radius: 24px 0 0 24px !important;
         height: 100%;
         margin: 0;
-        padding: 0 23px;
+        padding: 0 25px;
+        gap: 0.28rem;
+        font-size: 0.9rem !important;
+        font-weight: 700 !important;
+        color: #5b21b6 !important;
     }
     .order-home-search-bar .ai-search-btn:focus {
         box-shadow: none !important;
@@ -2767,12 +3026,12 @@
     }
 
     .order-ai-caps {
-        max-width: 580px;
+        max-width: 520px;
         width: 90%;
         background: #f8f9ff;
         border: 1px solid #e0e7ff;
         border-radius: 14px;
-        padding: 1.1rem 1.5rem;
+        padding: 1.1rem 1.5rem 2rem;
         text-align: left;
     }
     .order-ai-caps h4 {
@@ -2782,7 +3041,7 @@
     }
     .order-ai-caps ul { margin: 0; padding-left: 0; list-style: none; font-size: 0.88rem; color: #444; line-height: 1.7; }
     .order-ai-caps ul li { margin-bottom: 0.45rem; }
-    .order-cap-examples { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; margin-top: 0.3rem; width: 90%; }
+    .order-cap-examples { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; margin: 0.3rem auto 0; width: 90%; }
     .order-cap-chip { background: #fff; border: 1px solid #c7d2fe; border-radius: 20px; padding: 0.22rem 0.65rem; font-size: 0.78rem; color: #4f46e5; cursor: pointer; font-family: inherit; line-height: 1.5; text-align: center; width: 100%; box-sizing: border-box; }
     .order-cap-chip:hover { background: #eef2ff; border-color: #6366f1; }
 
@@ -3315,7 +3574,7 @@
         <div class="order-home-search-bar" id="orderHomeSearchBar" style="margin:0;">
           <div class="ohs-amz-wrapper">
             <!-- LEFT: AI button -->
-            <button class="ai-search-btn" type="button" onclick="showOrderAIPage()">AI</button>
+            <button class="ai-search-btn" type="button" onclick="showOrderAIPage()"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0"><path d="M12 2l1.8 8.2L22 12l-8.2 1.8L12 22l-1.8-8.2L2 12l8.2-1.8Z"/></svg>AI</button>
             <!-- LEFT: filter dropdown -->
             <select id="ohsFilterSelect" title="Filter by">
               <option value="all">All Orders</option>
@@ -3398,58 +3657,106 @@
     <div class="order-ai-caps">
       <h4>What Order AI can help you with</h4>
       <ul>
+        <li><strong>Executive questions</strong> — one-line answer, confidence, drivers, action + owner
+          <div class="order-cap-examples">
+            <button class="order-cap-chip" onclick="_orderAIFill('Are upcoming orders sufficient to meet next quarter revenue targets?')">On track next quarter?</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Which five orders, if delayed or lost, would cause the largest revenue shortfall?')">Biggest shortfall risks</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Which orders should be prioritized for fast billing to improve cash flow?')">Fast-billing priorities</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('What is the cash timing risk from the current order pipeline?')">Cash timing risk</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('How concentrated are orders among top customers?')">Order concentration</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('How much discounting is embedded in orders?')">Embedded discounting</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Which accounts show order downgrades signaling churn?')">Churn signals</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('What is the trend in order size and mix by product line this quarter?')">Order size & mix trend</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Which orders are stuck in fulfillment or blocking revenue recognition?')">Stuck / unbilled orders</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('What is the one-line recovery plan if orders fall short by 5%?')">Recovery plan (5% short)</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Which closed orders this period came from the highest-quality lead sources?')">Lead source quality</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('What leading order indicators predict next quarter performance change?')">Leading indicators</button>
+          </div>
+        </li>
         <li><strong>List &amp; search orders</strong> — by number, account, status, or date range
           <div class="order-cap-examples">
             <button class="order-cap-chip" onclick="_orderAIFill('Show all orders')">Show all orders</button>
             <button class="order-cap-chip" onclick="_orderAIFill('Show pending orders')">Show pending orders</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Show orders for Bob Brown')">Orders for Bob Brown</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Show completed orders')">Show completed orders</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Show orders page 2')">Orders page 2</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Show shipped orders')">Show shipped orders</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Show processing orders')">Show processing orders</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Show orders for Carlos Martinez')">Orders for Carlos Martinez</button>
           </div>
         </li>
         <li><strong>View order details</strong> — items, pricing &amp; attribution
           <div class="order-cap-examples">
             <button class="order-cap-chip" onclick="_orderAIFill('Show order details')">Show order details</button>
             <button class="order-cap-chip" onclick="_orderAIFill('Show recent orders')">Show recent orders</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Show details for SO-2026-100202')">Details for SO-2026-100202</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Show order 360 for Bob Brown')">Order 360 for Bob Brown</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Find order SO-2026-100421')">Find order SO-2026-100421</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Show order details for order number SO-2026-100379')">Details for order #SO-2026-100379</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Order 360 for SO-2026-100391')">Order 360 for SO-2026-100391</button>
           </div>
         </li>
         <li><strong>Create new orders</strong> — with products and pricing
           <div class="order-cap-examples">
             <button class="order-cap-chip" onclick="_orderAIFill('Create a new order')">Create new order</button>
             <button class="order-cap-chip" onclick="_orderAIFill('Add a new order')">Add an order</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Start a new order')">Start a new order</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Open the order form')">Open order form</button>
           </div>
         </li>
         <li><strong>Update order header</strong> — status, contact, date, account
           <div class="order-cap-examples">
             <button class="order-cap-chip" onclick="_orderAIFill('Update an order')">Update an order</button>
             <button class="order-cap-chip" onclick="_orderAIFill('Change order status')">Change order status</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Change status of SO-2026-100202 to shipped')">Set SO-2026-100202 to shipped</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Update order date for SO-2026-100202')">Update order date</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Edit an order')">Edit an order</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Change status of SO-2026-100409 to shipped')">Set SO-2026-100409 to shipped</button>
           </div>
         </li>
         <li><strong>Manage order items</strong> — add or remove items from existing orders
           <div class="order-cap-examples">
             <button class="order-cap-chip" onclick="_orderAIFill('Add item to order')">Add item to order</button>
             <button class="order-cap-chip" onclick="_orderAIFill('Remove item from order')">Remove item</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Add AirPods Pro to order SO-2026-100202')">Add AirPods Pro to order</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Add Bose Smart Soundbar 600 to order SO-2026-100421')">Add Bose Soundbar to order</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Show items for order SO-2026-100439')">Items for SO-2026-100439</button>
           </div>
         </li>
         <li><strong>Soft-delete &amp; restore</strong> — archive or recover orders
           <div class="order-cap-examples">
             <button class="order-cap-chip" onclick="_orderAIFill('Show cancelled orders')">Show cancelled orders</button>
             <button class="order-cap-chip" onclick="_orderAIFill('Restore a deleted order')">Restore order</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Soft delete order SO-2026-100399')">Soft delete SO-2026-100399</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Restore order SO-2026-100399')">Restore SO-2026-100399</button>
           </div>
         </li>
         <li><strong>Revenue summary</strong> — by account or by category
           <div class="order-cap-examples">
             <button class="order-cap-chip" onclick="_orderAIFill('Sales summary')">Sales summary</button>
             <button class="order-cap-chip" onclick="_orderAIFill('Account revenue summary')">By account</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Revenue summary for Bob Brown')">Revenue for Bob Brown</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Sales summary this month')">Sales summary this month</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Revenue summary for Samantha Chen')">Revenue for Samantha Chen</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Sales summary last month')">Sales summary last month</button>
           </div>
         </li>
         <li><strong>Sales summaries</strong> — quarterly or custom date range
           <div class="order-cap-examples">
             <button class="order-cap-chip" onclick="_orderAIFill('Quarterly sales')">Quarterly sales</button>
             <button class="order-cap-chip" onclick="_orderAIFill('Sales summary for 2025')">Sales for 2025</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Sales summary for Q1 2026')">Sales Q1 2026</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Sales summary for 2026')">Sales for 2026</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Sales summary for Q4 2025')">Sales Q4 2025</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Sales summary for Q2 2026')">Sales Q2 2026</button>
           </div>
         </li>
         <li><strong>Account &amp; category analytics</strong> — top spenders and product breakdown
           <div class="order-cap-examples">
             <button class="order-cap-chip" onclick="_orderAIFill('Show top spending customers')">Top spending customers</button>
             <button class="order-cap-chip" onclick="_orderAIFill('Sales by category')">Sales by category</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Sales by month for 2026')">Sales by month 2026</button>
+            <button class="order-cap-chip" onclick="_orderAIFill('Sales by month for 2025')">Sales by month 2025</button>
           </div>
         </li>
       </ul>
@@ -4968,6 +5275,24 @@
       }
       console.log('   - Text Mode:', textMode);
 
+      // Executive Answer (one of the "Executive" chips on the Order AI Agent
+      // home page) — render as a formal, letterhead-style report instead of
+      // routing through the mode/content-based logic below. Checked by
+      // content (not just textMode === 'executive_question') because some
+      // Executive questions come back with mode "conversational" even though
+      // the output is the deterministic exec markdown — without this, those
+      // would mis-route into buildOrderDetailsHTML() via routeByContent().
+      {
+        const execHtml = renderExecutiveReport(rawText);
+        if (execHtml) {
+          hideHeader();
+          responseDiv.innerHTML = execHtml;
+          document.body.classList.remove('on-list-view');
+          setTimeout(() => { responseDiv.scrollTop = 0; }, 50);
+          return;
+        }
+      }
+
       // Map text modes to numeric modes
       const textModeMap = {
         'list': 1,
@@ -5253,7 +5578,7 @@
     // Build Order List HTML (Mode 1) - Updated for v4.9 markdown table format
     function buildOrderListHTML(text) {
       const lines = text.split('\n');
-      let html = '<div style="max-width:1100px; margin:1rem auto;">';
+      let html = '<div style="max-width:1080px; margin:1rem auto;">';
 
       // The customer identity shown on each card (Account → Contact → legacy
       // Customer). The search filter matches THIS same value so results never
@@ -5270,7 +5595,7 @@
       // Add header with metadata
       if (timeMatch || totalMatch || modeMatch) {
         html += '<div class="audit-record">';
-        html += '<div class="line" style="font-size:1.3rem; font-weight:bold; margin-bottom:0.25rem;">📦 Order List</div>';
+        html += '<div class="line" style="font-size:1.2rem; font-weight:bold; margin-bottom:0.25rem;">📦 Order List</div>';
         if (searchMatch) {
           html += `<div class="line" style="font-size:0.9rem; color:#666; margin-bottom:0.15rem;">🔍 Search: "${escapeHtml(searchMatch[1])}"</div>`;
         }
@@ -5610,7 +5935,7 @@
 
       // Add clean "Order Details" title - NO SUCCESS BANNER for get_detail mode
       html += '<div style="padding: 1rem 1.5rem; border-bottom: 2px solid #e1e4e8;">';
-      html += '<h2 style="margin: 0; color: #0078d7; font-size: 1.3rem;">📋 Order Details</h2>';
+      html += '<h2 style="margin: 0; color: #0078d7; font-size: 1.2rem;">📋 Order Details</h2>';
       html += '</div>';
 
       // Add the content
@@ -5734,7 +6059,7 @@
     function buildCategorySummaryHTML(text) {
       const uid = ++_orSeq;
       const lines = text.split('\n');
-      let html = '<div style="max-width:1100px; margin:1rem auto;">';
+      let html = '<div style="max-width:1080px; margin:1rem auto;">';
 
       const modeMatch = text.match(/Mode:\s*(\d+)/i);
       const modeDisplay = modeMatch ? ` <span style="color:#6f42c1; font-size:0.85rem;">[Mode ${modeMatch[1]}]</span>` : '';
@@ -5756,7 +6081,7 @@
 
       // Header
       html += `<div style="padding:0.75rem 0;margin-bottom:0.5rem;">`;
-      html += `<h2 style="margin:0;color:#0078d7;font-size:1.5rem;font-weight:bold;">📊 Category Sales Report${modeDisplay}</h2>`;
+      html += `<h2 style="margin:0;color:#0078d7;font-size:1.2rem;font-weight:bold;">📊 Category Sales Report${modeDisplay}</h2>`;
       html += `</div>`;
 
       // Summary Cards
@@ -5882,9 +6207,13 @@
       }
 
       // ── Existing category cards ──────────────────────────────────────
+      // Row layout: rank + identity (fixed) → proportional revenue bar
+      // (flex) → value + share (fixed right).
       if (categories.length > 0) {
+        const _catNum = c => parseFloat(String(c.revenue).replace(/[$,]/g, '')) || 0;
+        const _catMax = Math.max(...categories.map(_catNum), 1);
         html += `<div style="margin-top:1.5rem;">`;
-        html += `<h3 style="color:#0078d7;margin-bottom:1rem;">📦 Categories Breakdown</h3>`;
+        html += `<h3 style="color:#0078d7;font-size:1.05rem;margin-bottom:1rem;">📦 Categories Breakdown</h3>`;
         html += `<div style="display:grid;gap:0.5rem;">`;
         categories.forEach((cat, index) => {
           const colors = [
@@ -5895,18 +6224,18 @@
             'linear-gradient(135deg, #fa709a 0%, #fee140 100%)'
           ];
           const gradient = colors[index % colors.length];
+          const barPct = Math.max(4, Math.round(_catNum(cat) / _catMax * 100));
           html += `<div style="padding:0.5rem 0.75rem;background:white;border-radius:6px;border:1px solid #e0e6ed;box-shadow:0 1px 2px rgba(0,0,0,0.03);">
-              <div style="display:flex;justify-content:space-between;align-items:center;">
-                <div style="flex:1;">
-                  <div style="display:flex;align-items:center;gap:0.5rem;">
-                    <div style="width:28px;height:28px;background:${gradient};border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;font-size:0.75rem;">${cat.rank}</div>
-                    <div>
-                      <div style="font-size:0.9rem;font-weight:bold;color:#2d3748;">${escapeHtml(cat.name)}</div>
-                      <div style="font-size:0.75rem;color:#6c757d;">${cat.orders} orders • ${cat.unitsSold} units</div>
-                    </div>
-                  </div>
+              <div style="display:flex;align-items:center;gap:0.9rem;">
+                <div style="width:28px;height:28px;background:${gradient};border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;font-size:0.75rem;flex-shrink:0;">${cat.rank}</div>
+                <div style="width:230px;flex-shrink:0;min-width:0;">
+                  <div style="font-size:0.9rem;font-weight:bold;color:#2d3748;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(cat.name)}</div>
+                  <div style="font-size:0.75rem;color:#6c757d;">${cat.orders} orders • ${cat.unitsSold} units</div>
                 </div>
-                <div style="text-align:right;">
+                <div style="flex:1;height:12px;background:#eef2fa;border-radius:6px;overflow:hidden;">
+                  <div style="width:${barPct}%;height:100%;background:${gradient};border-radius:6px;"></div>
+                </div>
+                <div style="width:110px;flex-shrink:0;text-align:right;">
                   <div style="font-size:1rem;font-weight:bold;color:#28a745;">$${cat.revenue}</div>
                   <div style="font-size:0.75rem;color:#6c757d;">${cat.percent}</div>
                 </div>
@@ -5932,7 +6261,7 @@
     function buildCustomerSummaryHTML(text) {
       console.log('👥 Building Account Summary HTML (Mode 6)');
       const uid = ++_orSeq;
-      let html = '<div style="max-width:1100px; margin:1rem auto;">';
+      let html = '<div style="max-width:1080px; margin:1rem auto;">';
 
       const modeMatch = text.match(/Mode:\s*(\d+)/i);
       const modeDisplay = modeMatch ? ` <span style="color:#6f42c1; font-size:0.85rem;">[Mode ${modeMatch[1]}]</span>` : '';
@@ -5951,7 +6280,7 @@
 
       // Header
       html += `<div style="padding:0.75rem 0;margin-bottom:0.5rem;">`;
-      html += `<h2 style="margin:0;color:#f5576c;font-size:1.5rem;font-weight:bold;">👥 Account Analytics${modeDisplay}</h2>`;
+      html += `<h2 style="margin:0;color:#f5576c;font-size:1.2rem;font-weight:bold;">👥 Account Analytics${modeDisplay}</h2>`;
       html += `</div>`;
 
       // Summary Cards
@@ -6158,9 +6487,13 @@
       }
 
       // ── Existing account cards ────────────────────────────────────────
+      // Each row: rank + identity (fixed) → proportional revenue bar (flex)
+      // → value (fixed right). The bar visually connects the name to its
+      // number so the row reads naturally across the full report width.
       if (accounts.length > 0) {
+        const _accMax = Math.max(...accounts.map(a => a.revenue || 0), 1);
         html += `<div style="margin-top:1.5rem;">`;
-        html += `<h3 style="color:#f5576c;margin-bottom:1rem;">👥 Account Performance</h3>`;
+        html += `<h3 style="color:#f5576c;font-size:1.05rem;margin-bottom:1rem;">👥 Account Performance</h3>`;
         html += `<div style="display:grid;gap:0.5rem;">`;
         accounts.forEach((acc, index) => {
           const rankColors = [
@@ -6171,20 +6504,18 @@
             'linear-gradient(135deg,#fa709a 0%,#fee140 100%)'
           ];
           const rankGradient = rankColors[index % rankColors.length];
+          const barPct = Math.max(4, Math.round((acc.revenue || 0) / _accMax * 100));
           html += `<div style="padding:0.5rem 0.75rem;background:white;border-radius:6px;border:1px solid #e0e6ed;box-shadow:0 1px 2px rgba(0,0,0,0.03);">
-              <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;">
-                <div style="flex:1;min-width:0;">
-                  <div style="display:flex;align-items:center;gap:0.5rem;">
-                    <div style="width:28px;height:28px;background:${rankGradient};border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;font-size:0.75rem;flex-shrink:0;">${acc.rank}</div>
-                    <div style="min-width:0;">
-                      <div style="font-size:0.9rem;font-weight:bold;color:#2d3748;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(acc.name)}</div>
-                      <div style="font-size:0.75rem;color:#6c757d;line-height:1.2;">${acc.orders} orders • Avg: $${acc.avgOrder.toLocaleString()}</div>
-                    </div>
-                  </div>
+              <div style="display:flex;align-items:center;gap:0.9rem;">
+                <div style="width:28px;height:28px;background:${rankGradient};border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;font-size:0.75rem;flex-shrink:0;">${acc.rank}</div>
+                <div style="width:230px;flex-shrink:0;min-width:0;">
+                  <div style="font-size:0.9rem;font-weight:bold;color:#2d3748;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(acc.name)}</div>
+                  <div style="font-size:0.75rem;color:#6c757d;line-height:1.2;">${acc.orders} orders • Avg: $${acc.avgOrder.toLocaleString()}</div>
                 </div>
-                <div style="text-align:right;flex-shrink:0;">
-                  <div style="font-size:1rem;font-weight:bold;color:#28a745;">$${acc.revenue.toLocaleString()}</div>
+                <div style="flex:1;height:12px;background:#eef2fa;border-radius:6px;overflow:hidden;">
+                  <div style="width:${barPct}%;height:100%;background:${rankGradient};border-radius:6px;"></div>
                 </div>
+                <div style="width:110px;flex-shrink:0;text-align:right;font-size:1rem;font-weight:bold;color:#28a745;">$${acc.revenue.toLocaleString()}</div>
               </div>
             </div>`;
         });
@@ -6205,7 +6536,7 @@
     // Build Sales Summary HTML (Mode 9) - NEW
     function buildSalesSummaryHTML(text) {
       console.log('📈 Building Sales Summary HTML (Mode 9)');
-      let html = '<div style="max-width:1100px; margin:1rem auto;">';
+      let html = '<div style="max-width:1080px; margin:1rem auto;">';
 
       const modeMatch = text.match(/Mode:\s*(\d+)/i);
       const modeDisplay = modeMatch ? ` <span style="color:#6f42c1; font-size:0.85rem;">[Mode ${modeMatch[1]}]</span>` : '';
@@ -6220,7 +6551,8 @@
       if (revMatch) totalRevenue = revMatch[1];
 
       let avgOrderValue = '0.00';
-      const avgMatch = text.match(/Average Order Value:\s*\$?([\d,]+\.?\d*)/i);
+      // Backend formatter emits "Avg Order Value:" — accept both spellings
+      const avgMatch = text.match(/(?:Average|Avg\.?)\s+Order Value:\s*\$?([\d,]+\.?\d*)/i);
       if (avgMatch) avgOrderValue = avgMatch[1];
 
       let totalItems = '0';
@@ -6237,7 +6569,7 @@
 
       // Header - Clean title without background banner
       html += `<div style="padding: 0.75rem 0; margin-bottom: 0.5rem;">`;
-      html += `<h2 style="margin: 0; color: #764ba2; font-size: 1.5rem; font-weight: bold;">📈 Sales Summary${modeDisplay}</h2>`;
+      html += `<h2 style="margin: 0; color: #764ba2; font-size: 1.2rem; font-weight: bold;">📈 Sales Summary${modeDisplay}</h2>`;
       html += `</div>`;
 
       // Summary Cards - Reduced size by 30%
@@ -6305,10 +6637,13 @@
         }
       }
 
-      // Display breakdown as cards
+      // Display breakdown as cards — status label (fixed) → proportional
+      // revenue bar (flex) → value + share (fixed right).
       if (breakdownData.length > 0) {
+        const _bdNum = i => parseFloat(String(i.revenue).replace(/[$,]/g, '')) || 0;
+        const _bdMax = Math.max(...breakdownData.map(_bdNum), 1);
         html += `<div style="margin-top: 1.5rem;">`;
-        html += `<h3 style="color: #764ba2; margin-bottom: 1rem;">📊 Orders by ${tableType}</h3>`;
+        html += `<h3 style="color: #764ba2; font-size: 1.05rem; margin-bottom: 1rem;">📊 Orders by ${tableType}</h3>`;
         html += `<div style="display: grid; gap: 0.5rem;">`;
 
         breakdownData.forEach((item, index) => {
@@ -6320,17 +6655,19 @@
             'linear-gradient(135deg, #fa709a 0%, #fee140 100%)'
           ];
           const gradient = colors[index % colors.length];
+          const barPct = Math.max(4, Math.round(_bdNum(item) / _bdMax * 100));
 
           html += `<div style="padding: 0.5rem 0.75rem; background: white; border-radius: 6px; border: 1px solid #e0e6ed; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <div style="flex: 1;">
-                  <div style="display: flex; align-items: center; gap: 0.5rem;">
-                    <div style="width: 10px; height: 10px; background: ${gradient}; border-radius: 50%;"></div>
-                    <div style="font-size: 0.9rem; font-weight: bold; color: #2d3748;">${escapeHtml(item.label)}</div>
-                  </div>
-                  <div style="font-size: 0.75rem; color: #6c757d; margin-left: 18px;">${item.count} orders</div>
+              <div style="display: flex; align-items: center; gap: 0.9rem;">
+                <div style="width: 10px; height: 10px; background: ${gradient}; border-radius: 50%; flex-shrink: 0;"></div>
+                <div style="width: 230px; flex-shrink: 0; min-width: 0;">
+                  <div style="font-size: 0.9rem; font-weight: bold; color: #2d3748; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(item.label)}</div>
+                  <div style="font-size: 0.75rem; color: #6c757d;">${item.count} orders</div>
                 </div>
-                <div style="text-align: right;">
+                <div style="flex: 1; height: 12px; background: #eef2fa; border-radius: 6px; overflow: hidden;">
+                  <div style="width: ${barPct}%; height: 100%; background: ${gradient}; border-radius: 6px;"></div>
+                </div>
+                <div style="width: 110px; flex-shrink: 0; text-align: right;">
                   <div style="font-size: 1rem; font-weight: bold; color: #28a745;">$${item.revenue}</div>
                   <div style="font-size: 0.75rem; color: #6c757d;">${item.percent}</div>
                 </div>
@@ -8929,7 +9266,7 @@
 
       // Header
       html += `<div style="padding: 1rem 1.5rem; border-bottom: 2px solid #e1e4e8;">`;
-      html += `<h2 style="margin: 0; color: #28a745; font-size: 1.3rem;">➕ Create New Order</h2>`;
+      html += `<h2 style="margin: 0; color: #28a745; font-size: 1.2rem;">➕ Create New Order</h2>`;
       html += `</div>`;
 
       html += `<div style="padding: 1.5rem;">`;
@@ -9286,6 +9623,235 @@
         // v1.20: direct SP call
         processDirectQuery({ mode: 'list', includeDeleted: false, sortField: 'order_date', sortOrder: 'DESC', pageSize: 50, pageNumber: 1 });
       }
+    }
+
+    // ========================================================================
+    // EXECUTIVE REPORT RENDERING
+    // Renders the deterministic markdown produced by format_exec_answer() in
+    // app/agents/orchestrator/executive.py (mode: 'executive_question') —
+    // used by the Order AI Agent's "Executive" question chips — as a
+    // formal letterhead-style report instead of plain markdown.
+    // ========================================================================
+
+    // Minimal inline-markdown parser: links, bold, italic, inline code —
+    // mirrors the inline replacements inside convertMarkdownToHTML(), with
+    // the link regex moved first so "[label](url)" inside **bold** text
+    // (e.g. Drill-down lines) still renders as a link.
+    function parseMarkdownInline(text) {
+      if (!text) return '';
+      return text
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color:#0078d7; text-decoration:none; font-weight:bold;" target="_blank">$1</a>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong style="color:#0078d7; font-weight: 600;">$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/`([^`]+)`/g, '<code style="background:#f6f8fa; padding:2px 6px; border-radius:3px; font-family:Consolas,monospace; color:#dc3545; font-size: 0.9em;">$1</code>');
+    }
+
+    // Splits a "1) ... 2) ... 3) ..." driver list into an array of strings.
+    // Returns [] for the placeholder "—" (no drivers available).
+    function parseDrivers(raw) {
+      if (!raw || raw.trim() === '—') return [];
+      const drivers = [];
+      const re = /(\d+)\)\s*(.*?)(?=\s\d+\)\s|$)/gs;
+      let m;
+      while ((m = re.exec(raw)) !== null) {
+        const text = m[2].trim();
+        if (text) drivers.push(text);
+        if (m.index === re.lastIndex) re.lastIndex++;
+      }
+      return drivers;
+    }
+
+    // Back Home / Back to AI button row shown at the bottom of every
+    // Executive Report.
+    function execReportActions() {
+      return `<div class="exec-report-actions">
+        <button class="unified-action-btn" onclick="goBackHome()">🏠 Back Home</button>
+        <button class="unified-action-btn" onclick="showOrderAIPage()">🤖 Back to AI</button>
+      </div>`;
+    }
+
+    // Parses the deterministic markdown structure emitted by
+    // format_exec_answer() into a formal "Executive Report" layout.
+    // Returns null (so the caller can fall back to the generic renderer) if
+    // the text doesn't start with the expected "### <icon> Executive Answer"
+    // heading.
+    function renderExecutiveReport(text) {
+      if (!text) return null;
+      const lines = text.split('\n');
+      let i = 0;
+
+      const titleMatch = (lines[i] || '').match(/^###\s+(\S+)\s+(Executive Answer)\s*$/);
+      if (!titleMatch) return null;
+      const titleIcon = titleMatch[1];
+      const titleText = titleMatch[2];
+      i++;
+
+      let asOf = '';
+      const asOfMatch = (lines[i] || '').match(/^\*\*As of:\*\*\s*(.*)$/);
+      if (asOfMatch) { asOf = asOfMatch[1]; i++; }
+
+      while (lines[i] !== undefined && lines[i].trim() === '') i++;
+
+      let headlineIcon = '📌', headlineText = '';
+      const headlineMatch = (lines[i] || '').match(/^(\S+)\s+\*\*Impact now:\*\*\s*(.*)$/);
+      if (headlineMatch) {
+        headlineIcon = headlineMatch[1];
+        headlineText = headlineMatch[2];
+        i++;
+      }
+
+      while (lines[i] !== undefined && lines[i].trim() === '') i++;
+
+      let confidence = '', driversRaw = '';
+      const confMatch = (lines[i] || '').match(/^\*\*Confidence:\*\*\s*(\w+)\s*·\s*\*\*Top drivers:\*\*\s*(.*)$/);
+      if (confMatch) {
+        confidence = confMatch[1];
+        driversRaw = confMatch[2];
+        i++;
+      }
+
+      let recommendedOwner = '', recommendedStep = '';
+      const recMatch = (lines[i] || '').match(/^\*\*Recommended action:\*\*\s*(.*)$/);
+      if (recMatch) {
+        const parts = recMatch[1].split(' — ');
+        if (parts.length >= 2) {
+          recommendedOwner = parts[0];
+          recommendedStep = parts.slice(1).join(' — ');
+        } else {
+          recommendedStep = recMatch[1];
+        }
+        i++;
+      }
+
+      let drilldownLabel = '', drilldownHref = '';
+      const drillMatch = (lines[i] || '').match(/^\*\*Drill-down:\*\*\s*\[([^\]]+)\]\(([^)]+)\)/);
+      if (drillMatch) {
+        drilldownLabel = drillMatch[1];
+        drilldownHref = drillMatch[2];
+        i++;
+      }
+
+      while (lines[i] !== undefined && lines[i].trim() === '') i++;
+
+      let scopeNote = '';
+      const noteMatch = (lines[i] || '').match(/^>\s*ℹ️\s*(.*)$/);
+      if (noteMatch) {
+        scopeNote = noteMatch[1];
+        i++;
+        while (lines[i] !== undefined && lines[i].trim() === '') i++;
+      }
+
+      // Footer (last "_Source: ..._" line) — strip it from the body before
+      // splitting into sections.
+      let footer = '';
+      let bodyLines = lines.slice(i);
+      for (let j = bodyLines.length - 1; j >= 0; j--) {
+        const fm = bodyLines[j].match(/^_Source:\s*(.+)_$/);
+        if (fm) {
+          footer = fm[1];
+          bodyLines = bodyLines.slice(0, j);
+          break;
+        }
+      }
+
+      // Split remaining lines into "#### <icon> <title>" sections.
+      const sections = [];
+      let cur = null;
+      for (const line of bodyLines) {
+        const secMatch = line.match(/^####\s+(\S+)\s+(.*)$/);
+        if (secMatch) {
+          if (cur) sections.push(cur);
+          cur = { icon: secMatch[1], title: secMatch[2], lines: [] };
+        } else if (cur) {
+          cur.lines.push(line);
+        }
+      }
+      if (cur) sections.push(cur);
+
+      // ── Build the report ────────────────────────────────────────────
+      let html = '<div class="exec-report">';
+
+      html += `<div class="exec-report-header">
+        <div class="exec-report-icon">${titleIcon}</div>
+        <div>
+            <h2 class="exec-report-title">${parseMarkdownInline(titleText)}</h2>
+            ${asOf ? `<div class="exec-report-asof">As of ${escapeHtml(asOf)}</div>` : ''}
+        </div>
+      </div>`;
+
+      if (headlineText) {
+        html += `<div class="exec-report-headline">
+            <div class="exec-headline-icon">${headlineIcon}</div>
+            <div>
+                <span class="exec-headline-label">Impact Now</span>
+                <div class="exec-headline-text">${parseMarkdownInline(headlineText)}</div>
+            </div>
+        </div>`;
+      }
+
+      const drivers = parseDrivers(driversRaw);
+      const confClass = confidence ? `exec-confidence-${confidence.toLowerCase()}` : '';
+      if (confidence || drivers.length || recommendedStep || drilldownHref) {
+        html += '<div class="exec-decision-panel">';
+
+        if (confidence || drivers.length) {
+          html += '<div class="exec-decision-row">';
+          if (confidence) {
+            html += `<span class="exec-confidence-badge ${confClass}">${escapeHtml(confidence)} Confidence</span>`;
+          }
+          if (drivers.length) {
+            html += `<div class="exec-drivers"><span class="exec-drivers-label">Top Drivers</span>
+                    <ol>${drivers.map(d => `<li>${parseMarkdownInline(d)}</li>`).join('')}</ol>
+                </div>`;
+          }
+          html += '</div>';
+        }
+
+        if (recommendedStep) {
+          html += `<div class="exec-decision-row exec-recommended-row">
+                <span class="exec-recommended-label">Recommended Action</span>
+                ${recommendedOwner ? `<span class="exec-owner-badge">${escapeHtml(recommendedOwner)}</span>` : ''}
+                <span class="exec-recommended-text">${parseMarkdownInline(recommendedStep)}</span>
+            </div>`;
+        }
+
+        if (drilldownHref) {
+          html += `<div class="exec-decision-row exec-drilldown-row">
+                <a class="exec-drilldown-link" href="${escapeHtml(drilldownHref)}">🔗 ${parseMarkdownInline(drilldownLabel)}</a>
+            </div>`;
+        }
+
+        html += '</div>';
+      }
+
+      if (scopeNote) {
+        html += `<div class="exec-scope-note">
+            <span class="exec-scope-icon">ℹ️</span>
+            <div>${parseMarkdownInline(scopeNote)}</div>
+        </div>`;
+      }
+
+      if (sections.length) {
+        html += '<div class="exec-report-body">';
+        for (const sec of sections) {
+          html += `<div class="exec-section">
+                <div class="exec-section-header">
+                    <span class="exec-section-icon">${sec.icon}</span>
+                    <h4 class="exec-section-title">${parseMarkdownInline(sec.title)}</h4>
+                </div>
+                <div class="exec-section-body">${convertMarkdownToHTML(sec.lines.join('\n'))}</div>
+            </div>`;
+        }
+        html += '</div>';
+      }
+
+      if (footer) {
+        html += `<div class="exec-report-footer">Source: ${parseMarkdownInline(footer)}</div>`;
+      }
+
+      html += execReportActions();
+      html += '</div>';
+      return html;
     }
 
     // Convert markdown to HTML (for stored procedure formatted output)
