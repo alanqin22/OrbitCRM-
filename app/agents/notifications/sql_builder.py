@@ -38,6 +38,9 @@ VALID_PARAMS = {
     'offset',
     'module',
     'search',
+    'status',     # v2k3 — read/unread filter
+    'dateFrom',   # v2k3 — created_at >= date
+    'dateTo',     # v2k3 — created_at <= date
 }
 
 # Explicit remaps — notifications SP uses _uuid suffix, not plain _id
@@ -48,6 +51,9 @@ PARAM_REMAP = {
     'offset':         'p_offset',
     'module':         'p_module',
     'search':         'p_search',
+    'status':         'p_status',
+    'dateFrom':       'p_date_from',
+    'dateTo':         'p_date_to',
 }
 
 REQUIRED_BY_MODE: Dict[str, List[str]] = {

@@ -104,6 +104,25 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         logger.info(f'-> PASSTHRU: AI Agent | currentMessage: {current[:120]}')
         return {'router_action': False, 'current_message': current}
 
+    # ── Executive questions (CEO / CFO / VP bank) ─────────────────────────────
+    # Interrogative phrasings route to the shared executive Q&A layer with the
+    # decision-grade format. Imperative commands ("Show active contacts",
+    # "Find contacts named Lila") keep their deterministic routes below.
+    _is_exec_q = raw.rstrip().endswith('?') or bool(re.match(
+        r'^(?:are|what|which|how|do|does|where|when|who|why|if)\b|^show\s+audit',
+        msg))
+    if _is_exec_q:
+        try:
+            from app.agents.orchestrator.executive import match_exec_question
+            _exec = match_exec_question(raw)
+        except Exception:
+            _exec = None
+        if _exec:
+            _sections, _note = _exec
+            logger.info(f'[executive] sections={_sections}')
+            return routed({'mode': 'executive_question',
+                           'sections': _sections, 'note': _note})
+
     # -- List Contacts ---------------------------------------------------------
     if msg.startswith('list contacts:'):
         return routed(_compact({

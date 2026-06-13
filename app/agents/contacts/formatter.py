@@ -217,6 +217,10 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
             f"Please try again or contact support."
         )
 
+    # ── Executive answer — pre-formatted by the shared executive layer ───────
+    if mode == 'executive_question':
+        return response.get('exec_markdown') or 'No executive data available.'
+
     # ── UI-only marker modes — frontend opens the inline form ────────────────
     _ui_form_messages = {
         'show_contact_form':        'Opening the Create Contact form below…',

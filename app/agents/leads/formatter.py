@@ -261,6 +261,13 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
 
     logger.info(f'Format Response (sp_leads v4.5) — mode={mode}')
 
+    # ── Executive answer — pre-formatted by the shared executive layer ───────
+    if mode == 'executive_question':
+        return {'output': response.get('exec_markdown') or 'No executive data available.',
+                'mode': 'executive_question',
+                'report_mode': 'executive_question',
+                'success': True}
+
     # ── Error check ───────────────────────────────────────────────────────────
     is_error   = metadata.get('status') == 'error' or (
         isinstance(metadata.get('code'), (int, float)) and metadata.get('code', 0) < 0

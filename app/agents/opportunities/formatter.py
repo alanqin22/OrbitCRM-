@@ -371,6 +371,11 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         )
         return {'output': output, 'mode': mode, 'report_mode': 'error'}
 
+    # ── Executive answer — pre-formatted by the shared executive layer ───────
+    if mode == 'executive_question':
+        return {'output': response.get('exec_markdown') or 'No executive data available.',
+                'mode': 'executive_question', 'report_mode': 'executive_question'}
+
     # ── UI-only marker modes — frontend opens the inline form ────────────────
     _ui_form_messages = {
         'show_opportunity_form':                'Opening the Create Opportunity form below…',

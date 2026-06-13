@@ -50,6 +50,7 @@ from app.agents.accounting.router    import router as accounting_router
 from app.agents.leads.router         import router as leads_router
 from app.agents.analytics.router     import router as analytics_router
 from app.agents.notifications.router import router as notifications_router
+from app.agents.orchestrator.router  import router as orchestrator_router
 
 # -- Store module (CRM Commerce View — direct SP routing, no AI agent)
 from app.agents.store.router import router as store_router
@@ -302,6 +303,7 @@ app.include_router(accounting_router)
 app.include_router(leads_router)
 app.include_router(analytics_router)
 app.include_router(notifications_router)
+app.include_router(orchestrator_router)
 
 # -- Store module (direct SP routing — no AI agent)
 app.include_router(store_router)

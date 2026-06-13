@@ -95,6 +95,12 @@ class AccountingChatInput(BaseModel):
     startDate:   Optional[str] = None
     endDate:     Optional[str] = None
 
+    # List-pagination context replay (frontend echoes rawParams back via the
+    # routerAction short-circuit so Next/Prev Page keeps the original filters)
+    search:       Optional[str]  = None
+    statusFilter: Optional[str]  = None
+    overdue:      Optional[bool] = None
+
 
 class AccountingChatRequest(BaseModel):
     chatInput: AccountingChatInput
@@ -170,6 +176,9 @@ async def accounting_chat(req: AccountingChatRequest):
         "listingType": ci.listingType,
         "startDate":   ci.startDate,
         "endDate":     ci.endDate,
+        "search":       ci.search,
+        "statusFilter": ci.statusFilter,
+        "overdue":      ci.overdue,
         # ── Routing control (must be forwarded so pre_router short-circuit fires) ──
         "mode":         ci.mode,
         "routerAction": ci.routerAction,

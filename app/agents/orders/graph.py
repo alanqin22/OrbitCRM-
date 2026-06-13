@@ -154,6 +154,20 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
         if not parsed_json:
             return {**state, "db_rows": []}
 
+        # ── Executive questions — sp_orchestrator('executive') pack with the
+        # shared decision-grade format (headline, confidence, drivers, action).
+        if parsed_json.get("mode") == "executive_question":
+            from app.agents.orchestrator.executive import format_exec_answer
+            rows = execute_sp("SELECT sp_orchestrator('executive') AS result")
+            pack = (rows[0].get("result") or {}) if rows else {}
+            text = format_exec_answer(pack,
+                                      parsed_json.get("sections") or [],
+                                      parsed_json.get("note"))
+            return {**state, "db_rows": [{"result": {
+                "metadata": {"status": "success", "code": 0, "mode": "executive_question"},
+                "exec_markdown": text,
+            }}]}
+
         # ── UI-only marker modes — no DB call; formatter emits a [MODE:*]
         # marker the frontend uses to open an inline form.
         _ui_only_modes = {'show_order_form', 'ask_order_identifier'}
@@ -164,6 +178,63 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
             }}]}
 
         raw_message = state.get("raw_message") or state.get("user_input", "")
+
+        # ── account_summary by name: resolve accountSearch → accountId ──────
+        # "Revenue summary for Bob Brown" — pre-router passes accountSearch;
+        # look the name up via account_search, prefer an exact match, and run
+        # the summary for that account. Falls back to the global summary when
+        # the name can't be resolved unambiguously.
+        if (parsed_json.get("mode") == "account_summary"
+                and parsed_json.get("accountSearch")):
+            _name = str(parsed_json.pop("accountSearch")).strip()
+            try:
+                _q, _ = build_orders_query({"mode": "account_search", "search": _name})
+                _rows = execute_sp(_q)
+                _res = (_rows[0].get("result") or {}) if _rows else {}
+                _accts = _res.get("accounts") or _res.get("matches") or []
+                _exact = [a for a in _accts
+                          if str(a.get("account_name") or "").lower() == _name.lower()]
+                _pick = (_exact[0] if _exact else
+                         (_accts[0] if len(_accts) == 1 else None))
+                if _pick and _pick.get("account_id"):
+                    parsed_json = {**parsed_json, "accountId": _pick["account_id"]}
+                    logger.info(f"[account-summary-resolve] {_name!r} → {_pick['account_id']}")
+                else:
+                    logger.info(f"[account-summary-resolve] {_name!r}: {len(_accts)} matches — global summary")
+            except Exception as _re:
+                logger.warning(f"[account-summary-resolve] lookup failed: {_re}")
+            state = {**state, "parsed_json": parsed_json}
+
+        # ── list by name: resolve search → accountId for account-name matches ──
+        # "Show orders for Carlos Martinez" / "Show orders for Bob Brown" — the
+        # pre-router passes a broad `search` term. sp_orders' list-mode p_search
+        # ALSO matches contact first/last/full name across ALL accounts, so a
+        # search like "Carlos Martinez" (an account name AND a contact on a
+        # *different* account's order) leaks that unrelated order into the
+        # results. When the term resolves to a single account (preferring an
+        # exact name match), filter by that accountId instead so results are
+        # scoped to that customer's own orders only.
+        if (parsed_json.get("mode") == "list"
+                and parsed_json.get("search")
+                and not parsed_json.get("accountId")):
+            _name = str(parsed_json["search"]).strip()
+            try:
+                _q, _ = build_orders_query({"mode": "account_search", "search": _name})
+                _rows = execute_sp(_q)
+                _res = (_rows[0].get("result") or {}) if _rows else {}
+                _accts = _res.get("accounts") or _res.get("matches") or []
+                _exact = [a for a in _accts
+                          if str(a.get("account_name") or "").lower() == _name.lower()]
+                _pick = (_exact[0] if _exact else
+                         (_accts[0] if len(_accts) == 1 else None))
+                if _pick and _pick.get("account_id"):
+                    parsed_json = {**parsed_json, "accountId": _pick["account_id"]}
+                    parsed_json.pop("search", None)
+                    logger.info(f"[list-search-resolve] {_name!r} → accountId {_pick['account_id']}")
+            except Exception as _re:
+                logger.warning(f"[list-search-resolve] lookup failed: {_re}")
+            state = {**state, "parsed_json": parsed_json}
+
         query, _ = build_orders_query(dict(parsed_json), raw_message)
         logger.info(f"Built sp_orders query — mode={parsed_json.get('mode')} action={parsed_json.get('action', '')}")
 
@@ -186,17 +257,26 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
                             o for o in orders
                             if str(o.get("status") or "").lower() == req_status
                         ]
+                        # Only rewrite the payload when this safety net actually
+                        # removed rows — the SP already filters by status, and
+                        # overwriting total_records with the page row count on a
+                        # no-op pass broke multi-page totals (e.g. "completed"
+                        # showed "Total: 50" instead of 331).
                         if len(orders_filtered) < len(orders):
                             logger.info(
                                 f"[status-filter] Filtered {len(orders)} → "
                                 f"{len(orders_filtered)} orders for status={req_status!r}"
                             )
-                        result = dict(result)
-                        result["orders"] = orders_filtered
-                        meta = dict(result.get("metadata") or {})
-                        meta["total_records"] = len(orders_filtered)
-                        result["metadata"] = meta
-                        filtered.append({"result": result})
+                            result = dict(result)
+                            result["orders"] = orders_filtered
+                            meta = dict(result.get("metadata") or {})
+                            meta["total_records"] = len(orders_filtered)
+                            _ps = int(meta.get("page_size") or 50)
+                            meta["total_pages"] = max(1, (len(orders_filtered) + _ps - 1) // _ps)
+                            result["metadata"] = meta
+                            filtered.append({"result": result})
+                        else:
+                            filtered.append(row)
                     else:
                         filtered.append(row)
                 db_rows = filtered

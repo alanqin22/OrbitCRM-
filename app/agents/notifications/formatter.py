@@ -258,6 +258,24 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
 
     logger.info(f'Format Response (sp_notifications v2.6) — mode={mode}')
 
+    # ── Executive answer — pre-formatted by the shared executive layer ───────
+    if mode == 'executive_question':
+        return {
+            'output': response.get('exec_markdown') or 'No executive data available.',
+            'mode': 'executive_question',
+            'success': True,
+        }
+
+    # ── Error short-circuit (e.g. employee-name resolution failure) ─────────
+    _meta = response.get('metadata') if isinstance(response, dict) else None
+    if isinstance(_meta, dict) and _meta.get('status') == 'error':
+        msg = _meta.get('message') or 'An error occurred.'
+        return {
+            'output':  f'### ⚠️ {msg}\n\n[ACTION:Show all notifications]',
+            'mode':    mode,
+            'success': False,
+        }
+
     out: List[str] = []
     out.append(f'### {_mode_name(mode)}')
     out.append(f'**Time:** {_fmt_dt(datetime.utcnow().isoformat())}')
@@ -305,7 +323,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                 is_unread  = status in ('pending', 'sent', 'unread')
                 status_txt = '**🟢 Unread**' if is_unread else 'Read'
 
-                emp_uuid   = n.get('employee_uuid') or '—'
+                emp_uuid   = n.get('employee_name') or n.get('employee_uuid') or '—'
 
                 # Toggle marker: [TOGGLE:notification_uuid:status:employee_uuid]
                 toggle_status = 'unread' if is_unread else 'read'

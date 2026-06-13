@@ -111,6 +111,20 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
         if not parsed_json:
             return {**state, "db_rows": []}
 
+        # ── Executive questions — sp_orchestrator('executive') pack with the
+        # shared decision-grade format (headline, confidence, drivers, action).
+        if parsed_json.get("mode") == "executive_question":
+            from app.agents.orchestrator.executive import format_exec_answer
+            rows = execute_sp("SELECT sp_orchestrator('executive') AS result")
+            pack = (rows[0].get("result") or {}) if rows else {}
+            text = format_exec_answer(pack,
+                                      parsed_json.get("sections") or [],
+                                      parsed_json.get("note"))
+            return {**state, "db_rows": [{"result": {
+                "metadata": {"status": "success", "code": 0, "mode": "executive_question"},
+                "exec_markdown": text,
+            }}]}
+
         # ── UI-only marker modes — no DB call, formatter renders the marker
         # text that the HTML response router uses to open an inline form.
         _ui_only_modes = {
@@ -161,6 +175,31 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
                                                     "mode": "show_price_history_form"}}}]
                 logger.info(f"priceHistoryRequested: {len(products)} match(es) → show_price_history_form")
             state = {**state, 'parsed_json': parsed_json}
+
+        # Auto-resolve: "show details for <name>" → list search with exactly
+        # 1 result → automatically fetch get_details for that product.
+        # 0 or 2+ matches simply render the (possibly empty) list so the user
+        # can pick via each row's View Details button.
+        if parsed_json.get('detailsRequested') and parsed_json.get('mode') == 'list':
+            sp_result = db_rows[0] if db_rows else {}
+            inner = {}
+            for _key in ('sp_products', 'result'):
+                _val = sp_result.get(_key) if isinstance(sp_result, dict) else None
+                if _val and isinstance(_val, dict):
+                    inner = _val
+                    break
+            products = inner.get('products') or []
+            if len(products) == 1:
+                product_id = str(products[0].get('product_id') or '')
+                if product_id:
+                    gd_params = {'mode': 'get_details', 'productId': product_id}
+                    gd_query, _ = build_products_query(gd_params)
+                    db_rows = execute_sp(gd_query)
+                    parsed_json = gd_params
+                    logger.info(f"detailsRequested auto-resolved → get_details productId={product_id}")
+                    state = {**state, 'parsed_json': parsed_json}
+            else:
+                logger.info(f"detailsRequested: {len(products)} match(es) — rendering list")
 
         return {**state, "db_rows": db_rows, "parsed_json": parsed_json}
 

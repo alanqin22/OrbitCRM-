@@ -73,6 +73,7 @@ STAGE_MAP = {
     'negotiation':   re.compile(r'\bnegotiation\b', re.IGNORECASE),
     'closed_won':    re.compile(r'\bclosed.?won\b', re.IGNORECASE),
     'closed_lost':   re.compile(r'\bclosed.?lost\b', re.IGNORECASE),
+    'closed_paid':   re.compile(r'\bclosed.?paid\b', re.IGNORECASE),
 }
 
 
@@ -274,7 +275,7 @@ def _match_nl(message: str) -> Optional[dict]:
         return {'mode': 'show_opportunity_form'}
 
     # Update opportunity (no UUID, no product mention).
-    if not _has_uuid and 'product' not in msg and re.search(r'\bupdate\b.*\bopportunit', msg):
+    if not _has_uuid and 'product' not in msg and re.search(r'\b(?:update|edit)\b.*\bopportunit', msg):
         return {'mode': 'show_opportunity_update_form'}
 
     # Pipeline / opportunity summary
@@ -407,6 +408,27 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
 
     # ── CASE 2: Natural-language message matching a known pattern ──────────
     nl_message = (chat_input.get('message') or '').strip()
+
+    # ── Executive questions (CEO / CFO / VP bank) ───────────────────────────
+    # Interrogative phrasings route to the shared executive Q&A layer with
+    # the decision-grade format (headline, confidence, drivers, action,
+    # drill-down). Imperative commands ("Show open opportunities") keep
+    # their deterministic routes below.
+    _msg_l = nl_message.lower()
+    _is_exec_q = nl_message.rstrip().endswith('?') or bool(re.match(
+        r'^(?:are|what|which|how|do|does|where|when|who|why|if)\b|^show\s+audit',
+        _msg_l))
+    if _is_exec_q:
+        try:
+            from app.agents.orchestrator.executive import match_exec_question
+            _exec = match_exec_question(nl_message)
+        except Exception:
+            _exec = None
+        if _exec:
+            _sections, _note = _exec
+            logger.info(f'[executive] sections={_sections}')
+            return _routed({'mode': 'executive_question',
+                            'sections': _sections, 'note': _note})
 
     # Supplement with legacy structured fields
     if chat_input.get('city'):        nl_message += f", city {chat_input['city']}"

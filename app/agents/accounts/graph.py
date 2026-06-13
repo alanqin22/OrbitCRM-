@@ -118,6 +118,20 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
         if not parsed_json:
             return {**state, "db_rows": []}
 
+        # ── Executive questions — sp_orchestrator('executive') pack with the
+        # shared decision-grade format (headline, confidence, drivers, action).
+        if parsed_json.get("mode") == "executive_question":
+            from app.agents.orchestrator.executive import format_exec_answer
+            rows = execute_sp("SELECT sp_orchestrator('executive') AS result")
+            pack = (rows[0].get("result") or {}) if rows else {}
+            text = format_exec_answer(pack,
+                                      parsed_json.get("sections") or [],
+                                      parsed_json.get("note"))
+            return {**state, "db_rows": [{"result": {
+                "metadata": {"status": "success", "code": 0, "mode": "executive_question"},
+                "exec_markdown": text,
+            }}]}
+
         # ── UI-only marker modes — no DB call; formatter emits a [MODE:*]
         # marker the frontend uses to open an inline form.
         _ui_only_modes = {'show_account_form', 'show_account_update_form'}
@@ -470,16 +484,20 @@ LEFT JOIN LATERAL (
         # resolve to UUID via direct SQL before calling sp_accounts.
         # Tries exact match first, then word-based ILIKE (e.g. "Apex Solutions"
         # matches "Apex Digital Solutions") — only accepts unambiguous results.
-        _lookup_modes = {'get', 'timeline', 'financials', 'update'}
+        _lookup_modes = {'get', 'timeline', 'financials', 'update', 'archive', 'restore'}
         if (parsed_json.get('mode') in _lookup_modes and
                 parsed_json.get('accountName') and
                 not parsed_json.get('accountId')):
             _aname = parsed_json['accountName']
+            # "restore" targets archived accounts, so look among is_deleted=true
+            # rows; every other mode operates on live (non-deleted) accounts.
+            _del_clause = ("is_deleted = true" if parsed_json.get('mode') == 'restore'
+                            else "(is_deleted IS NULL OR is_deleted = false)")
             try:
                 _lookup_rows = execute_sp(
                     "SELECT account_id::text FROM accounts"
                     " WHERE LOWER(TRIM(account_name)) = LOWER(TRIM(%(name)s))"
-                    "   AND (is_deleted IS NULL OR is_deleted = false)"
+                    f"   AND {_del_clause}"
                     " LIMIT 1",
                     params={'name': _aname},
                 )
@@ -493,7 +511,7 @@ LEFT JOIN LATERAL (
                         _wparams = {f'w{i}': f'%{w}%' for i, w in enumerate(_words)}
                         _fallback = execute_sp(
                             f"SELECT account_id::text FROM accounts WHERE ({_conds})"
-                            "   AND (is_deleted IS NULL OR is_deleted = false) LIMIT 2",
+                            f"   AND {_del_clause} LIMIT 2",
                             params=_wparams,
                         )
                         if len(_fallback) == 1:
@@ -502,8 +520,9 @@ LEFT JOIN LATERAL (
                     _aid = str(_lookup_rows[0]['account_id'])
                     logger.info(f"Name resolved: '{_aname}' → {_aid}")
                     parsed_json = {**parsed_json, 'accountId': _aid}
-                    # For update: remove accountName so the SP doesn't rename the account
-                    if parsed_json.get('mode') == 'update':
+                    # For update/archive/restore: remove accountName — the SP
+                    # only takes accountId (and update would otherwise rename it)
+                    if parsed_json.get('mode') in ('update', 'archive', 'restore'):
                         parsed_json = {k: v for k, v in parsed_json.items() if k != 'accountName'}
             except Exception as _ne:
                 logger.warning(f"Name resolution failed for '{_aname}': {_ne}")

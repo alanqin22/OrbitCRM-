@@ -177,6 +177,17 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             'success': True,
         }
 
+    # ── Executive answer — pre-formatted by the shared executive layer ───────
+    if params_mode == 'executive_question':
+        _resp = _parse_response(db_rows)
+        return {
+            'output': _resp.get('exec_markdown') or 'No executive data available.',
+            'mode': 'executive_question',
+            'reportMode': 'executive_question',
+            'entity': 'orders',
+            'success': True,
+        }
+
     response    = _parse_response(db_rows)
     mode        = _detect_mode(response, params_mode)
     context     = params.get('context')

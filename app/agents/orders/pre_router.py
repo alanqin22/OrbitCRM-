@@ -61,7 +61,7 @@ from __future__ import annotations
 import re
 import calendar
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -152,6 +152,25 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
                    if k not in _SKIP and v is not None}
         logger.info(f'→ routerAction SHORT-CIRCUIT: mode={_params.get("mode")}')
         return {'router_action': True, 'params': _params}
+
+    # ── Executive questions (CEO / CFO / VP bank) ─────────────────────────────
+    # Interrogative phrasings route to the shared executive Q&A layer with the
+    # decision-grade format. Imperative commands ("Show all orders", "Sales
+    # summary") keep their deterministic routes below.
+    _is_exec_q = raw.rstrip().endswith('?') or bool(re.match(
+        r'^(?:are|what|which|how|do|does|where|when|who|why|if)\b|^show\s+audit',
+        msg))
+    if _is_exec_q:
+        try:
+            from app.agents.orchestrator.executive import match_exec_question
+            _exec = match_exec_question(raw)
+        except Exception:
+            _exec = None
+        if _exec:
+            _sections, _note = _exec
+            logger.info(f'[executive] sections={_sections}')
+            return _routed({'mode': 'executive_question',
+                            'sections': _sections, 'note': _note})
 
     # ── 1. order_direct_operation — highest priority structured path ──────────
     if raw in ('order_direct_operation', 'batch_update_order') or \
@@ -258,7 +277,57 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
     if msg.startswith('show order details for order number'):
         ons = _order_numbers(raw)
         if ons:
-            return _routed({'mode': 'get_detail', 'orderNumber': ons[0]})
+            return _routed({'mode': 'get_detail', 'orderNumber': ons[0].upper()})
+
+    # ── any "show/view details / 360" mention of an SO-number → get_detail ──
+    # "Show details for SO-2026-100202", "order 360 for SO-2026-100202".
+    # Uppercased because the SP compares order_number case-sensitively.
+    _det_ons = _order_numbers(raw)
+    if _det_ons and (re.search(r'\b(?:details?|360|info(?:rmation)?)\b', msg)
+                     or re.match(r'^(?:show|view|get|find|display)\b', msg)):
+        return _routed({'mode': 'get_detail', 'orderNumber': _det_ons[0].upper()})
+
+    # ── sales by month → sales_summary (optionally year-scoped) ──────────────
+    if re.search(r'\bsales\s+by\s+month\b', msg) or re.search(r'\bmonthly\s+breakdown\b', msg):
+        params = {'mode': 'sales_summary'}
+        yr_m = re.search(r'\b(20\d{2})\b', raw)
+        if yr_m:
+            params['year'] = int(yr_m.group(1))
+        return _routed(params)
+
+    # ── change status of <SO-number|uuid> to <status> ────────────────────────
+    # "Change status of SO-2026-100202 to shipped" / "Set SO-2026-100202 to
+    # shipped" → deterministic update/change_status (explicit single-order
+    # write; the AI previously handled this slowly and unreliably).
+    _st_m = re.match(
+        r'^(?:change|update|set)\s+(?:the\s+)?(?:status\s+of\s+)?(?:order\s+)?'
+        r'(\S+)\s+(?:status\s+)?to\s+([a-z]+)\s*$',
+        msg, re.IGNORECASE
+    )
+    if _st_m and _st_m.group(2).lower() in VALID_STATUSES:
+        _target, _status = _st_m.group(1), _st_m.group(2).lower()
+        ons = _order_numbers(_target.upper())
+        ids = _uuids(_target)
+        if ons or ids:
+            p = {'mode': 'update', 'action': 'change_status', 'status': _status}
+            if ons:
+                p['orderNumber'] = ons[0]
+            else:
+                p['orderId'] = ids[0]
+            return _routed(p)
+
+    # ── show orders page N ────────────────────────────────────────────────────
+    _page_m = re.match(
+        r'^(?:please\s+)?(?:show|list|get|find|display|give|fetch)?\s*(?:me\s+)?'
+        r'(?:all\s+)?(?:the\s+)?orders?,?\s+(?:on\s+)?page\s+(\d+)\s*$',
+        msg, re.IGNORECASE
+    )
+    if _page_m:
+        return _routed({
+            'mode': 'list', 'includeDeleted': False,
+            'sortField': 'order_date', 'sortOrder': 'DESC',
+            'pageSize': 50, 'pageNumber': int(_page_m.group(1)),
+        })
 
     # ── Orders list intents — flexible NL matching ───────────────────────────
     # Captures variations like:
@@ -343,26 +412,84 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
     ):
         return _routed({'mode': 'show_order_form'})
 
+    # "change order status" / "update order status" (vague, no target order)
+    # → open the Update form so the user picks the order + status. Must come
+    # BEFORE the advance_statuses check — a vague singular phrase must never
+    # trigger the bulk lifecycle advancement (which mutates dozens of orders).
+    if re.match(
+        r'^(?:i\s+want\s+to\s+)?(?:please\s+)?'
+        r'(?:change|update|set|modify)\s+(?:an?\s+|the\s+)?order\s+status\s*$',
+        msg, re.IGNORECASE
+    ):
+        return _routed({'mode': 'show_order_form'})
+
     # advance / process orders — calls fn_advance_order_statuses()
     # Requires an explicit "advance", "auto-advance", "process", "progress",
-    # "move", or status-specific phrase. "update order" alone is excluded so
-    # it falls through to the Update form intent above.
+    # "move", or the PLURAL "update order statuses". The singular "update/
+    # change order status" opens the Update form above instead — a vague
+    # single-order intent must not trigger the bulk advancement.
     if re.search(
         r'\b(advance|auto.?advance|process|progress|move)\b.*\borders?\b'
         r'|ship\s+(?:all\s+)?ready\s+orders?'
         r'|\border\s+status(?:es)?\s+(?:update|advance)'
-        r'|\bupdate\s+order\s+status(?:es)?\b',
+        r'|\bupdate\s+order\s+statuses\b',
         msg, re.IGNORECASE
     ):
         return _routed({'mode': 'advance_statuses'})
 
-    # sales summary
+    # sales summary — with optional period parsing:
+    #   "sales summary for 2025"      → year filter
+    #   "sales summary for Q1 2026"   → quarter date range
+    #   "sales summary this month"    → month-to-date
+    #   "sales summary last month" / "this quarter" / "last quarter" / "this year"
     if msg == 'sales summary' or msg.startswith('sales summary'):
-        yr_m = re.search(r'\b(20\d{2})\b', raw)
         params = {'mode': 'sales_summary'}
-        if yr_m:
-            params['year'] = int(yr_m.group(1))
+        today = date.today()
+        q_m = re.search(r'\bq([1-4])\s*,?\s*(20\d{2})\b', msg, re.IGNORECASE)
+        if q_m:
+            q, yr = int(q_m.group(1)), int(q_m.group(2))
+            q_start_month = (q - 1) * 3 + 1
+            q_end_month = q_start_month + 2
+            params['startDate'] = f"{yr}-{q_start_month:02d}-01"
+            params['endDate'] = f"{yr}-{q_end_month:02d}-{calendar.monthrange(yr, q_end_month)[1]:02d}"
+        elif re.search(r'\bthis\s+month\b', msg):
+            params['startDate'] = today.replace(day=1).isoformat()
+            params['endDate'] = today.isoformat()
+        elif re.search(r'\blast\s+month\b', msg):
+            first_this = today.replace(day=1)
+            last_end = first_this - timedelta(days=1)
+            params['startDate'] = last_end.replace(day=1).isoformat()
+            params['endDate'] = last_end.isoformat()
+        elif re.search(r'\bthis\s+quarter\b', msg):
+            q_start_month = ((today.month - 1) // 3) * 3 + 1
+            params['startDate'] = today.replace(month=q_start_month, day=1).isoformat()
+            params['endDate'] = today.isoformat()
+        elif re.search(r'\blast\s+quarter\b', msg):
+            q_start_month = ((today.month - 1) // 3) * 3 + 1
+            this_q_start = today.replace(month=q_start_month, day=1)
+            last_q_end = this_q_start - timedelta(days=1)
+            lq_start = ((last_q_end.month - 1) // 3) * 3 + 1
+            params['startDate'] = last_q_end.replace(month=lq_start, day=1).isoformat()
+            params['endDate'] = last_q_end.isoformat()
+        elif re.search(r'\bthis\s+year\b', msg):
+            params['startDate'] = today.replace(month=1, day=1).isoformat()
+            params['endDate'] = today.isoformat()
+        else:
+            yr_m = re.search(r'\b(20\d{2})\b', raw)
+            if yr_m:
+                params['year'] = int(yr_m.group(1))
         return _routed(params)
+
+    # revenue summary for <account name> — resolved to accountId in graph.py
+    # via an account_search lookup ("Revenue summary for Bob Brown").
+    _rev_name_m = re.match(
+        r'^(?:revenue|account\s+revenue|sales)\s+summary\s+for\s+([A-Za-z].*?)\s*$',
+        raw, re.IGNORECASE
+    )
+    if _rev_name_m and not re.match(r'^(?:q[1-4]\b|20\d{2}\b|this\b|last\b)', _rev_name_m.group(1), re.IGNORECASE):
+        _acct_name = _rev_name_m.group(1).strip().rstrip('?.,;')
+        if _acct_name and not _acct_name.isdigit():
+            return _routed({'mode': 'account_summary', 'accountSearch': _acct_name})
 
     # account summary / show top spending customers
     if msg in ('account summary',) or \
@@ -403,35 +530,60 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
                 'pageSize': 50, 'pageNumber': 1,
             })
 
-    # soft delete order <uuid>
+    # soft delete order <uuid> | <SO-number>
     if msg.startswith('soft delete order'):
         ids = _uuids(raw)
-        if ids:
-            p = {'mode': 'update', 'action': 'soft_delete', 'orderId': ids[0]}
+        ons = _order_numbers(raw)
+        if ids or ons:
+            p = {'mode': 'update', 'action': 'soft_delete'}
+            if ids:
+                p['orderId'] = ids[0]
+            else:
+                p['orderNumber'] = ons[0].upper()
             upd = _kv(raw, 'updatedBy') or _kv(raw, 'updated_by')
             if upd:
                 p['updatedBy'] = upd
             return _routed(p)
 
-    # delete order <uuid>
+    # delete order <uuid> | <SO-number>
     if msg.startswith('delete order'):
         ids = _uuids(raw)
-        if ids:
-            p = {'mode': 'update', 'action': 'soft_delete', 'orderId': ids[0]}
+        ons = _order_numbers(raw)
+        if ids or ons:
+            p = {'mode': 'update', 'action': 'soft_delete'}
+            if ids:
+                p['orderId'] = ids[0]
+            else:
+                p['orderNumber'] = ons[0].upper()
             upd = _kv(raw, 'updatedBy') or _kv(raw, 'updated_by')
             if upd:
                 p['updatedBy'] = upd
             return _routed(p)
 
-    # restore order <uuid>
+    # restore order <uuid> | <SO-number>
     if msg.startswith('restore order'):
         ids = _uuids(raw)
-        if ids:
-            p = {'mode': 'update', 'action': 'restore', 'orderId': ids[0]}
+        ons = _order_numbers(raw)
+        if ids or ons:
+            p = {'mode': 'update', 'action': 'restore'}
+            if ids:
+                p['orderId'] = ids[0]
+            else:
+                p['orderNumber'] = ons[0].upper()
             upd = _kv(raw, 'updatedBy') or _kv(raw, 'updated_by')
             if upd:
                 p['updatedBy'] = upd
             return _routed(p)
+
+    # "restore a deleted order" (vague — no UUID/SO number) → list including
+    # deleted orders so the user can locate the one to restore.
+    if re.search(r'\brestore\b', msg, re.IGNORECASE) and re.search(r'\border', msg, re.IGNORECASE) \
+       and not _uuids(raw) and not _order_numbers(raw):
+        return _routed({
+            'mode': 'list', 'includeDeleted': True,
+            'sortField': 'order_date', 'sortOrder': 'DESC',
+            'pageSize': 50, 'pageNumber': 1,
+        })
 
     # create order for account <uuid>
     if msg.startswith('create order for account'):

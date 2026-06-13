@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import re
 import logging
+from datetime import date, timedelta
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -197,6 +198,140 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
             return _passthru(raw, chat_input)
         logger.info(f'[unread_count] employeeId={employee_id}')
         return _routed({'mode': 'unread_count', 'employeeId': employee_id})
+
+    # ── Executive questions (CEO / CFO / VP alert bank) ──────────────────────
+    # Alert-style phrasings ("Receivable escalation", "Discounting spike") and
+    # interrogatives route to the shared executive Q&A layer. Anything
+    # mentioning "notification(s)" stays on the deterministic notification
+    # routes below unless phrased as a question that the bank matches.
+    _is_exec_candidate = (
+        raw.rstrip().endswith('?')
+        or bool(re.match(r'^(?:are|what|which|how|do|does|where|when|who|why|if)\b', msg))
+        or 'notification' not in msg
+        or bool(re.search(r'\b(alert|flag|escalation|drift|breach|spike|digest)\b', msg))
+    )
+    if _is_exec_candidate and raw:
+        try:
+            from app.agents.orchestrator.executive import match_exec_question
+            _exec = match_exec_question(raw)
+        except Exception:
+            _exec = None
+        if _exec:
+            _sections, _note = _exec
+            logger.info(f'[executive] sections={_sections}')
+            return _routed({'mode': 'executive_question',
+                            'sections': _sections, 'note': _note})
+
+    # ── Natural-language shortcuts (v3.0) ────────────────────────────────────
+    # Deterministic routing for typed / voice queries so the AI Agent is a
+    # true last resort. Combinable: module + read-status + employee name +
+    # search term + date window + page.
+    if re.search(r'\bnotifications?\b', msg) or re.search(r'\bunread\s+count\b', msg) \
+       or re.match(r'^mark\s+all\b', msg):
+
+        # Vague single-notification actions → AI asks for the notification ID
+        if re.match(r'^(?:mark|set)\s+(?:a\s+|the\s+)?notification\s+(?:as\s+)?(?:read|unread)\s*$', msg) \
+           or re.match(r'^inspect\s+(?:a\s+|the\s+)?notification\s*$', msg):
+            logger.info('[NL] vague single-notification action — passthru to AI')
+            return _passthru(raw, chat_input)
+
+        # "mark all [notifications] [as] read/unread [for <employee>]"
+        m = re.match(
+            r'^mark\s+all(?:\s+notifications?)?\s+(?:as\s+)?(read|unread)'
+            r'(?:\s+for\s+(.+?))?\s*$', msg)
+        if m:
+            p: dict = {'mode': f'mark_all_{m.group(1)}'}
+            if m.group(2):
+                p['employeeName'] = raw[m.start(2):m.end(2)].strip().rstrip('?.!,')
+            elif _val(chat_input.get('employeeId')):
+                p['employeeId'] = _val(chat_input['employeeId'])
+            logger.info(f"[NL] → {p['mode']} {p.get('employeeName', '')}")
+            return _routed(p)
+
+        # "unread count for <name>" / "how many unread notifications does <name> have"
+        if re.search(r'\bunread\s+count\b', msg) or re.search(r'\bhow\s+many\s+unread\b', msg):
+            name_m = re.search(r"\b(?:for|does)\s+([A-Z][\w.'-]*(?:\s+[A-Z][\w.'-]*)*)", raw)
+            if name_m:
+                logger.info(f'[NL] → unread_count for {name_m.group(1)!r}')
+                return _routed({'mode': 'unread_count', 'employeeName': name_m.group(1).strip()})
+            logger.info('[NL] unread count without employee — passthru to AI')
+            return _passthru(raw, chat_input)
+
+        # "search notifications for/about <term>"
+        sm = re.match(r'^search\s+notifications?\s+(?:for|about|containing|mentioning)\s+(.+?)\s*$', msg)
+        if sm:
+            term = raw[sm.start(1):sm.end(1)].strip().rstrip('?.!,')
+            logger.info(f'[NL] → list search={term!r}')
+            return _routed({'mode': 'list', 'search': term, 'limit': 50})
+
+        # ── Master list parser ────────────────────────────────────────────
+        params: dict = {'mode': 'list'}
+        today = date.today()
+
+        mod_m = re.search(
+            r'\b(account|contact|contract|invoice|lead|opportunit(?:y|ies)|order|payment|product|activit(?:y|ies))s?\b',
+            msg)
+        if mod_m:
+            _mod = mod_m.group(1)
+            if _mod.startswith('opportunit'):
+                params['module'] = 'opportunity'
+            elif _mod.startswith('activit'):
+                params['module'] = 'activity'
+            else:
+                params['module'] = _mod
+
+        # Event adjective directly before "notifications":
+        # "invoice paid notifications", "order shipped notifications"
+        ev_m = re.search(r'\b(paid|created|updated|deleted|shipped|received|completed|cancelled|overdue)\s+notifications?\b', msg)
+        if ev_m:
+            params['search'] = ev_m.group(1)
+
+        # DB stores 'pending' (rendered as Unread in the UI) and 'read'
+        if re.search(r'\bunread\b', msg):
+            params['status'] = 'pending'
+        elif re.search(r'\bread\b', msg):
+            params['status'] = 'read'
+
+        # "about <Name/term>" content search
+        about_m = re.search(r'\babout\s+(.+?)\s*$', msg)
+        if about_m and 'search' not in params:
+            params['search'] = raw[about_m.start(1):about_m.end(1)].strip().rstrip('?.!,')
+
+        # Trailing employee name: "… for Sarah Johnson"
+        name_m = re.search(r"\bfor\s+([A-Z][\w.'-]*(?:\s+[A-Z][\w.'-]*)*)\s*$", raw)
+        if name_m:
+            params['employeeName'] = name_m.group(1).strip().rstrip('?.!,')
+
+        page_m = re.search(r'\bpage\s+(\d+)\b', msg)
+        limit_m = re.search(r'\b(?:last|recent|latest|top)\s+(\d+)\s+notifications?\b', msg)
+        limit = int(limit_m.group(1)) if limit_m else 50
+        params['limit'] = limit
+        if page_m:
+            params['offset'] = (int(page_m.group(1)) - 1) * limit
+
+        if re.search(r'\btoday\b|\btoday.s\b', msg):
+            params['dateFrom'] = params['dateTo'] = today.isoformat()
+        elif re.search(r'\byesterday\b', msg):
+            y = today - timedelta(days=1)
+            params['dateFrom'] = params['dateTo'] = y.isoformat()
+        elif re.search(r'\bthis\s+week\b', msg):
+            params['dateFrom'] = (today - timedelta(days=today.weekday())).isoformat()
+            params['dateTo'] = today.isoformat()
+        elif re.search(r'\bthis\s+month\b|\bthis\s+month.s\b', msg):
+            params['dateFrom'] = today.replace(day=1).isoformat()
+            params['dateTo'] = today.isoformat()
+        elif re.search(r'\blast\s+month\b', msg):
+            first_this = today.replace(day=1)
+            last_end = first_this - timedelta(days=1)
+            params['dateFrom'] = last_end.replace(day=1).isoformat()
+            params['dateTo'] = last_end.isoformat()
+        elif re.search(r'\blast\s+week\b', msg):
+            start = today - timedelta(days=today.weekday() + 7)
+            params['dateFrom'] = start.isoformat()
+            params['dateTo'] = (start + timedelta(days=6)).isoformat()
+
+        logger.info(f'[NL-master] → list {params}')
+        return _routed(params)
 
     # ── Fallback: AI Agent ───────────────────────────────────────────────────
     return _passthru(raw, chat_input)

@@ -126,6 +126,37 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         logger.info(f'→ routerAction SHORT-CIRCUIT: mode={_params.get("mode")}')
         return {'router_action': True, 'params': _params}
 
+    # ── "duplicate account(s)/entries/records [for <name>]" → duplicates  ───
+    # Must run BEFORE the executive-question check below: the shared EXEC_QA
+    # bank has a generic 'duplicates?' pattern (intended for the Leads page,
+    # mapped to lead_funnel) that would otherwise hijack account-duplicate
+    # questions like "Are there any duplicate entries for Brooks Education?"
+    # into an unrelated lead-duplicates executive answer.
+    if (re.search(r'\bduplicat\w*\b', msg)
+            and re.search(r'\b(?:accounts?|entries|entry|records?)\b', msg)):
+        logger.info('→ ROUTED: mode=duplicates')
+        return {'router_action': True, 'params': {'mode': 'duplicates'}}
+
+    # ── Executive questions (CEO / CFO / VP bank) ─────────────────────────────
+    # Interrogative phrasings route to the shared executive Q&A layer with the
+    # decision-grade format. Imperative commands ("Show all accounts",
+    # "Education industry accounts") keep their deterministic routes below.
+    _is_exec_q = raw.rstrip().endswith('?') or bool(re.match(
+        r'^(?:are|what|which|how|do|does|where|when|who|why|if)\b|^show\s+audit',
+        msg))
+    if _is_exec_q:
+        try:
+            from app.agents.orchestrator.executive import match_exec_question
+            _exec = match_exec_question(raw)
+        except Exception:
+            _exec = None
+        if _exec:
+            _sections, _note = _exec
+            logger.info(f'[executive] sections={_sections}')
+            return {'router_action': True,
+                    'params': {'mode': 'executive_question',
+                               'sections': _sections, 'note': _note}}
+
     def routed(params: dict) -> dict:
         logger.info(
             f'→ ROUTED: mode={params.get("mode")} '
@@ -137,6 +168,17 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         current_message = _build_passthru_message(raw, chat_input)
         logger.info(f'→ PASSTHRU: AI Agent | currentMessage: {current_message}')
         return {'router_action': False, 'current_message': current_message}
+
+    # ── "archive/restore <account name>" → archive/restore with name lookup ──
+    # Without this, these fall through to the AI agent, which is unreliable —
+    # it sometimes hallucinates a placeholder accountId (e.g. "uuid-here") or
+    # misroutes "restore <name>" to a plain list/search. db_node resolves
+    # accountName → accountId the same way it does for update/get/etc.
+    _m = re.match(r'^(archive|restore)\s+(?:the\s+)?(?:account\s+)?(.+)$', raw, re.IGNORECASE)
+    if _m:
+        _name = _m.group(2).strip().rstrip('.!?')
+        if _name:
+            return routed({'mode': _m.group(1).lower(), 'accountName': _name})
 
     # ── "account direct: <mode>" — universal direct-route  (v3.0) ────────────
     # Sent by submitCreateAccount(), submitUpdateAccount(), sendDirectRequest(),
@@ -366,10 +408,14 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         'status': 'status',
         'type': 'type',
     }
+    # Value terminator: end-of-string, or [,?!], or a "." that is itself
+    # followed by whitespace/end (sentence-ending period). A bare "." that is
+    # part of the value (e.g. "apexsolutions.com", "info@acme.ca") must NOT
+    # terminate the match — otherwise domain suffixes get truncated.
     _fupd_m = re.search(
         r'\b(?:update|change|set|modify)\b\s+(?:the\s+)?'
         r'(phone(?:\s+number)?|email(?:\s+address)?|website|industry|status|type)'
-        r'\s+(?:for|of)\s+(.+?)\s+to\s+(.+?)(?:\s*$|[.,?!])',
+        r'\s+(?:for|of)\s+(.+?)\s+to\s+(.+?)(?:\s*$|[,?!]|\.(?:\s|$))',
         msg,
     )
     if _fupd_m and not _has_uuid:

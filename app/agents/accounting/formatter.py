@@ -242,9 +242,11 @@ def format_response(db_rows: List[Dict[str, Any]], params: Dict[str, Any]) -> st
                     _log.getLogger(__name__).info(
                         f'[fmt-search-filter] {_list_key}: {_before}→{_after} for {_search_term!r}'
                     )
-                    # Update metadata total_records to match filtered count
+                    # Update metadata total_records/total_pages to match filtered count
                     if isinstance(response.get('metadata'), dict):
                         response['metadata']['total_records'] = _after
+                        _ps = int(response['metadata'].get('page_size') or 50)
+                        response['metadata']['total_pages'] = max(1, (_after + _ps - 1) // _ps)
 
     # --- Mode resolution (3-layer) ---
     mode_from_params = (params.get('mode') or '').strip().lower()
@@ -270,6 +272,11 @@ def format_response(db_rows: List[Dict[str, Any]], params: Dict[str, Any]) -> st
         mode = mode_inferred
 
     logger.info(f"Formatting response for mode: {mode}")
+
+    # ── Executive finance answer — pre-formatted by the shared executive
+    # Q&A layer (decision headline + relevant sections); pass through.
+    if mode == 'executive_question':
+        return response.get('exec_markdown') or 'No executive data available.'
 
     # ── UI-only marker modes — frontend opens the inline form ────────────────
     _ui_form_messages = {

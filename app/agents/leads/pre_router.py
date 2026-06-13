@@ -105,6 +105,25 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
         logger.info(f'→ routerAction SHORT-CIRCUIT: mode={_params.get("mode")}')
         return {'router_action': True, 'params': _params}
 
+    # ── Executive questions (CEO / CFO / VP bank) ─────────────────────────────
+    # Interrogative phrasings route to the shared executive Q&A layer with the
+    # decision-grade format. Imperative commands ("Show hot leads", "Show
+    # leads from website") keep their deterministic routes below.
+    _is_exec_q = raw.rstrip().endswith('?') or bool(re.match(
+        r'^(?:are|what|which|how|do|does|where|when|who|why|if)\b|^show\s+audit',
+        msg))
+    if _is_exec_q:
+        try:
+            from app.agents.orchestrator.executive import match_exec_question
+            _exec = match_exec_question(raw)
+        except Exception:
+            _exec = None
+        if _exec:
+            _sections, _note = _exec
+            logger.info(f'[executive] sections={_sections}')
+            return _routed({'mode': 'executive_question',
+                            'sections': _sections, 'note': _note})
+
     # ── "list leads:" ────────────────────────────────────────────────────────
     if msg.startswith('list leads:'):
         logger.info(
@@ -263,9 +282,13 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
         return _routed({'mode': 'list', 'pageSize': 50, 'pageNumber': 1})
 
     # ── NL: "show/list [status] leads" — status filter ───────────────────────
+    # Trailing time phrases ("this week", "today", ...) are accepted but not
+    # used as a date filter — leads list has no created-date param, so the
+    # status filter alone is the closest available match.
     _status_m = re.match(
         r'^(?:show|list|find|display|get)(?:\s+me)?\s+'
-        r'(new|working|qualified|converted|disqualified)\s+leads?\s*$',
+        r'(new|working|qualified|converted|disqualified)\s+leads?'
+        r'(?:\s+(?:this\s+week|this\s+month|today|recently))?\s*$',
         msg,
     )
     if _status_m:
@@ -353,8 +376,9 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
             _addr_params['province'] = _prov_val
         return _routed(_addr_params)
 
-    # ── NL: "pipeline summary", "lead pipeline" ───────────────────────────────
-    if re.search(r'\bpipeline\b', msg) or re.search(r'\blead\s+summary\b', msg):
+    # ── NL: "pipeline summary", "lead pipeline", "conversion rate(s)" ─────────
+    if re.search(r'\bpipeline\b', msg) or re.search(r'\blead\s+summary\b', msg) \
+            or re.search(r'\bconversion\s+rates?\b', msg):
         return _routed({'mode': 'pipeline'})
 
     # ── NL: "find duplicate leads", "duplicates report" ──────────────────────
@@ -398,6 +422,17 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
     # EXCLUDED: any term containing a known command keyword (pipeline, duplicate,
     # summary, report, list, hot, warm, cold, status names, etc.) — those must
     # pass through to the AI so it can pick the correct mode.
+    # ── NL: "find/show/list leads named [X]" — name search shortcut ──────────
+    _leads_named_m = re.match(
+        r'^(?:find|search|show|list|display)\s+leads?\s+(?:named?|with\s+name)\s+(.+)$',
+        raw, re.IGNORECASE,
+    )
+    if _leads_named_m:
+        term = _leads_named_m.group(1).strip()
+        if term and not UUID_RE.search(term):
+            logger.info(f'→ NAMED SEARCH: term={term!r}')
+            return _routed({'mode': 'list', 'search': term, 'pageSize': 50, 'pageNumber': 1})
+
     # ── NL: "show/list leads assigned to <name>" — owner filter ─────────────
     _assigned_m = re.search(
         r'\bassigned\s+to\s+([A-Za-z][A-Za-z\s\-\.]{1,40}?)(?:\s*$|[.,?!])',

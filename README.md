@@ -27,12 +27,13 @@ _Listed in the same order as the launcher page on [agentorc.ca](https://agentorc
 | 📊&nbsp;Analytics | KPI dashboards driven by Postgres stored procedures, rendered with Chart.js |
 | 🔔&nbsp;Notifications | Real-time activity stream with unread/read state |
 | 📧&nbsp;Email | Outbound mail + inbox + autonomous inbound auto-reply (SMTP/IMAP + LangGraph) |
-| 🧭&nbsp;Orchestrator | One launcher to talk to every agent in natural language — voice survives back/forward navigation |
+| 🧭&nbsp;Orchestrator | _"daily briefing"_, _"pipeline health"_, _"company pulse"_ — symphonic workflows that fan out to multiple agents and weave the results into one report, plus a curated executive Q&A bank for CEO/CFO-style questions |
 
 ### Why it's interesting
 
-- **10 conversational AI agents** (Accounts, Contacts, Leads, Opportunities, Orders, Products, Activities, Notifications, Accounting, Analytics) — each a LangGraph state machine with deterministic pre-routing plus an LLM fallback.
-- **5 supporting modules** — Orchestrator launcher, Email (SMTP/IMAP + LangGraph), Store (direct-SP catalogue), Auth (direct DB), Voice (Azure Speech token mint), plus a Home-Index KPI dashboard.
+- **11 conversational AI agents** (Accounts, Contacts, Leads, Opportunities, Orders, Products, Activities, Notifications, Accounting, Analytics, Orchestrator) — each a LangGraph state machine with deterministic pre-routing plus an LLM fallback.
+- **Orchestrator agent** — symphonic multi-agent workflows (Daily Briefing, Pipeline Health, Revenue Snapshot, Weekly Report, Team Activity, New Business, Follow-ups Due, System Alerts, Company Pulse) plus an executive Q&A bank shared with every other agent for interrogative "executive question" phrasings.
+- **4 supporting modules** — Email (SMTP/IMAP + LangGraph), Store (direct-SP catalogue), Auth (direct DB), Voice (Azure Speech token mint), plus a Home-Index KPI dashboard.
 - **Hybrid routing** — common intents (search, list, update, delete) skip the LLM entirely for sub-second response; novel phrasings fall through to GPT-4o-mini.
 - **Voice everywhere** — Azure Speech SDK (Bing-style) primary, Web Speech API fallback, with BFCache-safe cleanup across navigation.
 - **Real analytics, not toys** — invoice-level cost/margin tracking, effective-dated wholesale/retail pricing, AR aging buckets, forecast attainment, data-quality badges, and a DB-level `wholesale ≤ retail` trigger.
@@ -69,7 +70,8 @@ crm_agent/
         ├── notifications/
         ├── accounting/
         ├── analytics/
-        │  ── 5 supporting modules ──
+        ├── orchestrator/     ← symphony workflows + executive Q&A bank (router | executive)
+        │  ── 4 supporting modules ──
         ├── home/                   ← sp_home_index dashboard (direct SP, no AI)
         ├── email/                  ← SMTP/IMAP + LangGraph + autonomous auto-reply poller
         ├── store/                  ← Commerce catalogue view (direct SP, no AI)
@@ -119,6 +121,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 | POST   | `/notifications-chat`        | Notifications agent                            |
 | POST   | `/accounting-chat`           | Accounting agent                               |
 | POST   | `/analytics-chat`            | Analytics agent                                |
+| POST   | `/orchestrator-chat`         | Orchestrator agent (symphony workflows + executive Q&A) |
 | POST   | `/email-chat`                | Email agent (SMTP/IMAP + LangGraph)            |
 | POST   | `/store-chat`                | Store catalogue (direct SP)                    |
 | POST   | `/auth/{signin\|signup\|signout\|...}` | Auth (direct DB, no AI)              |

@@ -122,6 +122,29 @@ def parse_output_node(state: Dict[str, Any]) -> Dict[str, Any]:
     return {**state, "parsed_json": None, "should_call_api": False}
 
 
+def _resolve_employee_name(name: str):
+    """Resolve an employee display name → employee_uuid.
+
+    Exact (case-insensitive) full-name matches win; otherwise a unique
+    ILIKE match is accepted. Returns (uuid, error_message)."""
+    safe = name.replace("'", "''")
+    rows = execute_sp(
+        "SELECT employee_uuid, first_name || ' ' || COALESCE(last_name, '') AS full_name "
+        f"FROM employees WHERE first_name || ' ' || COALESCE(last_name, '') ILIKE '%{safe}%' "
+        "LIMIT 5"
+    )
+    matches = [(str(r.get('employee_uuid')), str(r.get('full_name') or '').strip())
+               for r in rows if r.get('employee_uuid')]
+    if not matches:
+        return None, f"No employee found matching '{name}'."
+    exact = [m for m in matches if m[1].lower() == name.lower()]
+    pool = exact or matches
+    if len({m[1].lower() for m in pool}) > 1:
+        names = ', '.join(sorted({m[1] for m in pool}))
+        return None, f"Multiple employees match '{name}': {names}. Please be more specific."
+    return pool[0][0], None
+
+
 def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Database node — builds and executes sp_notifications()."""
     logger.info("=== Notifications Database Node ===")
@@ -129,6 +152,35 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
         parsed_json = state.get("parsed_json") or {}
         if not parsed_json:
             return {**state, "db_rows": []}
+
+        # ── Executive questions — sp_orchestrator('executive') pack with the
+        # shared decision-grade format (headline, confidence, drivers, action).
+        if parsed_json.get("mode") == "executive_question":
+            from app.agents.orchestrator.executive import format_exec_answer
+            rows = execute_sp("SELECT sp_orchestrator('executive') AS result")
+            pack = (rows[0].get("result") or {}) if rows else {}
+            text = format_exec_answer(pack,
+                                      parsed_json.get("sections") or [],
+                                      parsed_json.get("note"))
+            return {**state, "db_rows": [{"result": {
+                "metadata": {"status": "success", "code": 0, "mode": "executive_question"},
+                "exec_markdown": text,
+            }}]}
+
+        # ── Resolve employeeName → employeeId (pre-router NL path) ──────────
+        if parsed_json.get("employeeName"):
+            _name = str(parsed_json.get("employeeName")).strip()
+            parsed_json = {k: v for k, v in parsed_json.items() if k != "employeeName"}
+            if not parsed_json.get("employeeId"):
+                _uuid, _err = _resolve_employee_name(_name)
+                if _err:
+                    logger.warning(f"[employee-resolve] {_err}")
+                    return {**state, "db_rows": [{"result": {
+                        "metadata": {"status": "error", "code": -404, "message": _err}
+                    }}]}
+                logger.info(f"[employee-resolve] {_name!r} → {_uuid}")
+                parsed_json = {**parsed_json, "employeeId": _uuid}
+            state = {**state, "parsed_json": parsed_json}
 
         query, _ = build_notifications_query(parsed_json)
         logger.info(f"Built sp_notifications query for mode: {parsed_json.get('mode')}")

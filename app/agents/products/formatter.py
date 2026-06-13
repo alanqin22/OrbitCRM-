@@ -350,6 +350,10 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
 
     out: List[str] = []
 
+    # ── Executive answer — pre-formatted by the shared executive layer ───────
+    if mode == 'executive_question':
+        return response.get('exec_markdown') or 'No executive data available.'
+
     # ── UI-only marker modes (no DB hit) ─────────────────────────────────────
     # The HTML response dispatcher matches [MODE:show_*_form] and opens the
     # corresponding inline form instead of rendering text.
@@ -375,6 +379,21 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
     if mode == 'list_categories':
         cats = response.get('categories') or []
         logger.info(f'list_categories: {len(cats)} categories returned')
+
+        # displayFormat='table' — user-facing chat request ("List all product
+        # categories" chip): render a readable markdown table instead of the
+        # machine-parseable JSON used by the search-bar dropdown loader.
+        if str(params.get('displayFormat') or '').lower() == 'table':
+            out.append('**[MODE:list_categories_table] Product Categories**')
+            out.append('')
+            out.append(f'{len(cats)} categories')
+            out.append('')
+            out.append('| Category # | Category Name |')
+            out.append('| --- | --- |')
+            for c in cats:
+                out.append(f"| {c.get('category_number', '—')} | {c.get('category_name', '—')} |")
+            return '\n'.join(out)
+
         # Normalise to the shape the HTML expects
         normalised = [
             {
@@ -593,7 +612,9 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
             []
         )
         logger.info(f'inventory_summary: {len(summary)} rows. Response keys: {list(response.keys())}')
-        threshold = metadata.get('low_stock_threshold') or params.get('lowStockThreshold') or 70
+        threshold = next((v for v in (metadata.get('low_stock_threshold'),
+                                      params.get('lowStockThreshold'), 70)
+                          if v is not None))
 
         out.append('**[MODE:inventory_summary] Inventory Summary by Category**')
         out.append('')
@@ -638,7 +659,10 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
         logger.info(f'low_stock: array key resolved, {len(raw_list)} items found. '
                     f'Available response keys: {list(response.keys())}')
         products    = [_normalise_product(p) for p in raw_list]
-        threshold   = metadata.get('low_stock_threshold') or params.get('lowStockThreshold') or 70
+        # next()/is-None chain (not `or`) — threshold 0 = "out of stock" report
+        threshold   = next((v for v in (metadata.get('low_stock_threshold'),
+                                        params.get('lowStockThreshold'), 70)
+                            if v is not None))
         alert_count = metadata.get('alert_count') or len(products)
 
         out.append('**[MODE:low_stock] Low Stock Alert Report**')

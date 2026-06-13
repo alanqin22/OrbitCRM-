@@ -173,24 +173,48 @@ def _search_entity_type(entity_type: str, name: str):
         if not isinstance(result, dict):
             return None, None
         entities = result.get(list_key) or []
-        if len(entities) == 1:
-            entity = entities[0]
-            # For contacts: prefer their account_id so the timeline matches
-            # what Account Management shows (activities linked at account level)
-            if entity_type == 'contact' and entity.get('account_id'):
-                acct_id = str(entity['account_id'])
-                logger.info(
-                    f"Contact '{name}' found — using account_id {acct_id} "
-                    "for account-level timeline"
-                )
-                return (acct_id, 'account')
-            uuid = entity.get(id_field)
-            return (str(uuid), entity_type) if uuid else (None, None)
-        if len(entities) > 1:
-            display = ', '.join(
-                ' '.join(filter(None, [e.get(f) for f in name_fields])) or '?'
-                for e in entities[:5]
-            )
+
+        # ── Rank candidates before declaring ambiguity ───────────────────
+        #   1. Exact (case-insensitive) name matches beat partial matches.
+        #   2. Active records beat duplicate_merged / inactive ones.
+        #   3. Contacts that all share one account collapse to that account.
+        #   4. Identical-name duplicates (e.g. two active "Québec Robotics
+        #      Lab" accounts) pick the first — an unanswerable "be more
+        #      specific" error helps nobody when the names are identical.
+        def _disp(e):
+            return ' '.join(filter(None, [str(e.get(f) or '') for f in name_fields])).strip()
+
+        if entities:
+            exact = [e for e in entities if _disp(e).lower() == name.lower()]
+            pool = exact or entities
+            active = [e for e in pool
+                      if str(e.get('status') or 'active').lower() == 'active']
+            pool = active or pool
+
+            if entity_type == 'contact':
+                acct_ids = {str(e['account_id']) for e in pool if e.get('account_id')}
+                if len(acct_ids) == 1:
+                    acct_id = acct_ids.pop()
+                    logger.info(
+                        f"Contact '{name}': {len(pool)} match(es) share account_id "
+                        f"{acct_id} — using account-level timeline"
+                    )
+                    return (acct_id, 'account')
+
+            distinct_names = {_disp(e).lower() for e in pool}
+            if len(pool) == 1 or len(distinct_names) == 1:
+                if len(pool) > 1:
+                    logger.warning(
+                        f"'{name}': {len(pool)} identical-name {entity_type} "
+                        f"duplicates — picking the first match"
+                    )
+                entity = pool[0]
+                if entity_type == 'contact' and entity.get('account_id'):
+                    return (str(entity['account_id']), 'account')
+                uuid = entity.get(id_field)
+                return (str(uuid), entity_type) if uuid else (None, None)
+
+            display = ', '.join(_disp(e) or '?' for e in pool[:5])
             return (f'__multiple__:{entity_type}:{display}', entity_type)
     except Exception as exc:
         logger.warning(f"Entity search failed [{entity_type}] '{name}': {exc}")
@@ -240,6 +264,20 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
         parsed_json = state.get("parsed_json") or {}
         if not parsed_json:
             return {**state, "db_rows": []}
+
+        # ── Executive questions — sp_orchestrator('executive') pack with the
+        # shared decision-grade format (headline, confidence, drivers, action).
+        if parsed_json.get("mode") == "executive_question":
+            from app.agents.orchestrator.executive import format_exec_answer
+            rows = execute_sp("SELECT sp_orchestrator('executive') AS result")
+            pack = (rows[0].get("result") or {}) if rows else {}
+            text = format_exec_answer(pack,
+                                      parsed_json.get("sections") or [],
+                                      parsed_json.get("note"))
+            return {**state, "db_rows": [{"result": {
+                "metadata": {"status": "success", "code": 0, "mode": "executive_question"},
+                "exec_markdown": text,
+            }}]}
 
         # Safety guard: mode:get without activityId → fall back to list search
         if parsed_json.get("mode") in ("get", "update", "complete", "reopen", "delete") \
@@ -375,11 +413,76 @@ SELECT json_build_object(
             logger.info(f"Direct timeline returned {len(db_rows)} rows")
             return {**state, "db_rows": db_rows}
 
+        # Post-filter params (consumed here, not by the SP): the overdue /
+        # upcoming SP modes take no search/type/date-window params, so the
+        # pre-router passes these for Python-side narrowing of the result.
+        _name_filter = (parsed_json.pop("nameFilter", None) or "").strip().lower()
+        _type_filter = (parsed_json.pop("typeFilter", None) or "").strip().lower()
+        _due_from    = parsed_json.pop("dueFrom", None)
+        _due_to      = parsed_json.pop("dueTo", None)
+
         query, _ = build_activities_query(parsed_json)
         logger.info(f"Built sp_activities query for mode: {parsed_json.get('mode')}")
 
         db_rows = execute_sp(query)
         logger.info(f"sp_activities returned {len(db_rows)} rows")
+
+        if (_name_filter or _type_filter or _due_from or _due_to) and db_rows:
+            _list_keys = ('activities', 'overdue', 'upcoming')
+            try:
+                filtered_rows = []
+                for row in db_rows:
+                    result = row.get("result") if isinstance(row, dict) else None
+                    if not isinstance(result, dict):
+                        filtered_rows.append(row)
+                        continue
+                    result = dict(result)
+                    for lk in _list_keys:
+                        items = result.get(lk)
+                        if not isinstance(items, list):
+                            continue
+                        before = len(items)
+                        if _type_filter:
+                            items = [a for a in items
+                                     if str(a.get("type") or "").lower() == _type_filter]
+                        if _name_filter:
+                            def _names(a):
+                                rel = a.get("related")
+                                rel_name = rel.get("name") if isinstance(rel, dict) else None
+                                return " ".join(str(v or "") for v in (
+                                    rel_name, a.get("related_name"),
+                                    a.get("owner_name"), a.get("owner"),
+                                    a.get("subject"))).lower()
+                            items = [a for a in items if _name_filter in _names(a)]
+                        if _due_from or _due_to:
+                            def _due_ok(a):
+                                d = str(a.get("due_at") or "")[:10]
+                                if not d:
+                                    return False
+                                if _due_from and d < _due_from:
+                                    return False
+                                if _due_to and d > _due_to:
+                                    return False
+                                return True
+                            items = [a for a in items if _due_ok(a)]
+                        if len(items) != before:
+                            logger.info(f"[post-filter] {lk}: {before} → {len(items)} "
+                                        f"(name={_name_filter!r} type={_type_filter!r} "
+                                        f"due={_due_from}..{_due_to})")
+                        result[lk] = items
+                        total_key = f"total_{lk}"
+                        if total_key in result:
+                            result[total_key] = len(items)
+                        meta = dict(result.get("metadata") or {})
+                        for ck in ("overdue_count", "upcoming_count", "total_records", "count"):
+                            if ck in meta:
+                                meta[ck] = len(items)
+                        result["metadata"] = meta
+                    filtered_rows.append({"result": result})
+                db_rows = filtered_rows
+            except Exception as fe:
+                logger.warning(f"[post-filter] skipped: {fe}")
+
         return {**state, "db_rows": db_rows}
 
     except Exception as e:

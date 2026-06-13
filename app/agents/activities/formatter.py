@@ -228,6 +228,13 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
     logger.info(f'Format Response (sp_activities v3.3) — mode={mode}')
     logger.info(f'metadata: {metadata}')
 
+    # ── Executive answer — pre-formatted by the shared executive layer ───────
+    if mode == 'executive_question':
+        return {'output': response.get('exec_markdown') or 'No executive data available.',
+                'mode': 'executive_question',
+                'report_mode': 'executive_question',
+                'success': True}
+
     is_error = (
         metadata.get('status') == 'error'
         or (isinstance(metadata.get('code'), (int, float)) and metadata.get('code') not in (0, None))
@@ -471,7 +478,11 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             out.append('')
             out.append('Great job! You have no overdue tasks or meetings.')
         else:
-            out.append(f'**⚠️ Overdue Activities ({len(activities)})**')
+            total_overdue = response.get('total_overdue') or 0
+            if total_overdue > len(activities):
+                out.append(f'**⚠️ Overdue Activities (showing {len(activities)} of {total_overdue}, most overdue first)**')
+            else:
+                out.append(f'**⚠️ Overdue Activities ({len(activities)})**')
             out.append('')
             out.append('| Type | Subject | Owner | Due Date | Days Overdue | Related | Related Type | Score | Details |')
             out.append('|------|---------|-------|----------|--------------|---------|--------------|-------|---------|')
@@ -498,7 +509,11 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         if not activities:
             out.append('**No upcoming activities in the next 14 days.**')
         else:
-            out.append(f'**📅 Upcoming Activities ({len(activities)})**')
+            total_upcoming = response.get('total_upcoming') or 0
+            if total_upcoming > len(activities):
+                out.append(f'**📅 Upcoming Activities (showing {len(activities)} of {total_upcoming}, soonest first)**')
+            else:
+                out.append(f'**📅 Upcoming Activities ({len(activities)})**')
             out.append('')
             out.append('| Type | Subject | Owner | Due Date | Days Until | Related | Related Type | Score | Details |')
             out.append('|------|---------|-------|----------|------------|---------|--------------|-------|---------|')

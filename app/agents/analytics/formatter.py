@@ -133,8 +133,17 @@ _FORMATTERS = {
 }
 
 
-def _add_table(out: List[str], title: str, icon: str, data: list, columns: list) -> None:
-    """Append a markdown table section to `out`."""
+def _add_table(out: List[str], title: str, icon: str, data: list, columns: list,
+                skip_if_empty: bool = False) -> None:
+    """Append a markdown table section to `out`.
+
+    When `skip_if_empty` is set (narrowed report types), sections with no
+    data are omitted entirely instead of rendering a "No data available"
+    placeholder — the full dashboard still shows every section so users can
+    see what's empty, but a single-report view shouldn't be 90% placeholders.
+    """
+    if not data and skip_if_empty:
+        return
     out.append(f'**{icon} {title}**')
     out.append('')
     if not data:
@@ -166,10 +175,14 @@ def _add_table(out: List[str], title: str, icon: str, data: list, columns: list)
 # ============================================================================
 
 def _compute_summary(d: dict) -> dict:
+    pipeline_data = d.get('pipeline_summary') or d.get('open_pipeline_summary')
+    invoiced_data = d.get('invoiced_revenue') or d.get('recent_invoiced_revenue')
+    cashflow_data = d.get('cashflow') or d.get('recent_cashflow')
+
     sm: dict = {
-        'totalPipelineAmount':        _sum_field(d.get('open_pipeline_summary'), 'total_amount'),
-        'totalWeightedPipeline':      _sum_field(d.get('open_pipeline_summary'), 'weighted_amount'),
-        'totalPipelineOpportunities': _count_field(d.get('open_pipeline_summary'), 'opportunity_count'),
+        'totalPipelineAmount':        _sum_field(pipeline_data, 'total_amount'),
+        'totalWeightedPipeline':      _sum_field(pipeline_data, 'weighted_amount'),
+        'totalPipelineOpportunities': _count_field(pipeline_data, 'opportunity_count'),
 
         'totalForecastAmount':        _sum_field(d.get('forecast_summary'), 'forecast_amount'),
         'totalForecastPipeline':      _sum_field(d.get('forecast_summary'), 'total_amount'),
@@ -179,9 +192,9 @@ def _compute_summary(d: dict) -> dict:
         'totalDiscounts':             _sum_field(d.get('booked_revenue'), 'discount_total'),
         'totalLineItems':             _count_field(d.get('booked_revenue'), 'line_count'),
 
-        'totalInvoiced':              _sum_field(d.get('recent_invoiced_revenue'), 'invoiced_amount'),
-        'totalPaid':                  _sum_field(d.get('recent_invoiced_revenue'), 'paid_amount'),
-        'totalOutstanding':           _sum_field(d.get('recent_invoiced_revenue'), 'outstanding_amount'),
+        'totalInvoiced':              _sum_field(invoiced_data, 'invoiced_amount'),
+        'totalPaid':                  _sum_field(invoiced_data, 'paid_amount'),
+        'totalOutstanding':           _sum_field(invoiced_data, 'outstanding_amount'),
 
         'totalAROutstanding':         _sum_field(d.get('ar_aging'), 'outstanding_amount'),
         'totalARInvoices':            _count_field(d.get('ar_aging'), 'invoice_count'),
@@ -195,8 +208,8 @@ def _compute_summary(d: dict) -> dict:
         'totalARByProduct':           _sum_field(d.get('ar_aging_by_product'), 'outstanding_amount'),
         'totalARProductInvoices':     _count_field(d.get('ar_aging_by_product'), 'invoice_count'),
 
-        'totalCashReceived':          _sum_field(d.get('recent_cashflow'), 'paid_amount'),
-        'totalPayments':              _count_field(d.get('recent_cashflow'), 'payment_count'),
+        'totalCashReceived':          _sum_field(cashflow_data, 'paid_amount'),
+        'totalPayments':              _count_field(cashflow_data, 'payment_count'),
 
         'totalActivities':            _count_field(d.get('activity_productivity'), 'activity_count'),
         'totalCompleted':             _count_field(d.get('activity_productivity'), 'completed_count'),
@@ -230,6 +243,14 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
     response = _parse_response(db_rows)
     logger.info(f'Format Response (sp_analytics_dashboard v3.1) — keys: {list(response.keys())}')
 
+    # ── Executive answer — pre-formatted by the shared executive layer ───────
+    if str(params.get('mode') or '') == 'executive_question':
+        return {
+            'output': response.get('exec_markdown') or 'No executive data available.',
+            'mode': 'executive_question', 'success': True,
+            'dashboardData': {}, 'summaryMetrics': {}, 'params': {}, 'meta': {}
+        }
+
     # ── Error check ───────────────────────────────────────────────────────────
     if not response or response.get('error'):
         error_msg = response.get('message') or 'Unknown error'
@@ -262,8 +283,28 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
     }
 
     # ── Text output ───────────────────────────────────────────────────────────
+    # Title reflects the requested report section (falls back to the full
+    # dashboard title when reportType is NULL / full_dashboard).
+    _REPORT_TITLES = {
+        'forecast_summary':      '### 📈 Forecast Summary',
+        'pipeline_summary':      '### 🛤️ Pipeline Summary',
+        'revenue_summary':       '### 💰 Revenue Summary',
+        'ar_aging':              '### 📅 AR Aging Report',
+        'cashflow':              '### 💸 Cashflow Analysis',
+        'invoiced_revenue':      '### 🧾 Invoiced Revenue',
+        'lead_source':           '### 🎯 Lead Source Performance',
+        'owner_breakdown':       '### 👥 Owner Breakdown',
+        'activity_productivity': '### ⚡ Activity Productivity',
+        'ai_vs_human':           '### 🤖 AI vs Human Forecast',
+    }
+    # Narrowed (single-section) report types skip empty sections entirely —
+    # the full dashboard keeps "No data available" placeholders so users can
+    # see what's empty across the whole CRM.
+    _report_type = str(params.get('reportType') or '').lower()
+    _narrow = _report_type not in ('', 'full_dashboard')
+
     out: List[str] = []
-    out.append('### 📊 Analytics Dashboard')
+    out.append(_REPORT_TITLES.get(_report_type, '### 📊 Analytics Dashboard'))
     out.append(f'**Time:** {_fmt_date(datetime.utcnow())}')
     out.append(
         f'**Date Range:** {_fmt_date(params.get("startDate"))} '
@@ -296,7 +337,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                    {'key': 'total_amount',      'label': 'Total Amount',    'format': 'currency'},
                    {'key': 'forecast_amount',   'label': 'Forecast Amount', 'format': 'currency'},
                    {'key': 'opportunity_count', 'label': 'Opportunities',   'format': 'number'},
-               ])
+               ], skip_if_empty=_narrow)
 
     _add_table(out, 'AI vs Human Forecast', '🤖',
                _safe_arr(dashboard_data.get('ai_vs_human_forecast')), [
@@ -304,7 +345,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                    {'key': 'ai_forecast',     'label': 'AI Forecast',  'format': 'currency'},
                    {'key': 'human_commit',    'label': 'Human Commit', 'format': 'currency'},
                    {'key': 'human_best_case', 'label': 'Best Case',    'format': 'currency'},
-               ])
+               ], skip_if_empty=_narrow)
 
     # Owner Breakdown — shows name + role (v3.1)
     _add_table(out, 'Owner Breakdown', '👥',
@@ -315,14 +356,14 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                    {'key': 'forecast_amount',  'label': 'Forecast Amount', 'format': 'currency'},
                    {'key': 'total_amount',     'label': 'Total Amount',    'format': 'currency'},
                    {'key': 'opportunity_count','label': 'Opportunities',   'format': 'number'},
-               ])
+               ], skip_if_empty=_narrow)
 
     _add_table(out, 'Period Trend', '📈',
                _safe_arr(dashboard_data.get('period_trend')), [
                    {'key': 'period_key',      'label': 'Period'},
                    {'key': 'forecast_amount', 'label': 'Forecast Amount', 'format': 'currency'},
                    {'key': 'total_amount',    'label': 'Total Amount',    'format': 'currency'},
-               ])
+               ], skip_if_empty=_narrow)
 
     _add_table(out, 'Forecast Accuracy', '🎯',
                _safe_arr(dashboard_data.get('forecast_accuracy')), [
@@ -330,17 +371,17 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                    {'key': 'forecast_type',     'label': 'Type'},
                    {'key': 'avg_ai_confidence', 'label': 'Avg AI Confidence', 'format': 'percentage'},
                    {'key': 'snapshot_count',    'label': 'Snapshots',         'format': 'number'},
-               ])
+               ], skip_if_empty=_narrow)
 
     _add_table(out, 'Pipeline Summary', '📊',
-               _safe_arr(dashboard_data.get('open_pipeline_summary')), [
+               _safe_arr(dashboard_data.get('pipeline_summary') or dashboard_data.get('open_pipeline_summary')), [
                    {'key': 'period_key',        'label': 'Period'},
                    {'key': 'stage',             'label': 'Stage'},
                    {'key': 'status',            'label': 'Status'},
                    {'key': 'total_amount',      'label': 'Amount',   'format': 'currency'},
                    {'key': 'weighted_amount',   'label': 'Weighted', 'format': 'currency'},
                    {'key': 'opportunity_count', 'label': 'Count',    'format': 'number'},
-               ])
+               ], skip_if_empty=_narrow)
 
     _add_table(out, 'Booked Revenue', '💰',
                _safe_arr(dashboard_data.get('booked_revenue')), [
@@ -348,29 +389,29 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                    {'key': 'booked_revenue','label': 'Revenue',    'format': 'currency'},
                    {'key': 'discount_total','label': 'Discounts',  'format': 'currency'},
                    {'key': 'line_count',    'label': 'Line Items', 'format': 'number'},
-               ])
+               ], skip_if_empty=_narrow)
 
     _add_table(out, 'Invoiced Revenue', '📃',
-               _safe_arr(dashboard_data.get('recent_invoiced_revenue')), [
+               _safe_arr(dashboard_data.get('invoiced_revenue') or dashboard_data.get('recent_invoiced_revenue')), [
                    {'key': 'period_key',         'label': 'Period'},
                    {'key': 'invoiced_amount',    'label': 'Invoiced',     'format': 'currency'},
                    {'key': 'outstanding_amount', 'label': 'Outstanding',  'format': 'currency'},
                    {'key': 'paid_amount',        'label': 'Paid',         'format': 'currency'},
-               ])
+               ], skip_if_empty=_narrow)
 
     _add_table(out, 'Cashflow', '💵',
-               _safe_arr(dashboard_data.get('recent_cashflow')), [
+               _safe_arr(dashboard_data.get('cashflow') or dashboard_data.get('recent_cashflow')), [
                    {'key': 'period_key',   'label': 'Period'},
                    {'key': 'paid_amount',  'label': 'Cash Received', 'format': 'currency'},
                    {'key': 'payment_count','label': 'Payments',      'format': 'number'},
-               ])
+               ], skip_if_empty=_narrow)
 
     _add_table(out, 'AR Aging', '🧾',
                _safe_arr(dashboard_data.get('ar_aging')), [
                    {'key': 'aging_bucket',       'label': 'Bucket'},
                    {'key': 'outstanding_amount', 'label': 'Outstanding', 'format': 'currency'},
                    {'key': 'invoice_count',      'label': 'Invoices',    'format': 'number'},
-               ])
+               ], skip_if_empty=_narrow)
 
     # AR Aging by Owner — shows name + role (v3.1)
     _add_table(out, 'AR Aging by Owner', '👤',
@@ -379,21 +420,23 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                    {'key': 'owner_role',         'label': 'Role'},
                    {'key': 'outstanding_amount', 'label': 'Outstanding', 'format': 'currency'},
                    {'key': 'invoice_count',      'label': 'Invoices',    'format': 'number'},
-               ])
+               ], skip_if_empty=_narrow)
 
     _add_table(out, 'AR Aging by Account', '🏢',
                _safe_arr(dashboard_data.get('ar_aging_by_account')), [
+                   {'key': 'account_name',       'label': 'Account Name'},
                    {'key': 'account_id',         'label': 'Account ID',  'format': 'uuid'},
                    {'key': 'outstanding_amount', 'label': 'Outstanding', 'format': 'currency'},
                    {'key': 'invoice_count',      'label': 'Invoices',    'format': 'number'},
-               ])
+               ], skip_if_empty=_narrow)
 
     _add_table(out, 'AR Aging by Product', '📦',
                _safe_arr(dashboard_data.get('ar_aging_by_product')), [
+                   {'key': 'product_name',       'label': 'Product Name'},
                    {'key': 'product_id',         'label': 'Product ID',  'format': 'uuid'},
                    {'key': 'outstanding_amount', 'label': 'Outstanding', 'format': 'currency'},
                    {'key': 'invoice_count',      'label': 'Invoices',    'format': 'number'},
-               ])
+               ], skip_if_empty=_narrow)
 
     _add_table(out, 'Lead Source Performance', '📣',
                _safe_arr(dashboard_data.get('lead_source_performance')), [
@@ -401,7 +444,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                    {'key': 'pipeline_amount',   'label': 'Pipeline',     'format': 'currency'},
                    {'key': 'weighted_pipeline', 'label': 'Weighted',     'format': 'currency'},
                    {'key': 'opportunity_count', 'label': 'Opportunities','format': 'number'},
-               ])
+               ], skip_if_empty=_narrow)
 
     # Activity Productivity — shows name + role (v3.1)
     _add_table(out, 'Activity Productivity', '📝',
@@ -412,7 +455,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                    {'key': 'activity_count',  'label': 'Total',     'format': 'number'},
                    {'key': 'completed_count', 'label': 'Completed', 'format': 'number'},
                    {'key': 'overdue_count',   'label': 'Overdue',   'format': 'number'},
-               ])
+               ], skip_if_empty=_narrow)
 
     out.append('---')
     out.append('Need more details? Try filtering by owner, account, or product!')
@@ -426,10 +469,10 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             'period_trend':          len(_safe_arr(dashboard_data.get('period_trend'))),
             'ai_vs_human_forecast':  len(_safe_arr(dashboard_data.get('ai_vs_human_forecast'))),
             'forecast_accuracy':     len(_safe_arr(dashboard_data.get('forecast_accuracy'))),
-            'pipeline_summary':      len(_safe_arr(dashboard_data.get('open_pipeline_summary'))),
+            'pipeline_summary':      len(_safe_arr(dashboard_data.get('pipeline_summary') or dashboard_data.get('open_pipeline_summary'))),
             'booked_revenue':        len(_safe_arr(dashboard_data.get('booked_revenue'))),
-            'invoiced_revenue':      len(_safe_arr(dashboard_data.get('recent_invoiced_revenue'))),
-            'cashflow':              len(_safe_arr(dashboard_data.get('recent_cashflow'))),
+            'invoiced_revenue':      len(_safe_arr(dashboard_data.get('invoiced_revenue') or dashboard_data.get('recent_invoiced_revenue'))),
+            'cashflow':              len(_safe_arr(dashboard_data.get('cashflow') or dashboard_data.get('recent_cashflow'))),
             'ar_aging':              len(_safe_arr(dashboard_data.get('ar_aging'))),
             'lead_source_performance': len(_safe_arr(dashboard_data.get('lead_source_performance'))),
             'activity_productivity': len(_safe_arr(dashboard_data.get('activity_productivity'))),

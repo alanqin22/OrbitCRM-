@@ -65,9 +65,11 @@ CHANGELOG
 
 from __future__ import annotations
 
+import calendar
 import re
 import logging
-from typing import Any, Dict, Optional
+from datetime import date, timedelta
+from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -182,5 +184,197 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
 
         return _routed(params)
 
+    # ── Executive questions (CEO / CFO / VP bank) ─────────────────────────────
+    # Interrogative phrasings ("Are we on track…?", "Which deals…?") route to
+    # the shared executive Q&A layer with the decision-grade answer format.
+    # Imperative report commands ("Show forecast summary") keep their existing
+    # deterministic report routes below.
+    _is_exec_q = raw.rstrip().endswith('?') or bool(re.match(
+        r'^(?:are|what|which|how|do|does|where|when|who|why|if)\b|^show\s+audit',
+        msg))
+    if _is_exec_q:
+        try:
+            from app.agents.orchestrator.executive import match_exec_question
+            _exec = match_exec_question(raw)
+        except Exception:
+            _exec = None
+        if _exec:
+            _sections, _note = _exec
+            logger.info(f'[executive] sections={_sections}')
+            return _routed({'mode': 'executive_question',
+                            'sections': _sections, 'note': _note})
+
+    # ── Natural-language report queries ──────────────────────────────────────
+    # The AI previously guessed both reportType and dates for typed queries —
+    # often wrongly (full dashboard for every report; hallucinated years).
+    # Detect the report type by keyword and parse the date phrase here.
+    _rt = _detect_report_type(msg)
+    if _rt:
+        start_date, end_date = _parse_date_range(msg)
+        params: dict = {}
+        if start_date and end_date:
+            params['startDate'], params['endDate'] = start_date, end_date
+        elif _rt == 'ar_aging':
+            # No dates → SP snapshot mode (current AR aging state) — intended.
+            pass
+        else:
+            # Default: current calendar year. End-of-year (not today) so
+            # future-dated forecast periods are included.
+            today = date.today()
+            params['startDate'] = today.replace(month=1, day=1).isoformat()
+            params['endDate']   = today.replace(month=12, day=31).isoformat()
+        if _rt != 'full_dashboard':
+            params['reportType'] = _rt
+        logger.info(f'[NL-report] type={_rt} range={params.get("startDate")}..{params.get("endDate")}')
+        return _routed(params)
+
     # ── Fallback: AI Agent ───────────────────────────────────────────────────
     return _passthru(raw)
+
+
+# ---------------------------------------------------------------------------
+# NL parsing helpers
+# ---------------------------------------------------------------------------
+
+# Ordered keyword → reportType detection. Specific phrases (ai_vs_human,
+# invoiced_revenue) must be tested before their generic prefixes
+# (forecast, revenue).
+_RT_PATTERNS = [
+    ('ai_vs_human',           r'\bai\s+(?:vs\.?|versus)\s+human\b|\bcompare\s+forecast'
+                              r'|\bforecast\s+(?:vs\.?|versus)\s+actuals?\b|\bforecast\s+comparison\b'
+                              r'|\bforecast\s+accuracy\b'),
+    ('invoiced_revenue',      r'\binvoiced\s+revenue\b'),
+    ('forecast_summary',      r'\bforecast\b'),
+    ('pipeline_summary',      r'\bpipeline\b|\bsales\s+funnel\b|\bfunnel\b'),
+    ('ar_aging',              r'\bar\s+age?ing\b|\bage?ing\s+(?:report|snapshot)\b|\bage?ing\b'
+                              r'|\breceivables\b'),
+    ('cashflow',              r'\bcash\s*flow\b'),
+    ('lead_source',           r'\blead\s+sources?\b'),
+    ('owner_breakdown',       r'\bowner\s+breakdown\b|\bby\s+owner\b|\bowner\s+performance\b'
+                              r'|\bteam\s+performance\b|\brep\s+performance\b'),
+    ('activity_productivity', r'\bactivity\s+productivity\b|\bproductivity\b'),
+    ('revenue_summary',       r'\brevenue\b'),
+    ('full_dashboard',        r'\bdashboard\b|\banalytics\b'),
+]
+
+_MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july',
+           'august', 'september', 'october', 'november', 'december']
+
+
+def _detect_report_type(msg: str) -> Optional[str]:
+    for rt, pat in _RT_PATTERNS:
+        if re.search(pat, msg, re.IGNORECASE):
+            return rt
+    return None
+
+
+def _parse_date_range(msg: str) -> Tuple[Optional[str], Optional[str]]:
+    """Parse a natural-language date phrase → (startDate, endDate) ISO strings.
+
+    Supports: between/from A to B · Q[1-4] YYYY · <month name> YYYY ·
+    last/next N days · last N months · this/last week · this/last month ·
+    this/last quarter · this year / YTD · last year · bare year.
+    Returns (None, None) when no recognisable phrase is present.
+    """
+    today = date.today()
+
+    m = re.search(r'\b(?:between|from)\s+(\d{4}-\d{2}-\d{2})\s+(?:and|to)\s+(\d{4}-\d{2}-\d{2})\b', msg)
+    if m:
+        return m.group(1), m.group(2)
+
+    m = re.search(r'\bq([1-4])\s*,?\s*(20\d{2})\b', msg, re.IGNORECASE)
+    if m:
+        q, yr = int(m.group(1)), int(m.group(2))
+        sm = (q - 1) * 3 + 1
+        em = sm + 2
+        return (f'{yr}-{sm:02d}-01',
+                f'{yr}-{em:02d}-{calendar.monthrange(yr, em)[1]:02d}')
+
+    # H1 / H2 half-year ("H1 2026")
+    m = re.search(r'\bh([12])\s*,?\s*(20\d{2})\b', msg, re.IGNORECASE)
+    if m:
+        h, yr = int(m.group(1)), int(m.group(2))
+        return (f'{yr}-01-01', f'{yr}-06-30') if h == 1 else (f'{yr}-07-01', f'{yr}-12-31')
+
+    m = re.search(rf'\b({"|".join(_MONTHS)})\s+(20\d{{2}})\b', msg, re.IGNORECASE)
+    if m:
+        mo = _MONTHS.index(m.group(1).lower()) + 1
+        yr = int(m.group(2))
+        return (f'{yr}-{mo:02d}-01',
+                f'{yr}-{mo:02d}-{calendar.monthrange(yr, mo)[1]:02d}')
+
+    # "since January" / "since 2026-02-15" → start to today
+    m = re.search(rf'\bsince\s+({"|".join(_MONTHS)})\b', msg, re.IGNORECASE)
+    if m:
+        mo = _MONTHS.index(m.group(1).lower()) + 1
+        yr = today.year if mo <= today.month else today.year - 1
+        return f'{yr}-{mo:02d}-01', today.isoformat()
+    m = re.search(r'\bsince\s+(\d{4}-\d{2}-\d{2})\b', msg)
+    if m:
+        return m.group(1), today.isoformat()
+
+    # Month name without a year ("for June", "in May") → current year
+    m = re.search(rf'\b(?:for|in|of|during)\s+({"|".join(_MONTHS)})\b(?!\s+20\d{{2}})', msg, re.IGNORECASE)
+    if m:
+        mo = _MONTHS.index(m.group(1).lower()) + 1
+        yr = today.year
+        return (f'{yr}-{mo:02d}-01',
+                f'{yr}-{mo:02d}-{calendar.monthrange(yr, mo)[1]:02d}')
+
+    if re.search(r'\btoday\b', msg):
+        return today.isoformat(), today.isoformat()
+    if re.search(r'\byesterday\b', msg):
+        y = today - timedelta(days=1)
+        return y.isoformat(), y.isoformat()
+
+    m = re.search(r'\b(?:last|past)\s+(\d+)\s+days?\b', msg)
+    if m:
+        return (today - timedelta(days=int(m.group(1)))).isoformat(), today.isoformat()
+
+    m = re.search(r'\b(?:last|past)\s+(\d+)\s+weeks?\b', msg)
+    if m:
+        return (today - timedelta(weeks=int(m.group(1)))).isoformat(), today.isoformat()
+
+    m = re.search(r'\b(?:last|past|trailing)\s+(\d+)\s+months?\b', msg)
+    if m:
+        n = int(m.group(1))
+        yr, mo = today.year, today.month - n
+        while mo <= 0:
+            mo += 12
+            yr -= 1
+        return date(yr, mo, min(today.day, calendar.monthrange(yr, mo)[1])).isoformat(), today.isoformat()
+
+    if re.search(r'\bthis\s+week\b', msg):
+        return (today - timedelta(days=today.weekday())).isoformat(), today.isoformat()
+    if re.search(r'\blast\s+week\b', msg):
+        start = today - timedelta(days=today.weekday() + 7)
+        return start.isoformat(), (start + timedelta(days=6)).isoformat()
+    if re.search(r'\bthis\s+month\b', msg):
+        return today.replace(day=1).isoformat(), today.isoformat()
+    if re.search(r'\blast\s+month\b', msg):
+        first_this = today.replace(day=1)
+        last_end = first_this - timedelta(days=1)
+        return last_end.replace(day=1).isoformat(), last_end.isoformat()
+    if re.search(r'\bthis\s+quarter\b', msg):
+        sm = ((today.month - 1) // 3) * 3 + 1
+        return today.replace(month=sm, day=1).isoformat(), today.isoformat()
+    if re.search(r'\blast\s+quarter\b', msg):
+        sm = ((today.month - 1) // 3) * 3 + 1
+        this_q_start = today.replace(month=sm, day=1)
+        last_q_end = this_q_start - timedelta(days=1)
+        lsm = ((last_q_end.month - 1) // 3) * 3 + 1
+        return last_q_end.replace(month=lsm, day=1).isoformat(), last_q_end.isoformat()
+    if re.search(r'\byear\s+to\s+date\b|\bytd\b', msg):
+        return today.replace(month=1, day=1).isoformat(), today.isoformat()
+    if re.search(r'\bthis\s+year\b', msg):
+        return today.replace(month=1, day=1).isoformat(), today.replace(month=12, day=31).isoformat()
+    if re.search(r'\blast\s+year\b', msg):
+        y = today.year - 1
+        return f'{y}-01-01', f'{y}-12-31'
+
+    m = re.search(r'\b(?:for|in|of)\s+(20\d{2})\b', msg)
+    if m:
+        y = int(m.group(1))
+        return f'{y}-01-01', f'{y}-12-31'
+
+    return None, None

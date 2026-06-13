@@ -346,21 +346,53 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
            or re.search(r'\b(cancel|nullify)\b.*\binvoice', msg):
             return routed({'mode': 'show_void_invoice_form'})
 
+    # ── Executive finance questions (CEO / CFO / VP bank) ────────────────────
+    # Shares the orchestrator's executive Q&A layer: deterministic sections
+    # from sp_orchestrator('executive') with a one-line decision headline.
+    # Checked before NL listing so e.g. "weighted forecast vs commit" or
+    # "discounting exposure" aren't misread as invoice/payment list queries.
+    try:
+        from app.agents.orchestrator.executive import match_exec_question
+        _exec = match_exec_question(raw)
+    except Exception:
+        _exec = None
+    if _exec:
+        _sections, _note = _exec
+        logger.info(f'[executive] sections={_sections}')
+        return routed({'mode': 'executive_question',
+                       'sections': _sections, 'note': _note})
+
+    # ── Invoice-number lookup → full 360 view ────────────────────────────────
+    # Catches "Get invoice INV-000620", "Get invoice 360 for INV-000780",
+    # "show invoice inv 620", etc.  The db_node resolves invoiceNumber →
+    # invoice_id (via a list_invoices search) then runs get_invoice_360.
+    m_invnum = re.search(r'\binv[-\s]?(\d{3,})\b', msg)
+    if m_invnum and re.search(r'\binvoice\b', msg):
+        inv_number = f"INV-{m_invnum.group(1)}"
+        if '360' in msg or re.search(r'\b(?:get|show|find|open|view|display|detail|details)\b', msg):
+            logger.info(f'[invoice-number-360] invoiceNumber: {inv_number}')
+            return routed({'mode': 'get_invoice_360', 'invoiceNumber': inv_number})
+        logger.info(f'[invoice-number-list] search: {inv_number}')
+        return routed({'mode': 'list_invoices', 'search': inv_number})
+
     # ── Natural-language invoice / payment listing with optional date context ──
     # Catches phrases like:
     #   "show me invoices this month"        "list all invoices"
     #   "show invoices for this month"       "show invoices today"
     #   "display payments this week"         "show overdue invoices"
     #   "show me all invoices"               "list payments last month"
+    #   "list unpaid invoices"               "list invoices page 2"
     #
     # Date expressions supported:
-    #   today / this week / this month / last month / this year / last year
+    #   today / this week / this month / last month / this quarter /
+    #   last quarter / this year / last year / last N days
     #   If no date mentioned → list all (no date filter)
     _is_invoice_query = bool(re.search(
         r'\b(?:show|list|display|get|find|give)(?:\s+me)?(?:\s+all)?\s+(?:all\s+)?invoices?\b'
         r'|\binvoices?\s+(?:for\s+)?(?:this|last)\s+\w+'
         r'|\binvoices?\s+today\b'
-        r'|\boverdue\s+invoices?\b',
+        r'|\boverdue\s+invoices?\b'
+        r'|\b(?:unpaid|paid|open|outstanding)\s+invoices?\b',
         msg, re.IGNORECASE
     ))
     _is_payment_query = bool(re.search(
@@ -370,7 +402,8 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         msg, re.IGNORECASE
     ))
     _is_summary_query = bool(re.search(
-        r'\b(?:accounting\s+summary|accounting\s+report|account(?:ing)?\s+overview)\b',
+        r'\b(?:accounting\s+summary|accounting\s+report|account(?:ing)?\s+overview'
+        r'|revenue\s+(?:summary|report))\b',
         msg, re.IGNORECASE
     ))
 
@@ -393,6 +426,17 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         elif re.search(r'\bthis\s+month\b', msg, re.IGNORECASE):
             start_date = today.replace(day=1).isoformat()
             end_date   = today.isoformat()
+        elif re.search(r'\bthis\s+quarter\b', msg, re.IGNORECASE):
+            q_start_month = ((today.month - 1) // 3) * 3 + 1
+            start_date = today.replace(month=q_start_month, day=1).isoformat()
+            end_date   = today.isoformat()
+        elif re.search(r'\blast\s+quarter\b', msg, re.IGNORECASE):
+            q_start_month  = ((today.month - 1) // 3) * 3 + 1
+            this_q_start   = today.replace(month=q_start_month, day=1)
+            last_q_end     = this_q_start - timedelta(days=1)
+            lq_start_month = ((last_q_end.month - 1) // 3) * 3 + 1
+            start_date = last_q_end.replace(month=lq_start_month, day=1).isoformat()
+            end_date   = last_q_end.isoformat()
         elif re.search(r'\bthis\s+year\b', msg, re.IGNORECASE):
             start_date = today.replace(month=1, day=1).isoformat()
             end_date   = today.isoformat()
@@ -404,9 +448,26 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
             n = int(m_days.group(1))
             start_date = (today - timedelta(days=n)).isoformat()
             end_date   = today.isoformat()
+        elif m_year := re.search(r'\b(20\d{2})\b', raw):
+            y = m_year.group(1)
+            start_date = f'{y}-01-01'
+            end_date   = f'{y}-12-31'
 
         # Determine mode
         if _is_summary_query:
+            # "Accounting summary for Bob Brown" → per-account balance lookup
+            # (the accounting_summary SP mode has no account filter; the
+            # account_balance_lookup mode returns balance / invoiced / paid
+            # per matching account).
+            m_sum_name = re.search(
+                r'\b(?:summary|overview|report)\s+(?:for|of)\s+'
+                r'([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)\b',
+                raw
+            )
+            if m_sum_name:
+                acct = m_sum_name.group(1).strip()
+                logger.info(f'[NL-accounting] summary for account → account_balance_lookup: {acct!r}')
+                return routed({'mode': 'account_balance_lookup', 'search': acct})
             nl_mode = 'accounting_summary'
         elif _is_payment_query:
             nl_mode = 'list_payments'
@@ -418,6 +479,18 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
             params['startDate'] = start_date
         if end_date is not None:
             params['endDate'] = end_date
+
+        # Page navigation: "list invoices page 2" → pageNumber=2
+        m_page = re.search(r'\bpage\s+(\d+)\b', msg, re.IGNORECASE)
+        if m_page:
+            params['pageNumber'] = int(m_page.group(1))
+
+        # Explicit paid / unpaid status filter (overdue handled below).
+        if nl_mode == 'list_invoices' and not re.search(r'\boverdue\b', msg, re.IGNORECASE):
+            if re.search(r'\bunpaid\b', msg, re.IGNORECASE):
+                params['statusFilter'] = 'unpaid'
+            elif re.search(r'\bpaid\b', msg, re.IGNORECASE):
+                params['statusFilter'] = 'paid'
 
         # Overdue invoice filter: pass statusFilter='unpaid' so the SP only
         # returns unpaid invoices; Python-side will further filter by due_date.
@@ -451,7 +524,9 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
                 _candidate = _fb.group(1).strip().rstrip('?.,;')
                 _first = _candidate.split()[0].lower() if _candidate else ''
                 _skip = {'this', 'last', 'today', 'all', 'any', 'a', 'an', 'the',
-                         'my', 'our', 'your', 'overdue', 'paid', 'unpaid', 'recent'}
+                         'my', 'our', 'your', 'overdue', 'paid', 'unpaid', 'recent',
+                         'summary', 'report', 'page', 'pages', 'open', 'outstanding',
+                         'list', 'details', 'detail'}
                 if _candidate and _first not in _skip:
                     _acct_name_m = _fb
         if _acct_name_m:
