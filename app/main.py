@@ -147,6 +147,33 @@ def _run_generate_pipeline_opportunities() -> None:
         logger.error(f"[PipelineGen] Scheduled job failed: {exc}", exc_info=True)
 
 
+# Auto-sweep runs live (snooze is non-destructive & reversible). Flip to True
+# to have the scheduled run only preview (log what it *would* snooze) instead.
+ACTIVITIES_SWEEP_DRY_RUN = False
+
+
+def _run_activities_auto_sweep() -> None:
+    """Scheduled job: auto-snooze non-critical, overdue activities.
+
+    Calls sp_activities_auto_sweep() (v1 SNOOZE-ONLY) which pushes due_at
+    forward for open, low-score (<=15) task/note activities that are overdue,
+    capped at 3 auto-snoozes each so nothing is deferred forever. Non-
+    destructive — it never completes/deletes/reassigns. Set
+    ACTIVITIES_SWEEP_DRY_RUN=True to log a preview without changing anything.
+    """
+    try:
+        from app.core.database import execute_sp
+        dry = 'true' if ACTIVITIES_SWEEP_DRY_RUN else 'false'
+        rows = execute_sp(
+            f"SELECT sp_activities_auto_sweep(p_dry_run => {dry}) AS result"
+        )
+        result = (rows[0].get('result') or {}) if rows else {}
+        meta = (result.get('metadata') or {}) if isinstance(result, dict) else {}
+        logger.info(f"[ActivitySweep] {meta.get('message', result)}")
+    except Exception as exc:
+        logger.error(f"[ActivitySweep] Scheduled job failed: {exc}", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("=== CRM Agent starting up (all 12 modules + home index + auth + email) ===")
@@ -161,40 +188,56 @@ async def lifespan(app: FastAPI):
     try:
         from apscheduler.schedulers.background import BackgroundScheduler
         from apscheduler.triggers.cron import CronTrigger
-        _scheduler = BackgroundScheduler(timezone="UTC")
-        _scheduler.add_job(
-            _run_advance_order_statuses,
-            trigger=CronTrigger(hour=2, minute=0),   # 02:00 UTC — advance statuses
-            id="advance_order_statuses",
-            replace_existing=True,
-            misfire_grace_time=3600,
-        )
-        _scheduler.add_job(
-            _run_generate_daily_orders,
-            trigger=CronTrigger(hour=8, minute=0),   # 08:00 UTC — seed 20-30 new orders
-            id="generate_daily_orders",
-            replace_existing=True,
-            misfire_grace_time=3600,
-        )
+        # All daily jobs run at 10 PM US Eastern. Using the named zone (not a
+        # fixed UTC offset) means the same wall-clock 22:00 ET fires correctly
+        # on Railway (UTC host) AND on a local machine in any timezone, and it
+        # follows EST/EDT daylight-saving automatically. pytz (an APScheduler
+        # dependency) ships the IANA database, so this also resolves on Windows.
+        _scheduler = BackgroundScheduler(timezone="America/New_York")
+        # Jobs are staggered within the 22:xx ET hour so the "advance" passes
+        # run before the "seed" passes (age existing rows forward, then add new),
+        # and concurrent writes to the same tables don't collide.
         _scheduler.add_job(
             _run_advance_opportunity_stages,
-            trigger=CronTrigger(hour=0, minute=30), # 00:30 UTC — advance opp pipeline
+            trigger=CronTrigger(hour=22, minute=0),  # 10:00 PM ET — advance opp pipeline
             id="advance_opportunity_stages",
             replace_existing=True,
             misfire_grace_time=3600,
         )
         _scheduler.add_job(
+            _run_advance_order_statuses,
+            trigger=CronTrigger(hour=22, minute=5),  # 10:05 PM ET — advance order statuses
+            id="advance_order_statuses",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        _scheduler.add_job(
+            _run_activities_auto_sweep,
+            trigger=CronTrigger(hour=22, minute=10), # 10:10 PM ET — snooze non-critical overdue activities
+            id="activities_auto_sweep",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        _scheduler.add_job(
+            _run_generate_daily_orders,
+            trigger=CronTrigger(hour=22, minute=15), # 10:15 PM ET — seed 20-30 new orders
+            id="generate_daily_orders",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        _scheduler.add_job(
             _run_generate_pipeline_opportunities,
-            trigger=CronTrigger(hour=8, minute=30), # 08:30 UTC — seed 3-5 new pipeline opps
+            trigger=CronTrigger(hour=22, minute=20), # 10:20 PM ET — seed 3-5 new pipeline opps
             id="generate_pipeline_opportunities",
             replace_existing=True,
             misfire_grace_time=3600,
         )
         _scheduler.start()
         logger.info(
-            "[Scheduler] Started — "
-            "orders advance 02:00 UTC | orders seed 08:00 UTC | "
-            "opps advance 00:30 UTC | opps seed 08:30 UTC"
+            "[Scheduler] Started (America/New_York) — "
+            "opps advance 22:00 ET | orders advance 22:05 ET | "
+            "activity sweep 22:10 ET | orders seed 22:15 ET | "
+            "pipeline seed 22:20 ET"
         )
     except ImportError:
         logger.warning(

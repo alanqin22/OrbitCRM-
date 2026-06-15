@@ -221,6 +221,16 @@ _NON_NAME_TERMS = {
     'sources', 'status', 'rating', 'score', 'margin', 'weight', 'weighted',
 }
 
+# Known lead-source values (lowercased) — when a message says "opportunities
+# from <X>" and X is one of these, route to a dedicated lead_source= filter
+# (exact match in the SP) instead of a fuzzy name search. Anything else after
+# "from" (e.g. an account name) still falls through to the search path.
+LEAD_SOURCES = {
+    'website', 'referral', 'cold call', 'trade show', 'email campaign',
+    'partner', 'partner program', 'webinar', 'paid ads', 'event',
+    'cold outreach', 'newsletter', 'google ads', 'linkedin',
+}
+
 
 # ---------------------------------------------------------------------------
 # Natural-language trigger patterns
@@ -288,9 +298,21 @@ def _match_nl(message: str) -> Optional[dict]:
     if re.search(r'\bwin.?(rate|loss)\b', msg) or re.search(r'\bwin\s*/\s*loss\b', msg):
         return {'mode': 'win_rate'}
 
-    # Forecast
+    # Forecast — honour an explicit "N month" horizon by passing a close-date
+    # window to the SP (which defaults to ±6 months when no dates are given).
+    # Without this, "3 / 6 / 12 month forecast" all returned identical output.
     if re.search(r'\bforecast\b', msg):
-        return {'mode': 'forecast'}
+        params = {'mode': 'forecast'}
+        hm = re.search(r'\b(\d{1,2})\s*[-]?\s*month', msg)
+        if hm:
+            n = max(1, min(int(hm.group(1)), 36))
+            today = date.today()
+            total = today.year * 12 + (today.month - 1) + n
+            y, m0 = divmod(total, 12)
+            last = calendar.monthrange(y, m0 + 1)[1]
+            params['date_from'] = today.isoformat()
+            params['date_to']   = date(y, m0 + 1, min(today.day, last)).isoformat()
+        return params
 
     # List opportunities (with optional stage filter)
     if re.search(r'\b(list|show|display|get)\b.*\bopportunit', msg):
@@ -305,6 +327,15 @@ def _match_nl(message: str) -> Optional[dict]:
                 params['stage'] = 'closed_won'
             elif re.search(r'\blost\b', msg):
                 params['stage'] = 'closed_lost'
+        # "open opportunities" → status filter (open is a status, not a stage).
+        # Without this it fell through to no filter and returned ALL rows.
+        if 'stage' not in params and 'status' not in params and re.search(r'\bopen\b', msg):
+            params['status'] = 'open'
+        # "opportunities from <known lead source>" → dedicated lead_source filter
+        # (exact match) rather than a fuzzy name search that also hit name/desc.
+        _src_m = re.search(r'\bfrom\s+([A-Za-z][A-Za-z &/]+?)\s*$', raw, re.IGNORECASE)
+        if _src_m and _src_m.group(1).strip().lower() in LEAD_SOURCES:
+            params['lead_source'] = _src_m.group(1).strip()
         # "unassigned opportunities" → owner_id IS NULL (sentinel UUID)
         if re.search(r'\bunassigned\b', msg):
             params['owner_id'] = '00000000-0000-0000-0000-000000000000'
@@ -342,7 +373,7 @@ def _match_nl(message: str) -> Optional[dict]:
                 r'(?:details?|info|information)\s+for\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+)',
                 raw
             )
-        if _name_m:
+        if _name_m and 'lead_source' not in params:
             name = _name_m.group(1).strip().rstrip('?.,;')
             if name and name.lower() not in _NON_NAME_TERMS:
                 params['search'] = name

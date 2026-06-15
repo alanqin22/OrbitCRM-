@@ -39,6 +39,7 @@ VALID_PARAMS = {
     'mode',
     'leadId',
     'operation',
+    'groupId',        # merge by_group anchor → p_group_id
     'firstName',
     'lastName',
     'company',

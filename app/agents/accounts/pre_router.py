@@ -250,6 +250,17 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         industry = _m.group(1).strip().title()
         return routed({'mode': 'list', 'industry': industry, 'pageSize': 20, 'pageNumber': 1})
 
+    # ── "list <industry> accounts in <city>" → industry + city (multi-condition) ──
+    # Routed deterministically (industry filter + city search together) so it no
+    # longer depends on the AI agent, which handled it inconsistently.
+    _MULTI_GENERIC = {'all', 'the', 'my', 'these', 'some', 'active', 'inactive', 'archived'}
+    _m = re.match(r'^(?:list|show|display)\s+([a-z][a-z\s]*?)\s+accounts?\s+in\s+([\w\s]+?)\s*$', msg)
+    if _m and _m.group(1).strip() not in _MULTI_GENERIC:
+        industry = _m.group(1).strip().title()
+        city     = _m.group(2).strip().title()
+        return routed({'mode': 'list', 'industry': industry, 'search': city,
+                       'pageSize': 20, 'pageNumber': 1})
+
     # ── "accounts with no/zero/without orders" → list_no_orders  ────────────
     if re.search(r'\b(no|zero|without|0)\s+orders?\b', msg):
         return routed({'mode': 'list_no_orders'})
@@ -279,6 +290,21 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
     if _m:
         return routed({'mode': 'list_min_orders', 'minOrders': int(_m.group(1)),
                        'pageSize': 20, 'pageNumber': 1})
+
+    # ── "accounts with <x> email" → search by email/domain  ───────────────────
+    # Routed deterministically (was AI-passthru, which returned 0 inconsistently).
+    _m = re.search(r'\baccounts?\s+with\s+(.+?)\s+e-?mails?\b', msg)
+    if _m:
+        _term = _m.group(1).strip()
+        if _term and _term not in ('no', 'an', 'a', 'valid', 'any', 'the', 'their'):
+            return routed({'mode': 'list', 'search': _term, 'pageSize': 20, 'pageNumber': 1})
+
+    # ── "name contains <x>" / "where name contains <x>" → search  ─────────────
+    _m = re.search(r'\bname\s+contains?\s+(.+?)(?:\s*$|[.,?!])', msg)
+    if _m:
+        _term = _m.group(1).strip()
+        if _term:
+            return routed({'mode': 'list', 'search': _term, 'pageSize': 20, 'pageNumber': 1})
 
     # ── "top accounts by revenue / top-performing" → list_top_revenue  ────────
     if re.search(r'\b(top|most|highest|best|biggest|largest|performing)\b.*\brevenue\b', msg):

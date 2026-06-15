@@ -1094,10 +1094,24 @@ EXEC_QA: List[Tuple[str, List[str], Optional[str]]] = [
      'and billing gaps below are the exception signals.'),
 
     # ── Contacts executive variants ──────────────────────────────────────────
-    (r'decision\s+makers?|buying\s+committees?',
+    # Order matters (first match wins). committee-gaps is split out ABOVE the
+    # broader decision-makers pattern, and champions / most-engaged / silent-key
+    # are separated so each capability chip yields a DISTINCT decision-grade
+    # answer instead of three colliding pairs.
+    (r'committee\s+gaps?|incomplete\s+(?:buying\s+)?committee|committees?\s+(?:are\s+)?incomplete|single.threaded',
+     ['pipeline_contacts', 'at_risk_deals'],
+     'Buying-committee coverage is inferred from contacts attached to open '
+     'deals; deals with thin coverage that are also at risk are below.'),
+    (r'decision\s+makers?|buying\s+committees?|primary\s+contacts?\s+on',
      ['pipeline_contacts'], None),
-    (r'champions?\b|most\s+engaged|engaged\s+this\s+week|newly\s+added\s+to',
+    (r'champions?\b|advocates?\b|strongest\s+advocate',
+     ['contact_engagement', 'lead_sources'],
+     'Advocacy is not directly scored; most-engaged contacts plus the best-'
+     'performing lead sources below are the champion proxies.'),
+    (r'most\s+engaged|engaged\s+this\s+week|newly\s+added\s+to',
      ['contact_engagement', 'pipeline_contacts'], None),
+    (r'high\s+influence|influential\s+contacts?|silent\s+key|gone\s+silent|key\s+contacts?\s+\w*\s*(?:silent|quiet)',
+     ['contact_engagement', 'churn_risk'], None),
     (r'collections?\b|late\s+payments?',
      ['collections_contacts', 'ar_summary'], None),
     (r'contacts?,?\s+if\s+lost|threaten\s+next\s+quarter',

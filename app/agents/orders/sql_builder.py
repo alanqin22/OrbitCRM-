@@ -74,6 +74,9 @@ VALID_ACTIONS = {
 VALID_STATUSES = {
     'pending', 'processing', 'ready', 'invoiced',
     'shipped', 'delivered', 'completed', 'cancelled', 'refunded',
+    # list-only pseudo-statuses → expand to the active fulfilment queue
+    # (pending+processing+ready) in sp_orders. Matches the home KPI count.
+    'active', 'open',
 }
 
 VALID_PRICE_TYPES = {'Retail', 'Promo', 'Wholesale'}

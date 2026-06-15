@@ -338,8 +338,10 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         logger.info('[NL->summary]')
         return routed({'mode': 'summary'})
 
-    # NOTE: sp_contacts list mode does NOT filter by p_role — the parameter is
-    # accepted but ignored by the SP.  Role-based queries fall through to the AI.
+    # NOTE: sp_contacts list mode filters by p_role using an EXACT (trimmed,
+    # case-insensitive) match — LOWER(TRIM(role)) = LOWER(TRIM(p_role)). Pass a
+    # full role string (e.g. "VP Sales", "Sales Manager"); partial words like
+    # "Manager" won't match. Free-text/partial role lookups should use p_search.
 
     # "Find contacts at/for/in X" — company name lookup.
     # Searching by company/account name requires the AI to resolve the accountId first;
@@ -408,6 +410,11 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
     if any(p in msg for p in ('unverified contacts', 'not verified', 'unverified email')):
         logger.info('[NL->list] unverified contacts filter')
         return routed(_compact({'mode': 'list', 'isEmailVerified': False}))
+
+    # "Show verified contacts" / "List verified contacts" (guard against 'unverified')
+    if 'unverified' not in msg and any(p in msg for p in ('verified contacts', 'verified email')):
+        logger.info('[NL->list] verified contacts filter')
+        return routed(_compact({'mode': 'list', 'isEmailVerified': True}))
 
     # "Inactive contacts" / "List inactive contacts"
     if any(p in msg for p in ('inactive contacts', 'list inactive', 'show inactive contacts')):

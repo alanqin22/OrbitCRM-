@@ -77,6 +77,12 @@ VALID_STATUSES = [
     'shipped', 'delivered', 'completed', 'cancelled', 'refunded',
 ]
 
+# List-filter pseudo-statuses: 'active'/'open' expand to the fulfilment queue
+# (pending+processing+ready) in sp_orders — matches the home KPI count. These
+# are valid for LIST filtering only, NOT for change_status writes, so they are
+# kept out of VALID_STATUSES above.
+LIST_STATUS_FILTERS = VALID_STATUSES + ['active', 'open']
+
 UUID_PARAMS = [
     'orderId', 'accountId', 'contactId', 'productId',
     'productPricingId', 'orderItemId', 'createdBy', 'updatedBy',
@@ -365,7 +371,7 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
 
     # show <status> orders — verb-prefix OR bare "<status> orders"
     # Also captures "find pending orders for David Chen" → status + search
-    _status_alt = '|'.join(VALID_STATUSES)
+    _status_alt = '|'.join(LIST_STATUS_FILTERS)
     _status_match = (
         re.match(rf'^{_verb_prefix}(?:all\s+(?:the\s+)?)?({_status_alt})\s+orders?\b', msg, re.IGNORECASE)
         or re.match(rf'^({_status_alt})\s+orders?\b', msg, re.IGNORECASE)

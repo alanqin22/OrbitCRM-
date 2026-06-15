@@ -16,7 +16,7 @@ _Listed in the same order as the launcher page on [agentorc.ca](https://agentorc
 | Module | What to ask / try |
 |---|---|
 | 🛒&nbsp;Store | **CRM Universe Hub** — the landing page. KPI tiles for Active Pipeline / Open Leads / Pending Orders / Unread Alerts, plus the module launcher |
-| 🎯&nbsp;Leads | _"convert Maria's lead"_ — inline forms on vague intent, one-click conversion, qualify/disqualify, archive & restore |
+| 🎯&nbsp;Leads | _"convert Maria's lead"_, _"score this lead"_ — deterministic Fit + Intent lead scoring (Cold/Warm/Hot), inline forms on vague intent, one-click conversion, qualify/disqualify, duplicate merge, archive & restore |
 | 👤&nbsp;Accounts | _"find Apple"_, _"new prospect account"_ — voice typeahead, 360° timeline & financials, overdue-invoice and no-phone drill-downs |
 | 📇&nbsp;Contacts | _"show me Bob Brown's contact details"_ — duplicate detection, account roll-up, archive & restore |
 | 💼&nbsp;Opportunities | _"add product to opportunity"_ — stage pipeline, weighted forecast, win-rate analytics by owner & lead source |
@@ -37,6 +37,9 @@ _Listed in the same order as the launcher page on [agentorc.ca](https://agentorc
 - **Hybrid routing** — common intents (search, list, update, delete) skip the LLM entirely for sub-second response; novel phrasings fall through to GPT-4o-mini.
 - **Voice everywhere** — Azure Speech SDK (Bing-style) primary, Web Speech API fallback, with BFCache-safe cleanup across navigation.
 - **Real analytics, not toys** — invoice-level cost/margin tracking, effective-dated wholesale/retail pricing, AR aging buckets, forecast attainment, data-quality badges, and a DB-level `wholesale ≤ retail` trigger.
+- **Deterministic lead scoring** — a transparent Fit + Intent model (`fn_score_lead`, `rule_based_v1`) replaces random scores with explainable, audited Cold/Warm/Hot ratings; the scoring function is a single swappable API, ready to drop in a predictive model later.
+- **Executive Q&A bank** — every agent answers interrogative "executive questions" through a shared decision-grade layer (headline, confidence, drivers, recommended action + owner, drill-down link), with each capability chip routed to a distinct section set.
+- **Nightly automation** — an APScheduler job set (pipeline progression, order-status advancement, daily seed data, activity sweep) runs at **10 PM US Eastern (DST-aware)** so the same wall-clock time fires on both the Railway and local databases.
 - **Single FastAPI + LangGraph server** — zero duplicated config, one DB connection pool, shared session memory across all 15 modules.
 
 ---

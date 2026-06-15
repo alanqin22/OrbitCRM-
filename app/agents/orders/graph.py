@@ -246,6 +246,10 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
         # also enforce them here so combined queries always return correct results
         # even if the deployed SP version doesn't AND both filters together.
         req_status = (parsed_json.get("status") or "").strip().lower()
+        # 'active'/'open' are pseudo-statuses that expand to the fulfilment
+        # queue (pending+processing+ready) — match the SP's expansion so the
+        # safety net doesn't strip the very rows the SP correctly returned.
+        _ACTIVE_GROUP = {'pending', 'processing', 'ready'}
         if req_status and db_rows:
             try:
                 filtered = []
@@ -253,10 +257,16 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     result = row.get("result") if isinstance(row, dict) else None
                     if isinstance(result, dict) and "orders" in result:
                         orders = result["orders"] or []
-                        orders_filtered = [
-                            o for o in orders
-                            if str(o.get("status") or "").lower() == req_status
-                        ]
+                        if req_status in ('active', 'open'):
+                            orders_filtered = [
+                                o for o in orders
+                                if str(o.get("status") or "").lower() in _ACTIVE_GROUP
+                            ]
+                        else:
+                            orders_filtered = [
+                                o for o in orders
+                                if str(o.get("status") or "").lower() == req_status
+                            ]
                         # Only rewrite the payload when this safety net actually
                         # removed rows — the SP already filters by status, and
                         # overwriting total_records with the page row count on a

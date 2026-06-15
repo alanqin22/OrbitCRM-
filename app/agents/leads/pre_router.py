@@ -341,13 +341,21 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
         'cold call': 'cold_call', 'cold_call': 'cold_call',
         'trade show': 'trade_show', 'trade_show': 'trade_show',
         'advertisement': 'advertisement', 'ads': 'advertisement',
+        'newsletter': 'newsletter',
+        'webinar': 'webinar',
         'partner': 'partner', 'import': 'import', 'other': 'other',
     }
     _source_m = re.search(r'\bfrom\s+(?:the\s+)?([\w][\w\s]*)$', msg)
     if _source_m:
-        _raw = _source_m.group(1).strip().rstrip('s').strip()  # strip trailing 's' e.g. "leads"
-        _raw = re.sub(r'\s+leads?$', '', _raw).strip()
-        _src = _KNOWN_SOURCES.get(_raw) or _KNOWN_SOURCES.get(_raw.replace('_', ' '))
+        # Strip a trailing "leads"/"lead" only; do NOT blanket-strip a trailing
+        # 's' (that turned "ads" → "ad" and broke "google ads"/"facebook ads").
+        _raw = re.sub(r'\s+leads?$', '', _source_m.group(1).strip()).strip()
+        # Try an exact match first, then a singular fallback so plural source
+        # phrasings ("referrals", "webinars") still resolve.
+        _src = (_KNOWN_SOURCES.get(_raw)
+                or _KNOWN_SOURCES.get(_raw.replace('_', ' '))
+                or _KNOWN_SOURCES.get(_raw.rstrip('s'))
+                or _KNOWN_SOURCES.get(_raw.rstrip('s').replace('_', ' ')))
         if _src:
             return _routed({
                 'mode': 'list', 'source': _src,
