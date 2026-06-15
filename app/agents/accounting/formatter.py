@@ -285,7 +285,11 @@ def format_response(db_rows: List[Dict[str, Any]], params: Dict[str, Any]) -> st
         'show_void_invoice_form':  'Opening the Void Invoice form below…',
     }
     if mode in _ui_form_messages:
-        return f'[MODE:{mode}]\n{_ui_form_messages[mode]}'
+        # Optional account pre-fill: "[MODE:show_invoice_form|Bob Brown]" tells
+        # the frontend to pre-search the form's account typeahead.
+        _pf = (params or {}).get('prefillAccount')
+        _marker = f'[MODE:{mode}|{_pf}]' if _pf else f'[MODE:{mode}]'
+        return f'{_marker}\n{_ui_form_messages[mode]}'
 
     metadata = response.get('metadata', {})
 

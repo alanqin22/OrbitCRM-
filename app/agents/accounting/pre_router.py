@@ -338,13 +338,27 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
     # fields. Each detector skips itself when a UUID is present.
     _has_uuid = bool(_extract_uuid(raw))
     if not _has_uuid:
+        # Pre-fill the form's account search when the chip names a customer,
+        # e.g. "Generate invoice for Bob Brown" → the form opens pre-searched
+        # on "Bob Brown" instead of blank. (Form is account-first: the user
+        # then picks the order / invoice.)
+        _pf_m = re.search(
+            r'\b(?:for|of)\s+([A-Z][a-zA-Z]+(?:[-\s][A-Z][a-zA-Z]+)+)\s*$', raw)
+        _pf_account = _pf_m.group(1).strip() if _pf_m else None
+
+        def _form(form_mode: str) -> dict:
+            p = {'mode': form_mode}
+            if _pf_account:
+                p['prefillAccount'] = _pf_account
+            return routed(p)
+
         if re.search(r'\b(generate|create|new|issue|make)\b.*\binvoice', msg):
-            return routed({'mode': 'show_invoice_form'})
+            return _form('show_invoice_form')
         if re.search(r'\b(record|log|enter|add)\b.*\bpayment', msg):
-            return routed({'mode': 'show_payment_form'})
+            return _form('show_payment_form')
         if re.search(r'\bvoid\b.*\binvoice', msg) \
            or re.search(r'\b(cancel|nullify)\b.*\binvoice', msg):
-            return routed({'mode': 'show_void_invoice_form'})
+            return _form('show_void_invoice_form')
 
     # ── Executive finance questions (CEO / CFO / VP bank) ────────────────────
     # Shares the orchestrator's executive Q&A layer: deterministic sections
@@ -487,8 +501,11 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
 
         # Explicit paid / unpaid status filter (overdue handled below).
         if nl_mode == 'list_invoices' and not re.search(r'\boverdue\b', msg, re.IGNORECASE):
-            if re.search(r'\bunpaid\b', msg, re.IGNORECASE):
-                params['statusFilter'] = 'unpaid'
+            if re.search(r'\b(?:unpaid|outstanding|open)\b', msg, re.IGNORECASE):
+                # "unpaid / outstanding / open" = a balance is still owing
+                # (payment_status unpaid OR partial). Was 'unpaid', which only
+                # matched zero-payment invoices and missed partially-paid ones.
+                params['statusFilter'] = 'outstanding'
             elif re.search(r'\bpaid\b', msg, re.IGNORECASE):
                 params['statusFilter'] = 'paid'
 
@@ -496,8 +513,12 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         # returns unpaid invoices; Python-side will further filter by due_date.
         _is_overdue = bool(re.search(r'\boverdue\b', msg, re.IGNORECASE))
         if _is_overdue and nl_mode == 'list_invoices':
-            params['statusFilter'] = 'unpaid'
-            params['overdue'] = True   # signals Python graph to apply due_date filter
+            # 'overdue' = past due AND still owing. The SP maps statusFilter
+            # 'overdue' to payment_status IN ('unpaid','partial') AND
+            # due_date < today. (Previously used 'unpaid', which only matched
+            # zero-payment invoices and missed partially-paid overdue ones —
+            # returned 3 of 166.)
+            params['statusFilter'] = 'overdue'
 
         # Extract optional customer/account name for invoice OR payment queries.
         # Handles:

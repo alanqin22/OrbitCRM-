@@ -343,10 +343,10 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
     # Write-style verbs (create/update/log/…) are excluded: those flow to the
     # AI Agent, which collects the required fields conversationally.
     if (re.search(r'\bactivit(?:y|ies)\b', msg)
-            or re.search(r'\b(?:calls?|meetings?|tasks?|emails?|notes?)\b', msg)) \
+            or re.search(r'\b(?:calls?|meetings?|tasks?|emails?|notes?|sms|voip|systems?)\b', msg)) \
        and not re.match(r'^(?:create|update|edit|modify|add|log|schedule|mark|record)\b', msg):
 
-        _type_m   = re.search(r'\b(call|meeting|task|email|note)s?\b', msg)
+        _type_m   = re.search(r'\b(call|meeting|task|email|note|sms|voip|system)s?\b', msg)
         _page_m   = re.search(r'\bpage\s+(\d+)\b', msg)
         _pending  = re.search(r'\b(?:pending|incomplete|not\s+completed?|open)\b', msg)
         _completd = re.search(r'\b(?:completed?|finished|done|closed)\b', msg)

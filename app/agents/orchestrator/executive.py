@@ -39,16 +39,20 @@ def _fmt_quarter_revenue(p: dict) -> List[str]:
 
 def _fmt_monthly_trend(p: dict) -> List[str]:
     rows = p.get('monthly_trend') or []
-    out = ['#### 📅 Month-over-Month Trend',
-           '| Month | Revenue | Orders |', '| --- | --- | --- |']
+    header = ['#### 📅 Month-over-Month Trend',
+              '| Month | Revenue | Orders |', '| --- | --- | --- |']
+    # Compute the MoM % in CHRONOLOGICAL order so each month's delta is vs the
+    # month before it...
+    body = []
     prev = None
     for r in rows:
         rev = float(r.get('revenue') or 0)
         mom = f" ({(rev - prev) / prev * 100:+.0f}%)" if prev else ''
-        out.append(f"| {r.get('month')} | {_money(rev)}{mom} | {r.get('orders')} |")
+        body.append(f"| {r.get('month')} | {_money(rev)}{mom} | {r.get('orders')} |")
         prev = rev or prev
-    out.append('')
-    return out
+    # ...then show newest month first — execs want the latest period on top.
+    body.reverse()
+    return header + body + ['']
 
 
 def _fmt_forecast(p: dict) -> List[str]:
@@ -1008,6 +1012,14 @@ EXEC_QA: List[Tuple[str, List[str], Optional[str]]] = [
      'churn-risk below are the proxies.'),
 
     # ── Products executive variants ──────────────────────────────────────────
+    # Split margin-EROSION from best-margin, and accelerat/decelerat-vs-plan from
+    # driving/dragging, so each capability chip yields a DISTINCT answer instead
+    # of colliding on the shared product_performance sections. Narrow patterns,
+    # placed first so they win over the broader product matchers below.
+    (r'margin\s+erosion|eroding[^?.]*\bmargin\b|\bmargin\b[^?.]*eroding|largest\s+margin\s+(?:loss|decline)',
+     ['product_performance', 'product_discounts', 'discounts'], None),
+    (r'accelerat\w*\s+or\s+decelerat\w*\s+vs\s+plan|product\s+lines?[^?.]*decelerat\w*\s+vs\s+plan',
+     ['product_performance', 'forecast'], None),
     (r'discount[^?.]*(?:product|sku)|(?:product|sku)s?[^?.]*discount',
      ['product_discounts', 'discounts'], None),
     (r'product\s+portfolio|products?[^?.]*driving|products?[^?.]*dragging'

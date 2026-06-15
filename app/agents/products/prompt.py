@@ -166,10 +166,11 @@ DATABASE & CATEGORIES
 
 category_number | category_name
 1  | Apparel          6  | Office Supplies
-2  | Electronics      7  | Personal Care
-3  | Grocery          8  | Pet Supplies
-4  | Health & Wellness 9 | Snacks & Beverages
-5  | Home Essentials  10 | Toys & Games
+2  | Electronics      8  | Pet Supplies
+3  | Grocery          9  | Snacks & Beverages
+4  | Health & Wellness 10 | Toys & Games
+5  | Home Essentials
+(Personal Care was merged into Health & Wellness — no category 7.)
 
 Category UUIDs (use when categoryNumber is unavailable):
 1 → 7632ef73-7a4a-4320-b5d8-a2bb72bd8c03
@@ -178,7 +179,6 @@ Category UUIDs (use when categoryNumber is unavailable):
 4 → fcaaec3d-21d4-461d-9dbe-849c7c14c7de
 5 → c346f439-e972-4f0a-8115-f3baa63cc1d8
 6 → cdcbd1da-11a2-497a-bc1c-99ff2cd440ec
-7 → adf36cbb-9243-4a60-96ac-f5998361ed91
 8 → 7fb054a9-5457-4932-9c89-4701da3f1dcc
 9 → 64c198d3-3bcc-4291-ab8d-7e12abf24b2f
 10 → 78e2ee6c-ee94-4bdc-ad4a-405ff2332e65

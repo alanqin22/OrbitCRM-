@@ -61,14 +61,16 @@ UUID_RE = re.compile(
     re.IGNORECASE,
 )
 
-# ── Category name → category_number map (product_categories table) ──────────
+# ── Category name → category_number map (category table) ────────────────────
 # Includes common synonyms so "clothing products" resolves to Apparel etc.
-# Numbers mirror the seeded product_categories rows (7 is unused in the DB).
+# Category 7 (Personal Care) was merged into Health & Wellness (4); its
+# synonyms now resolve there so legacy "personal care" queries still work.
 _CATEGORY_SYNONYMS = {
     'apparel': 1, 'clothing': 1, 'clothes': 1, 'fashion': 1,
     'electronics': 2, 'electronic': 2, 'tech': 2, 'gadgets': 2,
     'grocery': 3, 'groceries': 3, 'food': 3,
     'health & wellness': 4, 'health and wellness': 4, 'health': 4, 'wellness': 4,
+    'personal care': 4, 'personal-care': 4, 'personalcare': 4, 'grooming': 4,
     'home essentials': 5, 'home essential': 5, 'home': 5,
     'office supplies': 6, 'office supply': 6, 'office': 6, 'stationery': 6,
     'pet supplies': 8, 'pet supply': 8, 'pets': 8, 'pet': 8,
