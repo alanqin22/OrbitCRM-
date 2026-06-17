@@ -1,0 +1,566 @@
+"""Agent Bus — Phase 1 consumer daemon (event-driven agent cooperation).
+
+WHAT THIS IS
+------------
+Your DB already has the full latent event bus:
+
+    emit_event() ─▶ events ──(AFTER INSERT trigger)──▶ event_queue (pending)
+                                       │
+                                       └─▶ notifications (channel='agent_inbox')
+                                           fanned out per event_subscriptions
+
+…but nothing ever *consumed* event_queue (19k+ rows sat 'pending'). This module
+is the missing consumer: a single background loop that claims pending queue rows,
+routes each event to a registered Python handler (one per event_type), and marks
+the work done / failed-with-retry. A handler embodies an agent ACTING on an event
+and may delegate to peer agents in-process (the Accounting→Email pilot below).
+
+SAFETY / GOVERNANCE
+-------------------
+  • Opt-in: does nothing unless AGENT_BUS_ENABLED=1.
+  • Only event_types with a registered handler are ever touched. Everything else
+    (incl. the 1,554 legacy 'invoice_overdue' rows) is left strictly alone.
+  • Boot cutoff: by default only events created at/after daemon start are
+    processed (set AGENT_BUS_BACKFILL_MINUTES>0 to reach back). No mass replay.
+  • Batch-capped, locked (locked_by/locked_at, 5-min stale-lock reclaim), and
+    retried with exponential backoff up to AGENT_BUS_MAX_ATTEMPTS.
+  • No outbound side effects by default: the pilot DRAFTS + logs + hands off to
+    the Email agent via the bus. Real SMTP only when AGENT_BUS_AUTOSEND=1.
+
+CONFIG (env)
+------------
+  AGENT_BUS_ENABLED            0     master on/off
+  AGENT_BUS_POLL_SECS          30    seconds between ticks
+  AGENT_BUS_BATCH              10    max events claimed per tick
+  AGENT_BUS_MAX_ATTEMPTS       5     retries before status='failed'
+  AGENT_BUS_AUTOSEND           0     1 = actually send via Email agent
+  AGENT_BUS_BACKFILL_MINUTES   0     >0 = also process recent pre-boot events
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import socket
+from datetime import datetime, timedelta, timezone
+from typing import Any, Awaitable, Callable, Dict, List, Optional
+
+from fastapi import APIRouter
+
+from app.core.database import get_connection
+
+logger = logging.getLogger("agent_bus")
+
+# ── Config ────────────────────────────────────────────────────────────────────
+def _flag(name: str, default: str = "0") -> bool:
+    return os.getenv(name, default).strip().lower() in ("1", "true", "yes", "on")
+
+ENABLED      = _flag("AGENT_BUS_ENABLED")
+POLL_SECS    = int(os.getenv("AGENT_BUS_POLL_SECS", "30"))
+BATCH        = int(os.getenv("AGENT_BUS_BATCH", "10"))
+MAX_ATTEMPTS = int(os.getenv("AGENT_BUS_MAX_ATTEMPTS", "5"))
+AUTOSEND     = _flag("AGENT_BUS_AUTOSEND")
+BACKFILL_MIN = int(os.getenv("AGENT_BUS_BACKFILL_MINUTES", "0"))
+
+WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
+
+# Materiality floor — matches the AR settlement tolerance used elsewhere.
+MATERIAL_BALANCE = 50.0
+
+# Set at start(); only events at/after this instant are eligible (minus backfill).
+_CUTOFF: Optional[datetime] = None
+_task: Optional[asyncio.Task] = None
+_stop = asyncio.Event()
+
+# event_type -> async handler(event_dict) -> result_dict
+HANDLERS: Dict[str, Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]] = {}
+
+
+# ============================================================================
+# QUEUE PLUMBING  (synchronous psycopg2 — run via asyncio.to_thread)
+# ============================================================================
+
+def _claim_batch_sync(cutoff: datetime) -> List[Dict[str, Any]]:
+    """Atomically claim up to BATCH pending events whose type has a handler."""
+    types = list(HANDLERS.keys())
+    if not types:
+        return []
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH c AS (
+                    SELECT q.queue_uuid
+                    FROM   event_queue q
+                    JOIN   events e ON e.event_uuid = q.event_uuid
+                    WHERE  q.status = 'pending'
+                      AND  e.event_type = ANY(%(types)s)
+                      AND  e.created_at >= %(cutoff)s
+                      AND  (q.next_attempt_at IS NULL OR q.next_attempt_at <= now())
+                      AND  (q.locked_at IS NULL OR q.locked_at < now() - interval '5 minutes')
+                    ORDER BY q.created_at
+                    FOR UPDATE OF q SKIP LOCKED
+                    LIMIT %(batch)s
+                )
+                UPDATE event_queue q
+                SET    locked_by = %(worker)s,
+                       locked_at = now(),
+                       attempts  = COALESCE(q.attempts, 0) + 1
+                FROM   c
+                WHERE  q.queue_uuid = c.queue_uuid
+                RETURNING q.event_uuid, q.attempts
+                """,
+                {"types": types, "cutoff": cutoff, "batch": BATCH, "worker": WORKER_ID},
+            )
+            # NOTE: emit_event() and the events AFTER-INSERT trigger both enqueue
+            # (a pre-existing quirk — the trigger's guard misses emit_event due to
+            # in-transaction visibility), so an event can have >1 queue row. Keying
+            # by event_uuid dedupes them here, and _complete/_fail act by event_uuid
+            # (settling every row), so each event is handled exactly once per tick.
+            claimed = {str(r[0]): r[1] for r in cur.fetchall()}
+            if not claimed:
+                conn.commit()
+                return []
+            cur.execute(
+                """
+                SELECT event_uuid, event_type, entity_type, entity_uuid,
+                       payload, correlation_id, created_at
+                FROM   events
+                WHERE  event_uuid = ANY(%(ids)s::uuid[])
+                """,
+                {"ids": list(claimed.keys())},
+            )
+            cols = [d[0] for d in cur.description]
+            rows = []
+            for r in cur.fetchall():
+                ev = dict(zip(cols, r))
+                ev["event_uuid"] = str(ev["event_uuid"])
+                ev["attempts"] = claimed.get(ev["event_uuid"], 1)
+                rows.append(ev)
+        conn.commit()
+        return rows
+    finally:
+        conn.close()
+
+
+def _complete_sync(event_uuid: str, result: Dict[str, Any]) -> None:
+    conn = get_connection()
+    try:
+        import json
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE event_queue
+                   SET status='completed', last_attempt_at=now(), last_error=NULL,
+                       error_context=%(ctx)s, locked_by=NULL
+                   WHERE event_uuid=%(id)s::uuid""",
+                {"id": event_uuid, "ctx": json.dumps(result)[:4000]},
+            )
+            # Settle the agent_inbox items this event fanned out to.
+            cur.execute(
+                """UPDATE notifications
+                   SET status='sent', sent_at=now()
+                   WHERE event_uuid=%(id)s::uuid AND channel='agent_inbox' AND status='pending'""",
+                {"id": event_uuid},
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _fail_sync(event_uuid: str, attempts: int, err: str) -> None:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE event_queue
+                   SET status = CASE WHEN %(att)s >= %(max)s THEN 'failed' ELSE 'pending' END,
+                       next_attempt_at = now() + (interval '30 seconds'
+                                                  * power(2, LEAST(%(att)s, 6))),
+                       last_attempt_at = now(), last_error = %(err)s, locked_by = NULL
+                   WHERE event_uuid = %(id)s::uuid""",
+                {"id": event_uuid, "att": attempts, "max": MAX_ATTEMPTS, "err": err[:2000]},
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ============================================================================
+# PILOT HANDLER  —  invoice.overdue  →  Accounting acts  →  Email handoff
+# ============================================================================
+
+def _load_invoice_ctx_sync(invoice_id: str) -> Optional[Dict[str, Any]]:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT v.invoice_id, v.invoice_number, v.payment_status,
+                       ROUND(v.computed_balance_due::numeric, 2)      AS balance,
+                       (CURRENT_DATE - v.due_date::date)              AS days_overdue,
+                       i.owner_id,
+                       a.account_id, a.account_name,
+                       ct.contact_id, ct.first_name AS contact_first, ct.email AS contact_email,
+                       ow.first_name AS owner_first, ow.email AS owner_email
+                FROM   accounting_invoice_pipeline v
+                JOIN   invoices  i  ON i.invoice_id = v.invoice_id
+                LEFT   JOIN accounts a  ON a.account_id  = v.account_id
+                LEFT   JOIN contacts ct ON ct.contact_id = v.contact_id
+                LEFT   JOIN owners   ow ON ow.owner_id   = i.owner_id
+                WHERE  v.invoice_id = %s
+                """,
+                (invoice_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            return dict(zip([d[0] for d in cur.description], row))
+    finally:
+        conn.close()
+
+
+def _already_dunned_sync(invoice_id: str) -> bool:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT 1 FROM activities
+                   WHERE related_type='invoice' AND related_id=%s
+                     AND subject ILIKE 'Payment reminder%%'
+                     AND created_at > now() - interval '20 hours'
+                   LIMIT 1""",
+                (invoice_id,),
+            )
+            return cur.fetchone() is not None
+    finally:
+        conn.close()
+
+
+def _severity(days: int) -> str:
+    if days > 45:
+        return "urgent"
+    if days > 14:
+        return "firm"
+    return "gentle"
+
+
+def _compose_reminder(ctx: Dict[str, Any], tier: str) -> str:
+    name = ctx.get("contact_first") or ctx.get("account_name") or "there"
+    tone = {
+        "gentle": "This is a friendly reminder that the following invoice is now past due.",
+        "firm":   "Our records show the following invoice remains unpaid and is now significantly overdue.",
+        "urgent": "URGENT: the following invoice is seriously overdue and requires immediate attention.",
+    }[tier]
+    return (
+        f"Subject: Payment reminder — {ctx['invoice_number']}\n\n"
+        f"Hi {name},\n\n{tone}\n\n"
+        f"  Invoice:        {ctx['invoice_number']}\n"
+        f"  Account:        {ctx.get('account_name') or '—'}\n"
+        f"  Balance due:    ${ctx['balance']:,.2f}\n"
+        f"  Days past due:  {ctx['days_overdue']}\n\n"
+        f"Please arrange payment at your earliest convenience, or reply to discuss options.\n\n"
+        f"— Accounts Receivable, Orbit CRM"
+    )
+
+
+def _record_action_sync(ctx: Dict[str, Any], draft: str, tier: str,
+                        correlation_id, sent: bool) -> None:
+    """Log the Accounting agent's action and hand the draft to the Email agent
+    over the bus (emit invoice.dunning_drafted → fans out to EmailAgent inbox)."""
+    import json
+    verb = "sent" if sent else "drafted"
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO activities
+                     (type, status, subject, description, due_at, owner_id,
+                      related_type, related_id, account_id, contact_id, channel,
+                      created_at, updated_at)
+                   VALUES ('task','open', %(subj)s, %(desc)s, now() + interval '1 day',
+                           %(owner)s, 'invoice', %(inv)s, %(acct)s, %(ct)s, 'email',
+                           now(), now())""",
+                {
+                    "subj": f"Payment reminder ({tier}) {verb} – {ctx['invoice_number']}",
+                    "desc": draft,
+                    "owner": ctx.get("owner_id"),
+                    "inv": ctx["invoice_id"],
+                    "acct": ctx.get("account_id"),
+                    "ct": ctx.get("contact_id"),
+                },
+            )
+            # Hand off to the Email agent via the bus (lineage-chained event).
+            cur.execute(
+                "SELECT emit_event(%s,%s,%s,%s,%s,%s,%s)",
+                (
+                    "invoice.dunning_drafted", "invoice", ctx["invoice_id"],
+                    json.dumps({
+                        "invoice_number": ctx["invoice_number"],
+                        "balance": float(ctx["balance"]),
+                        "days_overdue": ctx["days_overdue"],
+                        "tier": tier,
+                        "contact_email": ctx.get("contact_email"),
+                        "draft": draft,
+                        "delivered": sent,
+                    }),
+                    None, "agent_bus", correlation_id,
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+async def handle_invoice_overdue(event: Dict[str, Any]) -> Dict[str, Any]:
+    """AccountingAgent's reaction to an overdue invoice."""
+    invoice_id = str(event["entity_uuid"])
+    ctx = await asyncio.to_thread(_load_invoice_ctx_sync, invoice_id)
+
+    if not ctx:
+        return {"status": "skipped", "reason": "invoice not found"}
+    # Re-check materiality at action time — it may have been paid since emit.
+    if ctx["payment_status"] not in ("unpaid", "partial") or \
+       (ctx["days_overdue"] or 0) <= 0 or float(ctx["balance"] or 0) <= MATERIAL_BALANCE:
+        return {"status": "skipped", "reason": "no longer materially overdue"}
+    if await asyncio.to_thread(_already_dunned_sync, invoice_id):
+        return {"status": "skipped", "reason": "already actioned within 20h"}
+
+    tier = _severity(int(ctx["days_overdue"]))
+    draft = _compose_reminder(ctx, tier)
+
+    sent = False
+    if AUTOSEND and ctx.get("contact_email"):
+        try:
+            from app.agents.orchestrator.router import _call_agent  # in-process A2A
+            resp = await _call_agent(
+                "/email-chat",
+                f"send a payment reminder email to {ctx['contact_email']} "
+                f"about invoice {ctx['invoice_number']} (${ctx['balance']:,.2f}, "
+                f"{ctx['days_overdue']} days overdue)",
+                f"agentbus-{invoice_id}",
+            )
+            sent = bool(resp.get("success")) or "sent" in str(resp.get("output", "")).lower()
+        except Exception as exc:  # delivery is best-effort; never fail the event
+            logger.warning(f"[agent_bus] email handoff send failed: {exc}")
+
+    await asyncio.to_thread(
+        _record_action_sync, ctx, draft, tier, event.get("correlation_id"), sent
+    )
+    return {
+        "status": "ok",
+        "action": "sent" if sent else "drafted",
+        "invoice": ctx["invoice_number"],
+        "tier": tier,
+        "handoff": "invoice.dunning_drafted → EmailAgent inbox",
+    }
+
+
+HANDLERS["invoice.overdue"] = handle_invoice_overdue
+
+
+# ============================================================================
+# PILOT HANDLER #2  —  lead.scored (>=70)  →  Activity outreach + Notifications
+# ============================================================================
+# Demonstrates the pattern generalizing: a different event, a different pair of
+# cooperating agents, the SAME consumer/queue/governance. The Lead agent's score
+# triggers the Activity agent to auto-schedule outreach and the Notifications
+# agent to raise an alert — entirely internal CRM records, safe by default.
+
+HOT_SCORE = 70
+
+
+def _load_lead_ctx_sync(lead_id: str) -> Optional[Dict[str, Any]]:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT l.lead_id, l.first_name, l.last_name, l.company, l.email,
+                          l.score, l.status, l.owner_id,
+                          COALESCE(l.converted, false)  AS converted,
+                          COALESCE(l.is_deleted, false) AS is_deleted
+                   FROM leads l WHERE l.lead_id = %s""",
+                (lead_id,),
+            )
+            row = cur.fetchone()
+            return dict(zip([d[0] for d in cur.description], row)) if row else None
+    finally:
+        conn.close()
+
+
+def _already_outreached_sync(lead_id: str) -> bool:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT 1 FROM activities
+                   WHERE related_type='lead' AND related_id=%s
+                     AND subject ILIKE 'Hot lead outreach%%'
+                     AND created_at > now() - interval '3 days'
+                   LIMIT 1""",
+                (lead_id,),
+            )
+            return cur.fetchone() is not None
+    finally:
+        conn.close()
+
+
+def _record_lead_outreach_sync(ctx: Dict[str, Any], correlation_id) -> None:
+    """ActivityAgent: create the outreach task, then hand off to Notifications
+    via a lineage-chained lead.outreach_scheduled event."""
+    import json
+    name = f"{ctx.get('first_name') or ''} {ctx.get('last_name') or ''}".strip() or "lead"
+    company = ctx.get("company") or "—"
+    score = ctx["score"]
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO activities
+                     (type, status, subject, description, due_at, direction, channel,
+                      owner_id, related_type, related_id, lead_id, created_at, updated_at)
+                   VALUES ('call','open', %(subj)s, %(desc)s, now() + interval '4 hours',
+                           'outbound','phone', %(owner)s, 'lead', %(lead)s, %(lead)s,
+                           now(), now())""",
+                {
+                    "subj": f"Hot lead outreach – {name} (score {score})",
+                    "desc": (f"{name} at {company} scored {score} (Hot, >= {HOT_SCORE}). "
+                             f"Call within 4 hours while intent is high. "
+                             f"Auto-scheduled from lead.scored."),
+                    "owner": ctx.get("owner_id"),
+                    "lead": ctx["lead_id"],
+                },
+            )
+            cur.execute(
+                "SELECT emit_event(%s,%s,%s,%s,%s,%s,%s)",
+                (
+                    "lead.outreach_scheduled", "lead", ctx["lead_id"],
+                    json.dumps({
+                        "name": name, "company": company, "score": score,
+                        "owner_id": str(ctx["owner_id"]) if ctx.get("owner_id") else None,
+                        "action": "call scheduled within 4h",
+                    }),
+                    None, "agent_bus", correlation_id,
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+async def handle_lead_scored(event: Dict[str, Any]) -> Dict[str, Any]:
+    """LeadAgent's reaction to a (re)scored lead: if Hot, delegate to Activity
+    (auto-outreach) and Notifications (alert)."""
+    lead_id = str(event["entity_uuid"])
+    ctx = await asyncio.to_thread(_load_lead_ctx_sync, lead_id)
+
+    if not ctx:
+        return {"status": "skipped", "reason": "lead not found"}
+    if int(ctx["score"] or 0) < HOT_SCORE or ctx["converted"] or ctx["is_deleted"] \
+       or (ctx.get("status") or "") in ("disqualified", "converted"):
+        return {"status": "skipped", "reason": "not an actionable hot lead"}
+    if await asyncio.to_thread(_already_outreached_sync, lead_id):
+        return {"status": "skipped", "reason": "already actioned within 3 days"}
+
+    await asyncio.to_thread(_record_lead_outreach_sync, ctx, event.get("correlation_id"))
+    name = f"{ctx.get('first_name') or ''} {ctx.get('last_name') or ''}".strip()
+    return {
+        "status": "ok",
+        "action": "outreach scheduled",
+        "lead": name,
+        "score": ctx["score"],
+        "handoff": "lead.outreach_scheduled → Notifications inbox",
+    }
+
+
+HANDLERS["lead.scored"] = handle_lead_scored
+
+
+# ============================================================================
+# TICK + LOOP
+# ============================================================================
+
+async def run_once() -> Dict[str, Any]:
+    """Process one batch. Safe to call manually (tests / admin endpoint)."""
+    cutoff = _CUTOFF or (datetime.now(timezone.utc) - timedelta(minutes=BACKFILL_MIN))
+    events = await asyncio.to_thread(_claim_batch_sync, cutoff)
+    summary = {"claimed": len(events), "results": []}
+    for ev in events:
+        et = ev["event_type"]
+        try:
+            result = await HANDLERS[et](ev)
+            await asyncio.to_thread(_complete_sync, ev["event_uuid"], result)
+            summary["results"].append({"event": et, **result})
+        except Exception as exc:
+            logger.error(f"[agent_bus] handler {et} failed: {exc}", exc_info=True)
+            await asyncio.to_thread(_fail_sync, ev["event_uuid"], ev["attempts"], str(exc))
+            summary["results"].append({"event": et, "status": "error", "error": str(exc)})
+    if events:
+        logger.info(f"[agent_bus] tick — {summary}")
+    return summary
+
+
+async def _loop() -> None:
+    logger.info(
+        f"[agent_bus] consumer started (worker={WORKER_ID}, poll={POLL_SECS}s, "
+        f"batch={BATCH}, autosend={AUTOSEND}, handlers={list(HANDLERS)})"
+    )
+    while not _stop.is_set():
+        try:
+            await run_once()
+        except Exception as exc:
+            logger.error(f"[agent_bus] tick crashed: {exc}", exc_info=True)
+        try:
+            await asyncio.wait_for(_stop.wait(), timeout=POLL_SECS)
+        except asyncio.TimeoutError:
+            pass
+
+
+def start_agent_bus() -> bool:
+    """Launch the consumer loop. No-op unless AGENT_BUS_ENABLED=1."""
+    global _task, _CUTOFF
+    if not ENABLED:
+        logger.info("[agent_bus] disabled (set AGENT_BUS_ENABLED=1 to activate)")
+        return False
+    if _task and not _task.done():
+        return True
+    _CUTOFF = datetime.now(timezone.utc) - timedelta(minutes=BACKFILL_MIN)
+    _stop.clear()
+    _task = asyncio.create_task(_loop())
+    return True
+
+
+async def stop_agent_bus() -> None:
+    _stop.set()
+    if _task:
+        try:
+            await asyncio.wait_for(_task, timeout=5)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            _task.cancel()
+
+
+# ============================================================================
+# Admin/demo endpoints (read-only status + on-demand tick)
+# ============================================================================
+
+router = APIRouter(tags=["agent-bus"])
+
+
+@router.get("/agent-bus/status")
+def agent_bus_status():
+    return {
+        "enabled": ENABLED, "autosend": AUTOSEND, "worker": WORKER_ID,
+        "poll_secs": POLL_SECS, "batch": BATCH, "handlers": list(HANDLERS),
+        "running": bool(_task and not _task.done()),
+        "cutoff": _CUTOFF.isoformat() if _CUTOFF else None,
+    }
+
+
+@router.post("/agent-bus/run-once")
+async def agent_bus_run_once():
+    """Drive one tick on demand (handy for demos without waiting for the poll)."""
+    if not _CUTOFF:
+        # allow manual ticks even when the loop isn't running
+        globals()["_CUTOFF"] = datetime.now(timezone.utc) - timedelta(minutes=max(BACKFILL_MIN, 60))
+    return await run_once()

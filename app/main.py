@@ -174,6 +174,55 @@ def _run_activities_auto_sweep() -> None:
         logger.error(f"[ActivitySweep] Scheduled job failed: {exc}", exc_info=True)
 
 
+# Per-run cap on how many overdue invoices the nightly job dunns. Kept low for
+# the initial production ramp so a brand-new autonomous subsystem proves itself
+# on a small batch first; the per-invoice 20h idempotency guard rolls the rest
+# forward on subsequent nights. Raise to 200 (the SQL default) once it's trusted.
+AGENT_BUS_OVERDUE_MAX = 25
+
+
+def _run_emit_overdue_invoice_events() -> None:
+    """Scheduled job: emit invoice.overdue events for materially past-due
+    invoices, feeding the agent-bus consumer (Accounting → Email dunning).
+
+    Gated on the agent bus being enabled — emitting events with no consumer
+    would just accumulate queue rows. Idempotent (one event / invoice / 20h).
+    """
+    try:
+        from app.core import agent_bus
+        if not agent_bus.ENABLED:
+            logger.info("[AgentBus] overdue-invoice emit skipped (AGENT_BUS_ENABLED=0)")
+            return
+        from app.core.database import execute_sp
+        rows = execute_sp(
+            "SELECT fn_emit_overdue_invoice_events(%(max)s) AS result",
+            {"max": AGENT_BUS_OVERDUE_MAX},
+        )
+        n = rows[0].get('result') if rows else 0
+        logger.info(f"[AgentBus] emitted {n} invoice.overdue event(s)")
+    except Exception as exc:
+        logger.error(f"[AgentBus] overdue-invoice emit failed: {exc}", exc_info=True)
+
+
+def _run_emit_hot_lead_events() -> None:
+    """Scheduled job: emit lead.scored events for Hot (>=70) open leads, feeding
+    the agent-bus consumer (Lead → Activity auto-outreach + Notifications).
+
+    Gated on the agent bus being enabled. Idempotent (one event / lead / 20h).
+    """
+    try:
+        from app.core import agent_bus
+        if not agent_bus.ENABLED:
+            logger.info("[AgentBus] hot-lead emit skipped (AGENT_BUS_ENABLED=0)")
+            return
+        from app.core.database import execute_sp
+        rows = execute_sp("SELECT fn_emit_hot_lead_events() AS result")
+        n = rows[0].get('result') if rows else 0
+        logger.info(f"[AgentBus] emitted {n} lead.scored event(s)")
+    except Exception as exc:
+        logger.error(f"[AgentBus] hot-lead emit failed: {exc}", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("=== CRM Agent starting up (all 12 modules + home index + auth + email) ===")
@@ -232,12 +281,30 @@ async def lifespan(app: FastAPI):
             replace_existing=True,
             misfire_grace_time=3600,
         )
+        # Agent-bus nightly sweeps — emit events for the consumer to act on.
+        # Run after the seed passes so they see the freshest data. No-op unless
+        # AGENT_BUS_ENABLED=1 (the job functions self-gate).
+        _scheduler.add_job(
+            _run_emit_overdue_invoice_events,
+            trigger=CronTrigger(hour=22, minute=25), # 10:25 PM ET — emit invoice.overdue
+            id="emit_overdue_invoice_events",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        _scheduler.add_job(
+            _run_emit_hot_lead_events,
+            trigger=CronTrigger(hour=22, minute=30), # 10:30 PM ET — emit lead.scored (Hot)
+            id="emit_hot_lead_events",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
         _scheduler.start()
         logger.info(
             "[Scheduler] Started (America/New_York) — "
             "opps advance 22:00 ET | orders advance 22:05 ET | "
             "activity sweep 22:10 ET | orders seed 22:15 ET | "
-            "pipeline seed 22:20 ET"
+            "pipeline seed 22:20 ET | overdue-invoice emit 22:25 ET | "
+            "hot-lead emit 22:30 ET"
         )
     except ImportError:
         logger.warning(
@@ -263,8 +330,21 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning(f"ImapPoller failed to start: {exc}")
 
+    # Start the agent-bus consumer (event-driven agent cooperation, Phase 1).
+    # No-op unless AGENT_BUS_ENABLED=1 — see app/core/agent_bus.py.
+    try:
+        from app.core.agent_bus import start_agent_bus
+        start_agent_bus()
+    except Exception as exc:
+        logger.warning(f"agent_bus failed to start: {exc}")
+
     yield
 
+    try:
+        from app.core.agent_bus import stop_agent_bus
+        await stop_agent_bus()
+    except Exception:
+        pass
     if _scheduler is not None:
         _scheduler.shutdown(wait=False)
     try:
@@ -359,6 +439,10 @@ app.include_router(email_router)
 
 # -- Voice (Azure Speech token mint)
 app.include_router(voice_router)
+
+# -- Agent bus (event-driven agent cooperation — status + on-demand tick)
+from app.core.agent_bus import router as agent_bus_router
+app.include_router(agent_bus_router)
 
 
 @app.get("/auth.html")
