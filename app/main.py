@@ -223,6 +223,20 @@ def _run_emit_hot_lead_events() -> None:
         logger.error(f"[AgentBus] hot-lead emit failed: {exc}", exc_info=True)
 
 
+def _run_supervisor_tick() -> None:
+    """Scheduled job: proactive supervisor tick (Phase 3) — read the executive
+    KPI pack, detect breaches, emit supervisor.alert events. No-op unless
+    SUPERVISOR_ENABLED=1 (run_supervisor_tick self-gates)."""
+    try:
+        from app.core.supervisor import run_supervisor_tick
+        res = run_supervisor_tick()
+        if res.get('breaches'):
+            logger.info(f"[Supervisor] breaches={res['breaches']} "
+                        f"alerted={res.get('alerted')} acted={res.get('acted')}")
+    except Exception as exc:
+        logger.error(f"[Supervisor] tick failed: {exc}", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("=== CRM Agent starting up (all 12 modules + home index + auth + email) ===")
@@ -298,13 +312,22 @@ async def lifespan(app: FastAPI):
             replace_existing=True,
             misfire_grace_time=3600,
         )
+        # Proactive supervisor (Phase 3) — every 3 hours, business hours (ET).
+        # Self-gates on SUPERVISOR_ENABLED; reads KPIs, alerts on breaches.
+        _scheduler.add_job(
+            _run_supervisor_tick,
+            trigger=CronTrigger(day_of_week="mon-fri", hour="9,12,15,18", minute=0),
+            id="supervisor_tick",
+            replace_existing=True,
+            misfire_grace_time=1800,
+        )
         _scheduler.start()
         logger.info(
             "[Scheduler] Started (America/New_York) — "
             "opps advance 22:00 ET | orders advance 22:05 ET | "
             "activity sweep 22:10 ET | orders seed 22:15 ET | "
             "pipeline seed 22:20 ET | overdue-invoice emit 22:25 ET | "
-            "hot-lead emit 22:30 ET"
+            "hot-lead emit 22:30 ET | supervisor tick 9/12/15/18 ET (Mon-Fri)"
         )
     except ImportError:
         logger.warning(
@@ -447,6 +470,10 @@ app.include_router(agent_bus_router)
 # -- A2A protocol (Phase 2 — typed capability registry + dispatch)
 from app.core.a2a import router as a2a_router
 app.include_router(a2a_router)
+
+# -- Supervisor (Phase 3 — proactive KPI breach detection)
+from app.core.supervisor import router as supervisor_router
+app.include_router(supervisor_router)
 
 
 @app.get("/auth.html")
