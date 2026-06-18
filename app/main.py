@@ -444,6 +444,10 @@ app.include_router(voice_router)
 from app.core.agent_bus import router as agent_bus_router
 app.include_router(agent_bus_router)
 
+# -- A2A protocol (Phase 2 — typed capability registry + dispatch)
+from app.core.a2a import router as a2a_router
+app.include_router(a2a_router)
+
 
 @app.get("/auth.html")
 async def serve_auth_html():

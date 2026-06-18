@@ -284,6 +284,46 @@ async def orchestrator_chat(req: OrchChatRequest):
         return JSONResponse({'sessionId': session_id, 'success': False,
                              'output': 'Please provide a message.', 'mode': 'error'})
 
+    # ── 0. Capability routing (Phase 2 — A2A) ────────────────────────────────
+    # Route by *capability* via the A2A registry instead of keyword matching.
+    # Additive: only these explicit handles trigger it.
+    #   "capabilities"                    → list what can be routed
+    #   "route: <intent> [k=v k2=v2 ...]" → dispatch to the owning agent
+    # Write capabilities dry-run by default unless the message says "confirm".
+    if lower in ('capabilities', 'list capabilities', 'what can you route'):
+        from app.core.a2a import manifest
+        m = manifest()
+        lines = [f"### 🧭 A2A Capabilities ({m['count']})",
+                 '| intent | agent | kind | structured |',
+                 '| --- | --- | --- | --- |']
+        lines += [f"| `{c['intent']}` | {c['agent']} | {c['kind']} | "
+                  f"{'✓' if c['structured'] else ''} |" for c in m['capabilities']]
+        return JSONResponse({'sessionId': session_id, 'success': True,
+                             'mode': 'a2a_manifest', 'output': '\n'.join(lines)})
+
+    _cap_m = re.match(r'^(?:route|intent)\s*[:=]\s*([a-z0-9_.]+)\s*(.*)$',
+                      message.strip(), re.IGNORECASE)
+    if _cap_m:
+        from app.core.a2a import dispatch, resolve, A2ARequest
+        intent = _cap_m.group(1)
+        params = {}
+        for k, v in re.findall(r'(\w+)=(\S+)', _cap_m.group(2) or ''):
+            params[k] = int(v) if v.lstrip('-').isdigit() else v
+        cap = resolve(intent)
+        dry = cap is not None and cap.kind == 'write' and 'confirm' not in lower
+        res = await dispatch(A2ARequest(from_agent='orchestrator', intent=intent,
+                                        params=params), dry_run=dry)
+        if not res.ok:
+            return JSONResponse({'sessionId': session_id, 'success': False, 'mode': 'a2a',
+                                 'output': f"❌ A2A `{intent}` → {res.agent}: {res.error}"})
+        body = res.output
+        if res.data is not None:
+            import json as _json
+            body += '\n\n```json\n' + _json.dumps(res.data, default=str)[:1500] + '\n```'
+        tag = ' (dry-run — add "confirm" to execute)' if dry else ''
+        return JSONResponse({'sessionId': session_id, 'success': True, 'mode': 'a2a',
+                             'output': f"### 🔗 A2A → {intent} (via {res.agent}){tag}\n{body}"})
+
     # ── 1. Company pulse — sp_orchestrator overview ──────────────────────────
     if _PULSE_RE.search(lower):
         try:

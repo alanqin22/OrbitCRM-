@@ -333,15 +333,26 @@ async def handle_invoice_overdue(event: Dict[str, Any]) -> Dict[str, Any]:
     sent = False
     if AUTOSEND and ctx.get("contact_email"):
         try:
-            from app.agents.orchestrator.router import _call_agent  # in-process A2A
-            resp = await _call_agent(
-                "/email-chat",
-                f"send a payment reminder email to {ctx['contact_email']} "
-                f"about invoice {ctx['invoice_number']} (${ctx['balance']:,.2f}, "
-                f"{ctx['days_overdue']} days overdue)",
-                f"agentbus-{invoice_id}",
-            )
-            sent = bool(resp.get("success")) or "sent" in str(resp.get("output", "")).lower()
+            # Phase 2: typed, capability-routed A2A handoff. The Accounting
+            # reaction delegates delivery to whichever agent owns the
+            # 'email.send_payment_reminder' capability (the Email agent) — no
+            # hardcoded endpoint, with correlation lineage carried through.
+            from app.core.a2a import A2ARequest, EntityRef, dispatch
+            res = await dispatch(A2ARequest(
+                from_agent="accounting",
+                intent="email.send_payment_reminder",
+                entity=EntityRef("invoice", invoice_id),
+                params={
+                    "to": ctx["contact_email"],
+                    "invoice_number": ctx["invoice_number"],
+                    "amount": f"${ctx['balance']:,.2f}",
+                    "days_overdue": ctx["days_overdue"],
+                },
+                correlation_id=(str(event.get("correlation_id"))
+                                if event.get("correlation_id") else None),
+                confidence=0.9,
+            ))
+            sent = res.ok or "sent" in (res.output or "").lower()
         except Exception as exc:  # delivery is best-effort; never fail the event
             logger.warning(f"[agent_bus] email handoff send failed: {exc}")
 
