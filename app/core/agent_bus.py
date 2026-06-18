@@ -327,6 +327,18 @@ async def handle_invoice_overdue(event: Dict[str, Any]) -> Dict[str, Any]:
     if await asyncio.to_thread(_already_dunned_sync, invoice_id):
         return {"status": "skipped", "reason": "already actioned within 20h"}
 
+    # Phase 4: respect shared context — another agent (e.g. Sales mid-renewal)
+    # may have posted a 'dunning_hold' on this account. Read the blackboard
+    # before acting, so agents coordinate through situational context, not calls.
+    if ctx.get("account_id"):
+        from app.core import blackboard
+        holds = await asyncio.to_thread(
+            blackboard.read, "account", str(ctx["account_id"]), "dunning_hold")
+        if holds:
+            return {"status": "skipped",
+                    "reason": f"dunning held by {holds[0]['author_agent']}: "
+                              f"{holds[0].get('note') or 'hold active'}"}
+
     tier = _severity(int(ctx["days_overdue"]))
     draft = _compose_reminder(ctx, tier)
 
@@ -359,6 +371,19 @@ async def handle_invoice_overdue(event: Dict[str, Any]) -> Dict[str, Any]:
     await asyncio.to_thread(
         _record_action_sync, ctx, draft, tier, event.get("correlation_id"), sent
     )
+
+    # Phase 4: post AR risk to the shared blackboard so other agents (Sales,
+    # the supervisor, account 360s) see it without asking Accounting.
+    if ctx.get("account_id"):
+        from app.core import blackboard
+        await asyncio.to_thread(
+            blackboard.post, "account", str(ctx["account_id"]), "accounting", "ar_risk",
+            f"Overdue {ctx['invoice_number']} ({tier}) — ${ctx['balance']:,.2f}, "
+            f"{ctx['days_overdue']}d past due",
+            {"invoice": ctx["invoice_number"], "balance": float(ctx["balance"]),
+             "days_overdue": ctx["days_overdue"], "tier": tier},
+            0.9, "critical" if tier == "urgent" else "warning", 168)
+
     return {
         "status": "ok",
         "action": "sent" if sent else "drafted",
@@ -476,6 +501,15 @@ async def handle_lead_scored(event: Dict[str, Any]) -> Dict[str, Any]:
 
     await asyncio.to_thread(_record_lead_outreach_sync, ctx, event.get("correlation_id"))
     name = f"{ctx.get('first_name') or ''} {ctx.get('last_name') or ''}".strip()
+
+    # Phase 4: post to the shared blackboard so other agents see this hot lead.
+    from app.core import blackboard
+    await asyncio.to_thread(
+        blackboard.post, "lead", lead_id, "leads", "hot_lead",
+        f"Hot lead (score {ctx['score']}) — outreach scheduled",
+        {"score": ctx["score"], "name": name, "company": ctx.get("company")},
+        0.9, "info", 72)
+
     return {
         "status": "ok",
         "action": "outreach scheduled",

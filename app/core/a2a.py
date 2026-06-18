@@ -150,6 +150,15 @@ def _sp_products_low_stock(p: Dict[str, Any]) -> Any:
     return _sp_exec(build_products_query, {"mode": "low_stock"})
 
 
+def _sp_account_context(p: Dict[str, Any]) -> Any:
+    """Phase 4: shared-blackboard context (all agents' notes) for an account."""
+    from app.core import blackboard
+    aid = p.get("account_id") or p.get("entity_id")
+    if not aid:
+        return {"error": "account_id required"}
+    return blackboard.context("account", aid)
+
+
 # ---- peer handoff / negotiation -------------------------------------------
 async def delegate(parent: "A2ARequest", sub_intent: str,
                    params: Optional[Dict[str, Any]] = None,
@@ -213,6 +222,10 @@ CAPABILITIES: Dict[str, Capability] = _reg(
     Capability("products.low_stock", "products", "/prod-chat", "read",
                lambda p: "low stock",
                "low-stock products needing reorder", sp=_sp_products_low_stock),
+    Capability("account.context", "accounts", "/account-chat", "read",
+               lambda p: f"context: {p.get('account_id', '')}",
+               "shared-blackboard context (all agents' notes) for an account",
+               sp=_sp_account_context),
     Capability("email.send_payment_reminder", "email", "/email-chat", "write",
                lambda p: (f"send a payment reminder email to {p['to']} about invoice "
                           f"{p.get('invoice_number', '')} for {p.get('amount', '')}, "

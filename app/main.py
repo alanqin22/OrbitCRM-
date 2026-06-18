@@ -475,6 +475,10 @@ app.include_router(a2a_router)
 from app.core.supervisor import router as supervisor_router
 app.include_router(supervisor_router)
 
+# -- Blackboard (Phase 4 — shared agent memory)
+from app.core.blackboard import router as blackboard_router
+app.include_router(blackboard_router)
+
 
 @app.get("/auth.html")
 async def serve_auth_html():
