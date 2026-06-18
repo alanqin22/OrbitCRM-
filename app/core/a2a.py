@@ -58,6 +58,8 @@ class A2ARequest:
     prose: bool = False              # True = force the NL/agent path (formatted
                                      # output); default uses the structured SP
                                      # path when the capability declares one.
+    govern_bypass: bool = False      # True = skip Phase 5 confidence-gating
+                                     # (set when an approved action re-dispatches)
 
 
 @dataclass
@@ -370,6 +372,29 @@ async def dispatch(req: A2ARequest, dry_run: bool = False) -> A2AResult:
                     f"(structured) cid={cid[:8]}")
         return A2AResult(True, req.intent, cap.agent, cid, data=data,
                          output=_summarize(req.intent, data))
+
+    # Phase 5 governance: gate WRITE/outbound actions by confidence.
+    #   act → execute; propose → queue for human approval; skip → don't act.
+    # No-op unless GOV_ENABLED. govern_bypass=True is set by an approved action.
+    if cap.kind == "write" and not req.govern_bypass:
+        from app.core import governance
+        if governance.ENABLED:
+            d = governance.decide(req.confidence)
+            if d == "skip":
+                return A2AResult(False, req.intent, cap.agent, cid,
+                                 error=f"skipped by governance — confidence "
+                                       f"{req.confidence} < {governance.PROPOSE_MIN}")
+            if d == "propose":
+                aid = governance.propose(
+                    req.intent, req.from_agent, dict(req.params),
+                    req.entity.type if req.entity else None,
+                    req.entity.id if req.entity else None, req.confidence)
+                logger.info(f"[a2a] {req.intent} gated → proposed {aid[:8]} "
+                            f"(conf={req.confidence})")
+                return A2AResult(True, req.intent, cap.agent, cid,
+                                 output=f"proposed for approval (confidence {req.confidence})",
+                                 data={"status": "pending_approval", "approval_uuid": aid})
+            # d == "act" → fall through and execute
 
     try:
         message = cap.render(req.params)

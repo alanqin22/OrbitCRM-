@@ -479,6 +479,10 @@ app.include_router(supervisor_router)
 from app.core.blackboard import router as blackboard_router
 app.include_router(blackboard_router)
 
+# -- Governance (Phase 5 — confidence-gating + approval queue)
+from app.core.governance import router as governance_router
+app.include_router(governance_router)
+
 
 @app.get("/auth.html")
 async def serve_auth_html():
