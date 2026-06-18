@@ -38,6 +38,13 @@ async def main():
     print(f"4b. accounting.summary (structured)      -> ok={s2.ok} data?={s2.data is not None} '{s2.output}'")
     ok_all &= s2.ok and s2.data is not None
 
+    # 4c. wider structured coverage
+    for it in ("orders.sales_summary", "contacts.list", "opportunities.pipeline",
+               "products.low_stock"):
+        rr = await a2a.dispatch(a2a.A2ARequest(intent=it))
+        print(f"4c. {it:28} (structured) -> ok={rr.ok} data?={rr.data is not None}")
+        ok_all &= rr.ok and rr.data is not None
+
     # 5. prose=True forces the NL/agent path (formatted output)
     p1 = await a2a.dispatch(a2a.A2ARequest(intent="leads.list", prose=True))
     print(f"5. prose path -> ok={p1.ok} markdown={'Lead' in (p1.output or '')}")
@@ -48,6 +55,19 @@ async def main():
     r3 = await a2a.dispatch(a2a.A2ARequest(intent="accounting.summary", correlation_id=cid))
     ok_all &= r3.correlation_id == cid
     print(f"6. correlation carried through: {r3.correlation_id == cid}")
+
+    # 6b. PEER HANDOFF — composite capability delegates to peers + composes
+    comp = await a2a.dispatch(a2a.A2ARequest(from_agent="test", intent="crm.pipeline_snapshot"))
+    print(f"6b. crm.pipeline_snapshot (peer handoff) -> ok={comp.ok} hops={comp.hops} "
+          f"keys={list((comp.data or {}).keys())}")
+    ok_all &= (comp.ok and comp.hops == ["accounting.summary", "leads.list"]
+               and "financials" in (comp.data or {}))
+
+    # 6c. NEGOTIATION — unknown intent returns closest suggestions
+    neg = await a2a.dispatch(a2a.A2ARequest(intent="lead.list"))   # typo: singular
+    sugg = (neg.data or {}).get("suggestions") or []
+    print(f"6c. negotiation 'lead.list' -> ok={neg.ok} suggestions={sugg}")
+    ok_all &= (not neg.ok) and "leads.list" in sugg
 
     # 7. Orchestrator capability routing (in-process)
     import httpx
@@ -70,6 +90,17 @@ async def main():
                     "chatInput": {"message": "route: email.send_payment_reminder to=x@y.com"}})).json()
         print(f"7c. orch write w/o confirm -> dry-run={'dry-run' in (wr.get('output') or '')}")
         ok_all &= "dry-run" in (wr.get("output") or "")
+        cp = (await cli.post("/orchestrator-chat",
+              json={"sessionId": "t",
+                    "chatInput": {"message": "route: crm.pipeline_snapshot"}})).json()
+        print(f"7d. orch 'route: crm.pipeline_snapshot' -> mode={cp.get('mode')} ok={cp.get('success')}")
+        ok_all &= cp.get("mode") == "a2a" and cp.get("success")
+        # 7e. single-agent NL query now routes through the A2A layer (primary path)
+        sa = (await cli.post("/orchestrator-chat",
+              json={"sessionId": "t", "chatInput": {"message": "show leads in Toronto"}})).json()
+        print(f"7e. orch single-agent 'show leads in Toronto' -> routedVia={sa.get('routedVia')} "
+              f"routedTo={sa.get('routedTo')}")
+        ok_all &= sa.get("routedVia") == "a2a:leads.query"
 
     print("\nRESULT:", "PASS ✅" if ok_all else "FAIL ❌")
 

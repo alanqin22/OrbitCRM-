@@ -374,17 +374,29 @@ async def orchestrator_chat(req: OrchChatRequest):
                 'output': _weave_symphony(defs['title'], calls, results),
             })
 
-    # ── 3. Single-agent delegation ───────────────────────────────────────────
+    # ── 3. Single-agent delegation — capability-routed via the A2A layer ──────
+    # _route_single still selects the agent; the call now goes through the typed
+    # A2A dispatch (correlation + capability registry), falling back to a direct
+    # _call_agent if no passthrough capability is registered for that endpoint.
     path = _route_single(lower)
-    logger.info(f'[route] → {path}')
+    from app.core.a2a import dispatch, resolve, query_intent_for_endpoint, A2ARequest
+    q_intent = query_intent_for_endpoint(path)
+    logger.info(f'[route] → {path} (a2a intent={q_intent})')
     try:
-        data = await _call_agent(path, message, session_id)
+        if q_intent and resolve(q_intent):
+            res = await dispatch(A2ARequest(
+                intent=q_intent, from_agent='orchestrator',
+                params={'message': message}, prose=True, correlation_id=session_id))
+            data = dict(res.raw or {'success': res.ok, 'output': res.output,
+                                    'error': res.error})
+            data['routedVia'] = f'a2a:{q_intent}'
+        else:
+            data = dict(await _call_agent(path, message, session_id))
     except Exception as e:
         logger.error(f'delegation to {path} failed: {e}', exc_info=True)
         return JSONResponse({'sessionId': session_id, 'success': False,
                              'mode': 'error', 'routedTo': path,
                              'output': f'Agent call failed: {e}'})
-    data = dict(data)
     data.setdefault('sessionId', session_id)
     data['routedTo'] = path
     return JSONResponse(data)

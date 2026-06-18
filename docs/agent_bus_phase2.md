@@ -35,13 +35,20 @@ routes (e.g. `accounting summary`, `list leads:`), so routing stays deterministi
 | intent | agent | kind | structured |
 |---|---|---|---|
 | `accounting.summary` | accounting | read | ✓ |
-| `accounting.account_balance` | accounting | read | |
 | `leads.list` | leads | read | ✓ |
-| `orders.sales_summary` | orders | read | |
-| `activities.list` | activities | read | |
+| `orders.sales_summary` | orders | read | ✓ |
+| `activities.list` | activities | read | ✓ |
+| `contacts.list` | contacts | read | ✓ |
+| `opportunities.pipeline` | opportunities | read | ✓ |
+| `products.low_stock` | products | read | ✓ |
+| `accounting.account_balance` | accounting | read | |
 | `email.send_payment_reminder` | email | write | |
+| `crm.pipeline_snapshot` | orchestrator | read | composite |
+| `<agent>.query` (×11) | each agent | read | NL passthrough |
 
-"structured" = has a direct-SP path returning data (below).
+"structured" = direct-SP path returning data; "composite" = delegates to peers;
+`<agent>.query` = forwards a natural-language message to that agent (used by the
+orchestrator's single-agent routing). **21 capabilities** total.
 
 ## In use
 
@@ -82,6 +89,30 @@ The orchestrator can route by **capability** via the registry, not just keyword
 
 Governance: a **write** capability dry-runs by default; add `confirm` to execute.
 
+**Single-agent delegation is now A2A-routed** (the primary path): `_route_single`
+still selects the agent, but the call goes through `dispatch(<agent>.query, prose)`
+— typed, correlated (`correlation_id = session`), registry-driven — falling back
+to a direct `_call_agent` only if no passthrough capability is registered. The
+agent's full response is preserved (`A2AResult.raw`) and tagged `routedVia`.
+
+## Peer handoff / negotiation
+
+A capability can be **composite**: its handler delegates sub-intents to peer
+agents via `delegate(parent, sub_intent, params)` and composes their structured
+results. The parent's `correlation_id` propagates to every hop, and the result
+carries a `hops` audit trail.
+
+```python
+# crm.pipeline_snapshot fans out to Accounting + Leads and composes:
+res = await dispatch(A2ARequest(intent="crm.pipeline_snapshot"))
+res.data    # {financials, hot_leads, top_hot}
+res.hops    # ["accounting.summary", "leads.list"]
+```
+
+**Negotiation:** an unknown intent doesn't just fail — `dispatch` returns the
+closest registered intents as `suggestions` (e.g. `lead.list` → `leads.list`),
+so the caller can recover.
+
 ## Add a capability
 
 Append one line to `CAPABILITIES`:
@@ -100,12 +131,13 @@ deterministically (a known prefix beats free text).
 `to_agent` pinning, dry-run (no side effect), real in-process read dispatches
 (`accounting.summary`, `leads.list`), and correlation lineage.
 
-## Next (rest of Phase 2)
+## Next (rest of Phase 2 / done)
 
-- **Peer handoff/negotiation** — an agent that can't fully serve a request
-  delegates a sub-intent and awaits a structured result (`correlation_id`).
-- Expand structured (`sp`) coverage to more capabilities (the rest still use the
-  NL/agent path).
+Phase 2 is essentially complete: typed envelope, capability registry (21 caps),
+structured contract, peer handoff + negotiation, and capability routing as the
+orchestrator's primary single-agent path. Remaining polish: even wider structured
+coverage and more composite plays; confidence-gating + approval queue fold into
+Phase 5.
 - Make capability routing the orchestrator's *primary* single-agent path (today
   it's an additive `route:` handle; `_route_single` still handles free-form NL).
 - Confidence-gating + an approval queue for write capabilities (ties to Phase 5).
