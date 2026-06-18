@@ -149,15 +149,17 @@ Adding the second cooperation was purely additive: **one handler** +
 to the consumer core. The recipe for any future cooperation:
 **register a handler** + **subscribe agents** + **(optionally) register an event type**.
 
-## Known quirk (pre-existing, handled)
+## Resolved — one queue row per event
 
-`emit_event()` and the events AFTER-INSERT trigger *both* enqueue, so each event
-gets two `event_queue` rows (the trigger's de-dup guard misses `emit_event` due
-to in-transaction visibility). The consumer is robust to this: it **keys claimed
-rows by `event_uuid`** (deduping) and `complete`/`fail` act by `event_uuid`
-(settling every row), so each event is handled exactly once per tick. Fixing the
-double-enqueue at the source (a `UNIQUE(event_uuid)` on `event_queue`, or having
-`emit_event` not self-enqueue) is a worthwhile but separate bus-hygiene change.
+`emit_event()` and the events AFTER-INSERT trigger *both* used to enqueue, so each
+emitted event got two `event_queue` rows (the trigger's NOT EXISTS guard missed
+`emit_event`'s later insert; direct-INSERT events stayed single). **Fixed** in
+`sql/fix_event_queue_double_enqueue.sql`: a `UNIQUE(event_uuid)` on `event_queue`
+plus `ON CONFLICT (event_uuid) DO NOTHING` on both enqueue paths (`emit_event` and
+`trg_fn_events_after_insert`) — one row per event, enforced at the source, so
+batch counts are now intuitive (N events = N rows). The migration de-dupes the
+existing backlog first. **Apply it on Railway too.** The consumer still keys by
+`event_uuid` defensively, so events were always handled exactly once regardless.
 
 ## Related fix — overdue events self-resolve on settlement
 

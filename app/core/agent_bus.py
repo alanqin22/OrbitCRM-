@@ -114,11 +114,11 @@ def _claim_batch_sync(cutoff: datetime) -> List[Dict[str, Any]]:
                 """,
                 {"types": types, "cutoff": cutoff, "batch": BATCH, "worker": WORKER_ID},
             )
-            # NOTE: emit_event() and the events AFTER-INSERT trigger both enqueue
-            # (a pre-existing quirk — the trigger's guard misses emit_event due to
-            # in-transaction visibility), so an event can have >1 queue row. Keying
-            # by event_uuid dedupes them here, and _complete/_fail act by event_uuid
-            # (settling every row), so each event is handled exactly once per tick.
+            # Key claimed rows by event_uuid. There is now one queue row per event
+            # (enforced by UNIQUE(event_uuid) + ON CONFLICT — see
+            # sql/fix_event_queue_double_enqueue.sql), so this is defensive: it also
+            # kept the consumer correct back when emit_event + the events trigger
+            # double-enqueued. _complete/_fail act by event_uuid, settling every row.
             claimed = {str(r[0]): r[1] for r in cur.fetchall()}
             if not claimed:
                 conn.commit()
