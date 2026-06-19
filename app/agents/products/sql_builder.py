@@ -251,7 +251,7 @@ def build_products_query(params: Dict[str, Any]) -> Tuple[str, Dict]:
         catn_val = f"{_esc(p['categoryName'])}" if p.get('categoryName') else 'NULL'
         ia_val   = _bool(p['isActive']) if p.get('isActive') is not None else 'NULL'
         stat_val = f"{_esc(p['status'])}" if p.get('status') else 'NULL'
-        stock_val= _num(p['stock']) if p.get('stock') is not None else 'NULL'
+        stock_val= _num(p['stockQuantity']) if p.get('stockQuantity') is not None else 'NULL'
         wp_val   = _num(p['wholesalePrice']) if p.get('wholesalePrice') is not None else 'NULL'
         rp_val   = _num(p['retailPrice'])    if p.get('retailPrice')    is not None else 'NULL'
         pp_val   = _num(p['promoPrice'])     if p.get('promoPrice')     is not None else 'NULL'

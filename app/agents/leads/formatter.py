@@ -438,11 +438,14 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                 # Embed lead_id for web page
                 out.append(f"<!--LEAD_DATA:{l.get('lead_id')}-->")
 
-                # Line 1: Name | Company | Email | Phone
-                out.append(
+                # Line 1: Name | Company | Email | Phone | Role
+                line1 = (
                     f"**{idx}. {full_name}** | {l.get('company') or 'N/A'} | "
                     f"{l.get('email') or 'N/A'} | {_clean_phone(l.get('phone')) or 'N/A'}"
                 )
+                if l.get('role'):
+                    line1 += f" | Role: {l['role']}"
+                out.append(line1)
 
                 # Line 2: Status | Rating | Score | Source | Owner
                 line2 = (
