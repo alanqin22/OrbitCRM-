@@ -51,6 +51,7 @@ class LeadChatInput(BaseModel):
     lastName:       Optional[str]  = None
     company:        Optional[str]  = None
     phone:          Optional[str]  = None
+    role:           Optional[str]  = None
 
     # Address
     addressLine1:   Optional[str]  = None
