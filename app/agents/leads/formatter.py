@@ -193,6 +193,7 @@ def _lead_dict(l: dict) -> dict:
         'score':                 l.get('score'),
         'source':                l.get('source'),
         'campaign_id':           l.get('campaign_id'),
+        'owner_id':              l.get('owner_id'),
         'owner_name':            _owner_name(l),
         'created_by_name':       _created_by_name(l),
         'updated_by_name':       _updated_by_name(l),

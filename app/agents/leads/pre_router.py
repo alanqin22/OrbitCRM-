@@ -190,6 +190,7 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
             'province':     _val(chat_input.get('province')),
             'postalCode':   _val(chat_input.get('postalCode')),
             'country':      _val(chat_input.get('country')),
+            'ownerId':      _val(chat_input.get('ownerId')),
             'createdBy':    _val(chat_input.get('createdBy')),
         })
 
@@ -228,6 +229,7 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
             'province':     _val(chat_input.get('province')),
             'postalCode':   _val(chat_input.get('postalCode')),
             'country':      _val(chat_input.get('country')),
+            'ownerId':      _val(chat_input.get('ownerId')),
             'updatedBy':    _val(chat_input.get('updatedBy')),
         })
 
