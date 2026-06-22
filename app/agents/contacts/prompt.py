@@ -2,10 +2,10 @@
 
 CONTACT_AGENT_SYSTEM_PROMPT = """
 ═══════════════════════════════════════════════════════════════
-ORBIT CRM AGENT TEAM — SHARED CONTEXT
+CONSCESTRA CRM AGENT TEAM — SHARED CONTEXT
 ═══════════════════════════════════════════════════════════════
 
-You are the ContactAgent inside Orbit CRM.
+You are the ContactAgent inside Conscestra CRM.
 You are one of 12 AI agents operating as a coordinated team.
 
 TEAM MISSION

@@ -76,7 +76,7 @@ async def email_test():
     pwd  = os.environ.get("EMAIL_PASSWORD", "")
     result = send_email(
         to=addr,
-        subject="Orbit CRM — SMTP test",
+        subject="Conscestra CRM — SMTP test",
         body_html="<p>SMTP test. If you see this, email is working.</p>",
         body_text="SMTP test. If you see this, email is working.",
     )
@@ -208,27 +208,27 @@ def _send_contact_notification(data: ContactFormRequest) -> None:
         logger.warning(f"Contact form notification failed: {r1.get('message')}")
 
     # 2. Auto-reply to the person who submitted the form
-    reply_subject = "We received your message — Orbit CRM / Agentorc.ca"
+    reply_subject = "We received your message — Conscestra CRM / Agentorc.ca"
     reply_text = (
         f"Hi {first_name},\n\n"
-        "Thank you for reaching out to Orbit CRM / Agentorc.ca!\n\n"
+        "Thank you for reaching out to Conscestra CRM / Agentorc.ca!\n\n"
         "We've received your message and a member of our team will follow up with you shortly. "
         "In the meantime, feel free to explore our AI-powered CRM platform at agentorc.ca.\n\n"
         "If you have any urgent questions, you can reply directly to this email.\n\n"
-        "The Orbit CRM Team\n"
+        "The Conscestra CRM Team\n"
         "info@agentorc.ca\n"
         "https://agentorc.ca"
     )
     reply_html = f"""
 <html><body style="font-family:Arial,sans-serif;color:#1a202c;max-width:600px;margin:auto;padding:2rem;font-size:0.95rem;line-height:1.6;">
 <p>Hi {first_name},</p>
-<p>Thank you for reaching out to <strong>Orbit CRM / Agentorc.ca</strong>!</p>
+<p>Thank you for reaching out to <strong>Conscestra CRM / Agentorc.ca</strong>!</p>
 <p>We've received your message and a member of our team will follow up with you shortly.
 In the meantime, feel free to explore our AI-powered CRM platform at
 <a href="https://agentorc.ca" style="color:#0d9488;">agentorc.ca</a>.</p>
 <p>If you have any urgent questions, you can reply directly to this email.</p>
 <p style="margin-top:1.5rem;">
-  The Orbit CRM Team<br>
+  The Conscestra CRM Team<br>
   <a href="mailto:info@agentorc.ca" style="color:#0d9488;">info@agentorc.ca</a> &nbsp;|&nbsp;
   <a href="https://agentorc.ca" style="color:#0d9488;">agentorc.ca</a>
 </p>

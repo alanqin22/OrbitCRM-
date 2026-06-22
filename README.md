@@ -1,11 +1,11 @@
-# Orbit CRM — AI-Powered CRM with Conversational Agents
+# Conscestra CRM — AI-Powered CRM with Conversational Agents
 
 > ### 🚀 **Live Demo → [agentorc.ca](https://agentorc.ca/)**
 >
 > No signup required. Drop into any module and talk to the AI agents
 > directly, or use the inline forms — same experience either way.
 
-Orbit CRM is a full-stack AI CRM where every module is a **conversational
+Conscestra CRM is a full-stack AI CRM where every module is a **conversational
 agent**: ask in plain English, get the answer (and the chart), no menus
 to hunt through.
 
@@ -57,7 +57,7 @@ crm_agent/
 └── app/
     ├── main.py                    ← FastAPI app — registers all routers
     ├── core/                      ← Shared utilities (zero duplication)
-    │   ├── config.py              ← Orbit Settings (pydantic-settings)
+    │   ├── config.py              ← Conscestra Settings (pydantic-settings)
     │   ├── database.py            ← Generic execute_sp() + test_connection()
     │   ├── memory.py              ← Shared session memory (rolling window)
     │   └── graph_utils.py         ← AgentState, LLM factory, JSON parser,

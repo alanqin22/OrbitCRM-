@@ -112,7 +112,7 @@ def compose_reply(email: Dict[str, Any], intent: str) -> Optional[Dict[str, str]
     intent_guidance = {
         'general_inquiry': (
             "The sender has a general question or greeting. "
-            "Confirm we are active and open. Briefly explain what Orbit CRM / Agentorc.ca does "
+            "Confirm we are active and open. Briefly explain what Conscestra CRM / Agentorc.ca does "
             "(AI-powered CRM with 12 cooperating AI Agents, fully auditable, built in Canada). "
             "Invite them to ask any specific questions."
         ),
@@ -127,10 +127,10 @@ def compose_reply(email: Dict[str, Any], intent: str) -> Optional[Dict[str, str]
     guidance = intent_guidance.get(intent, intent_guidance['general_inquiry'])
 
     system_prompt = (
-        "You are the EmailAgent for Orbit CRM / Agentorc.ca — a Canadian AI orchestration platform. "
-        "You write concise, warm, professional email replies on behalf of the Orbit CRM team. "
+        "You are the EmailAgent for Conscestra CRM / Agentorc.ca — a Canadian AI orchestration platform. "
+        "You write concise, warm, professional email replies on behalf of the Conscestra CRM team. "
         "RULES: Under 150 words. Plain, friendly tone. No jargon. No markdown in the plain-text version. "
-        "Always sign as: The Orbit CRM Team | info@agentorc.ca | agentorc.ca"
+        "Always sign as: The Conscestra CRM Team | info@agentorc.ca | agentorc.ca"
     )
 
     user_prompt = (
@@ -156,12 +156,12 @@ def compose_reply(email: Dict[str, Any], intent: str) -> Optional[Dict[str, str]
         # Fallback template
         body_text = (
             f"Hi {first_name},\n\n"
-            "Thank you for reaching out to Orbit CRM / Agentorc.ca!\n\n"
-            "Yes, we are open and active. Orbit CRM is an AI-powered CRM platform featuring "
+            "Thank you for reaching out to Conscestra CRM / Agentorc.ca!\n\n"
+            "Yes, we are open and active. Conscestra CRM is an AI-powered CRM platform featuring "
             "12 cooperating AI Agents — fully auditable and built in Canada.\n\n"
             "We'd love to help. Please reply to this email with any questions and "
             "a team member will follow up promptly.\n\n"
-            "The Orbit CRM Team\ninfo@agentorc.ca\nhttps://agentorc.ca"
+            "The Conscestra CRM Team\ninfo@agentorc.ca\nhttps://agentorc.ca"
         )
 
     # Wrap plain text into simple HTML

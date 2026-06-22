@@ -1,4 +1,4 @@
-"""FastAPI router for authentication — Orbit CRM Auth module.
+"""FastAPI router for authentication — Conscestra CRM Auth module.
 
 Endpoints
 ---------
@@ -110,17 +110,17 @@ def _generate_otp() -> str:
 def _send_otp_email(to_email: str, code: str, first_name: str = "") -> None:
     """Send OTP verification email via the shared email module."""
     greeting = f"Hi {first_name}," if first_name else "Hello,"
-    subject = "Your Orbit CRM Verification Code"
+    subject = "Your Conscestra CRM Verification Code"
     body_text = (
         f"{greeting}\n\n"
         f"Your verification code is: {code}\n\n"
         f"This code expires in {_OTP_TTL_MINUTES} minutes.\n\n"
         "If you did not request this, you can ignore this email.\n\n"
-        "— Orbit CRM"
+        "— Conscestra CRM"
     )
     body_html = f"""
 <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
-  <h2 style="color:#0d9488;margin-bottom:8px">Orbit CRM</h2>
+  <h2 style="color:#0d9488;margin-bottom:8px">Conscestra CRM</h2>
   <p>{greeting}</p>
   <p>Your email verification code is:</p>
   <div style="font-size:2.5rem;font-weight:700;letter-spacing:0.25em;color:#0d9488;
@@ -128,7 +128,7 @@ def _send_otp_email(to_email: str, code: str, first_name: str = "") -> None:
               margin:24px 0">{code}</div>
   <p style="color:#6b7280;font-size:0.875rem">
     This code expires in {_OTP_TTL_MINUTES} minutes.<br>
-    If you didn't create an Orbit CRM account, you can safely ignore this email.
+    If you didn't create an Conscestra CRM account, you can safely ignore this email.
   </p>
 </div>"""
 
@@ -684,7 +684,7 @@ async def verify_code(req: VerifyCodeRequest):
     logger.info(f"Email verified and session issued for {identifier!r}")
     return AuthResponse(
         success=True,
-        message="Email verified. Welcome to Orbit CRM.",
+        message="Email verified. Welcome to Conscestra CRM.",
         session_token=session_token,
         credential_id=sd["credential_id"],
         lead_id=sd.get("lead_id"),

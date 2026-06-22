@@ -9,7 +9,7 @@ v2.4.0 — Added EmailAgent module (info@agentorc.ca — SMTP/IMAP + LangGraph).
   • Frontend: email-mgmt.html
   • SMTP: mail.agentorc.ca:465 (SSL)  IMAP: mail.agentorc.ca:993 (SSL)
 
-v2.3.0 — Added Auth module (Orbit CRM Authentication).
+v2.3.0 — Added Auth module (Conscestra CRM Authentication).
   • Direct DB routing — no AI agent, no LangGraph AI nodes.
   • Endpoints: POST /auth/signup, /auth/signin, /auth/signout,
                /auth/change-password, /auth/password-reset/request,
@@ -546,7 +546,7 @@ for _slug in _RENAMED_PAGES:
 @app.get("/favicon.ico")
 async def serve_favicon():
     """Silence the auto-requested /favicon.ico 404 across every page."""
-    return FileResponse("logo/Orbit_CRM_Logo.png", media_type="image/png")
+    return FileResponse("logo/Conscestra_CRM_Logo.png", media_type="image/png")
 
 
 @app.get("/")

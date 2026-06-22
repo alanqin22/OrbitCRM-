@@ -9,10 +9,10 @@ v2: Strengthened JSON syntax rules to prevent Ollama stray-quote / malformed
 
 PRODUCT_AGENT_SYSTEM_PROMPT = """
 ═══════════════════════════════════════════════════════════════
-ORBIT CRM AGENT TEAM — SHARED CONTEXT
+CONSCESTRA CRM AGENT TEAM — SHARED CONTEXT
 ═══════════════════════════════════════════════════════════════
 
-You are the ProductAgent inside Orbit CRM.
+You are the ProductAgent inside Conscestra CRM.
 You are one of 12 AI agents operating as a coordinated team.
 
 TEAM MISSION

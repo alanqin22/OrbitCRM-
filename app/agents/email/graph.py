@@ -282,7 +282,7 @@ def _handle_send_template(params: dict) -> dict:
     subject   = _fill_tokens(str(tpl_data.get('subject_tpl',   '')), entity_data)
     body_html = _fill_tokens(str(tpl_data.get('body_html_tpl', '')), entity_data)
     body_text = _fill_tokens(str(tpl_data.get('body_text_tpl', '')), entity_data)
-    from_name = str(tpl_data.get('from_name', 'Orbit CRM Team'))
+    from_name = str(tpl_data.get('from_name', 'Conscestra CRM Team'))
     bcc       = str(tpl_data.get('bcc_email', '')) or None
 
     result = send_email(

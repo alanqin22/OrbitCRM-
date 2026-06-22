@@ -90,7 +90,7 @@ def send_email(
     subject: str,
     body_html: str,
     body_text: str,
-    from_name: str = 'Orbit CRM Team',
+    from_name: str = 'Conscestra CRM Team',
     bcc: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Send an email. Uses Resend API when RESEND_API_KEY is set, otherwise SMTP."""

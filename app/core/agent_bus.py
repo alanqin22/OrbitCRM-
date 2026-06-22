@@ -261,7 +261,7 @@ def _compose_reminder(ctx: Dict[str, Any], tier: str) -> str:
         f"  Balance due:    ${ctx['balance']:,.2f}\n"
         f"  Days past due:  {ctx['days_overdue']}\n\n"
         f"Please arrange payment at your earliest convenience, or reply to discuss options.\n\n"
-        f"— Accounts Receivable, Orbit CRM"
+        f"— Accounts Receivable, Conscestra CRM"
     )
 
 
