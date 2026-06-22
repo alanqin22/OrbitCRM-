@@ -24,7 +24,7 @@ from app.core.config import get_settings
 from app.core.database import execute_sp
 
 from .prompt import LEAD_AGENT_SYSTEM_PROMPT
-from .pre_router import route_request
+from .pre_router import route_request, UUID_RE
 from .sql_builder import build_leads_query
 from .formatter import format_response
 
@@ -164,8 +164,14 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
         # ── Owner name → UUID resolution (ownerSearch → ownerId) ─────────────
         # Pre-router sets ownerSearch when user says "assigned to <name>".
-        # Resolve to owner_id UUID before SQL builder validation.
+        # Also catch a non-UUID ownerId (e.g. the LLM router put a plain name
+        # into ownerId for "Owner: Noah Williams") — treat it as a name to
+        # resolve rather than passing it to SQL as a uuid (which errors -500).
         _owner_search = parsed_json.pop('ownerSearch', None)
+        _owner_id_raw = parsed_json.get('ownerId')
+        if not _owner_search and _owner_id_raw and not UUID_RE.search(str(_owner_id_raw)):
+            _owner_search = str(_owner_id_raw).strip()
+            parsed_json.pop('ownerId', None)
         if _owner_search:
             logger.info(f"db_node: resolving ownerSearch={_owner_search!r}")
             _owner_rows = execute_sp(

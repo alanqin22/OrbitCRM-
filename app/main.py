@@ -237,6 +237,20 @@ def _run_supervisor_tick() -> None:
         logger.error(f"[Supervisor] tick failed: {exc}", exc_info=True)
 
 
+def _run_notification_triage() -> None:
+    """Scheduled job: notification triage — digest + auto-read the non-critical
+    alert backlog so 'unread' reflects real work, not fan-out noise. No-op unless
+    NOTIF_TRIAGE_ENABLED=1; writes only when NOTIF_TRIAGE_APPLY=1 (else dry-run)."""
+    try:
+        from app.core.notification_triage import run_triage_tick
+        res = run_triage_tick()
+        if not res.get("skipped"):
+            logger.info(f"[NotifTriage] apply={res.get('apply')} "
+                        f"before={res.get('unread_before')} after={res.get('unread_after')}")
+    except Exception as exc:
+        logger.error(f"[NotifTriage] tick failed: {exc}", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("=== CRM Agent starting up (all 12 modules + home index + auth + email) ===")
@@ -320,6 +334,15 @@ async def lifespan(app: FastAPI):
             id="supervisor_tick",
             replace_existing=True,
             misfire_grace_time=1800,
+        )
+        # Notification triage — daily 21:55 ET, just before the seed/emit passes.
+        # Self-gates on NOTIF_TRIAGE_ENABLED; dry-run unless NOTIF_TRIAGE_APPLY=1.
+        _scheduler.add_job(
+            _run_notification_triage,
+            trigger=CronTrigger(hour=21, minute=55), # 9:55 PM ET — triage alert backlog
+            id="notification_triage",
+            replace_existing=True,
+            misfire_grace_time=3600,
         )
         _scheduler.start()
         logger.info(
@@ -435,53 +458,70 @@ async def normalise_path(request: Request, call_next):
     return await call_next(request)
 
 
+# -- API auth (security hardening #1) ───────────────────────────────────────
+#   require_session : staged session gate on DATA endpoints — no-op until
+#                     API_AUTH_ENABLED=1 (so the current frontend keeps working).
+#   require_admin   : hard gate on privileged COMMAND endpoints — enforced once
+#                     ADMIN_API_TOKEN is set; the frontend never calls these.
+from fastapi import Depends
+from app.core.auth_dep import require_admin, require_session, require_write
+
+# _DATA = authenticated session + viewer read-only write-guard (RBAC #2).
+# require_session runs first (stashes the session); require_write reads its role.
+_DATA  = [Depends(require_session), Depends(require_write)]
+_ADMIN = [Depends(require_admin)]
+
 # -- Home dashboard (registered first for fast routing)
-app.include_router(home_router)
+app.include_router(home_router, dependencies=_DATA)
 
 # -- Register all 10 AI agent routers
-app.include_router(accounts_router)
-app.include_router(contacts_router)
-app.include_router(products_router)
-app.include_router(orders_router)
-app.include_router(activities_router)
-app.include_router(opportunities_router)
-app.include_router(accounting_router)
-app.include_router(leads_router)
-app.include_router(analytics_router)
-app.include_router(notifications_router)
-app.include_router(orchestrator_router)
+app.include_router(accounts_router,      dependencies=_DATA)
+app.include_router(contacts_router,      dependencies=_DATA)
+app.include_router(products_router,      dependencies=_DATA)
+app.include_router(orders_router,        dependencies=_DATA)
+app.include_router(activities_router,    dependencies=_DATA)
+app.include_router(opportunities_router, dependencies=_DATA)
+app.include_router(accounting_router,    dependencies=_DATA)
+app.include_router(leads_router,         dependencies=_DATA)
+app.include_router(analytics_router,     dependencies=_DATA)
+app.include_router(notifications_router, dependencies=_DATA)
+app.include_router(orchestrator_router,  dependencies=_DATA)
 
 # -- Store module (direct SP routing — no AI agent)
-app.include_router(store_router)
+app.include_router(store_router, dependencies=_DATA)
 
-# -- Auth module (direct DB routing — no AI agent)
+# -- Auth module (direct DB routing — no AI agent). MUST stay open: it issues the
+#    sessions the other endpoints check (login can't require being logged in).
 app.include_router(auth_router)
 
 # -- Email agent (SMTP/IMAP + LangGraph)
-app.include_router(email_router)
+app.include_router(email_router, dependencies=_DATA)
 
 # -- Voice (Azure Speech token mint)
-app.include_router(voice_router)
+app.include_router(voice_router, dependencies=_DATA)
 
 # -- Agent bus (event-driven agent cooperation — status + on-demand tick)
 from app.core.agent_bus import router as agent_bus_router
-app.include_router(agent_bus_router)
+app.include_router(agent_bus_router, dependencies=_ADMIN)
 
 # -- A2A protocol (Phase 2 — typed capability registry + dispatch)
 from app.core.a2a import router as a2a_router
-app.include_router(a2a_router)
+app.include_router(a2a_router, dependencies=_ADMIN)
 
 # -- Supervisor (Phase 3 — proactive KPI breach detection)
 from app.core.supervisor import router as supervisor_router
-app.include_router(supervisor_router)
+app.include_router(supervisor_router, dependencies=_ADMIN)
+
+from app.core.notification_triage import router as notif_triage_router
+app.include_router(notif_triage_router, dependencies=_ADMIN)
 
 # -- Blackboard (Phase 4 — shared agent memory)
 from app.core.blackboard import router as blackboard_router
-app.include_router(blackboard_router)
+app.include_router(blackboard_router, dependencies=_ADMIN)
 
 # -- Governance (Phase 5 — confidence-gating + approval queue)
 from app.core.governance import router as governance_router
-app.include_router(governance_router)
+app.include_router(governance_router, dependencies=_ADMIN)
 
 
 @app.get("/auth.html")

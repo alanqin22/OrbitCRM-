@@ -37,6 +37,7 @@ DB functions used (all SECURITY DEFINER, owned by auth_owner)
 v1.0.0 — initial implementation
 """
 
+import hashlib
 import logging
 import os
 import random
@@ -86,11 +87,15 @@ else:
     _argon2_exc = None
 
 # ---------------------------------------------------------------------------
-# In-process session store
-# { session_token: { account_id, credential_id, identifier, expires_at } }
+# DB-backed session store (table: auth_sessions — see sql/auth_sessions.sql).
+# Survives restarts and works across multiple instances. Only the SHA-256 hash
+# of the token is stored, so a DB leak cannot replay live sessions.
 # ---------------------------------------------------------------------------
-_AUTH_SESSIONS: Dict[str, Dict[str, Any]] = {}
 _SESSION_TTL_HOURS = 8
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
 
 # ---------------------------------------------------------------------------
 # OTP (email verification) store
@@ -137,6 +142,10 @@ def _send_otp_email(to_email: str, code: str, first_name: str = "") -> None:
         raise RuntimeError(result.get("message", "Email send failed"))
 
 
+def _txt(v: Any) -> Optional[str]:
+    return str(v) if v is not None else None
+
+
 def _new_session(
     account_id: str,
     credential_id: str,
@@ -146,39 +155,80 @@ def _new_session(
     first_name: Optional[str] = None,
     last_name: Optional[str] = None,
     source_table: Optional[str] = None,
+    role: str = "member",
 ) -> str:
+    """Create a DB-backed session; return the plaintext token (sent to the client).
+    Only the token hash is persisted."""
     token = secrets.token_urlsafe(32)
-    _AUTH_SESSIONS[token] = {
-        "account_id":    account_id,
-        "credential_id": credential_id,
-        "identifier":    identifier,
-        "lead_id":       lead_id,
-        "contact_id":    contact_id,
-        "first_name":    first_name,
-        "last_name":     last_name,
-        "source_table":  source_table,
-        "expires_at":    datetime.now(timezone.utc) + timedelta(hours=_SESSION_TTL_HOURS),
-    }
+    expires = datetime.now(timezone.utc) + timedelta(hours=_SESSION_TTL_HOURS)
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO auth_sessions
+                     (token_hash, account_id, credential_id, identifier, lead_id,
+                      contact_id, first_name, last_name, source_table, role, expires_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (_token_hash(token), _txt(account_id), _txt(credential_id), identifier,
+                 _txt(lead_id), _txt(contact_id), first_name, last_name, source_table,
+                 role or "member", expires),
+            )
+        conn.commit()
+    finally:
+        conn.close()
     return token
 
 
 def get_session(token: str) -> Optional[Dict[str, Any]]:
-    """Return session dict if token is valid and not expired; else None."""
-    sess = _AUTH_SESSIONS.get(token)
-    if sess and sess["expires_at"] > datetime.now(timezone.utc):
-        return sess
-    if sess:
-        del _AUTH_SESSIONS[token]
-    return None
+    """Return session dict if the token is valid and not expired; else None.
+    Expired rows are purged opportunistically."""
+    if not token:
+        return None
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT account_id, credential_id, identifier, lead_id, contact_id,
+                          first_name, last_name, source_table, role, expires_at
+                   FROM auth_sessions WHERE token_hash = %s""",
+                (_token_hash(token),),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            sess = dict(zip([d[0] for d in cur.description], row))
+            if sess["expires_at"] <= datetime.now(timezone.utc):
+                cur.execute("DELETE FROM auth_sessions WHERE token_hash = %s", (_token_hash(token),))
+                conn.commit()
+                return None
+            return sess
+    finally:
+        conn.close()
+
+
+def _invalidate_session(token: str) -> None:
+    """Delete a session (used by signout)."""
+    if not token:
+        return
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM auth_sessions WHERE token_hash = %s", (_token_hash(token),))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def active_auth_sessions() -> int:
     """Return count of live sessions (purges expired ones as a side-effect)."""
-    expired = [t for t, s in _AUTH_SESSIONS.items()
-               if s["expires_at"] <= datetime.now(timezone.utc)]
-    for t in expired:
-        del _AUTH_SESSIONS[t]
-    return len(_AUTH_SESSIONS)
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM auth_sessions WHERE expires_at <= now()")
+            cur.execute("SELECT count(*) FROM auth_sessions")
+            return int(cur.fetchone()[0])
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +308,7 @@ class AuthResponse(BaseModel):
     first_name:    Optional[str] = None
     last_name:     Optional[str] = None
     source_table:  Optional[str] = None
+    role:          Optional[str] = None   # access tier: admin | member | viewer
     needs_password: Optional[bool] = None
     # NOTE: reset_token is included only for development/demo mode.
     # In production, email the token to the user and remove this field.
@@ -489,6 +540,18 @@ async def signin(req: SignInRequest):
         except Exception as exc:
             logger.warning(f"Could not check email verification status: {exc}")
 
+    # Resolve the access tier (admin | member | viewer) from the login identity.
+    access_role = "member"
+    try:
+        role_row = _db_fetchone(
+            "SELECT access_role FROM auth_credentials WHERE credential_id = %s::uuid",
+            (credential_id,),
+        )
+        if role_row and role_row[0] in ("admin", "member", "viewer"):
+            access_role = role_row[0]
+    except Exception as exc:
+        logger.warning(f"access_role lookup failed (defaulting to member): {exc}")
+
     session_token = _new_session(
         account_id=account_id or "",
         credential_id=credential_id,
@@ -498,9 +561,10 @@ async def signin(req: SignInRequest):
         first_name=first_name,
         last_name=last_name,
         source_table=source_table,
+        role=access_role,
     )
 
-    logger.info(f"Signin OK — lead={lead_id} account={account_id}")
+    logger.info(f"Signin OK — lead={lead_id} account={account_id} role={access_role}")
     return AuthResponse(
         success=True,
         message="Signed in successfully",
@@ -514,13 +578,14 @@ async def signin(req: SignInRequest):
         first_name=first_name,
         last_name=last_name,
         source_table=source_table,
+        role=access_role,
     )
 
 
 @router.post("/auth/signout", response_model=AuthResponse)
 async def signout(req: SignOutRequest):
     """Invalidate a session token."""
-    _AUTH_SESSIONS.pop(req.session_token, None)
+    _invalidate_session(req.session_token)
     return AuthResponse(success=True, message="Signed out")
 
 
