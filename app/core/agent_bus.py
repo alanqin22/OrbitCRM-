@@ -523,6 +523,149 @@ HANDLERS["lead.scored"] = handle_lead_scored
 
 
 # ============================================================================
+# HANDLER #3  —  activity.overdue_flagged  →  Activity agent surfaces material
+#               overdue work to its owner (nudge) + posts to the blackboard
+# ============================================================================
+# Division of labour with the nightly `sp_activities_auto_sweep` (which SNOOZES
+# low-value overdue tasks, score<=15): this handler acts on the COMPLEMENT — the
+# *material* overdue items the sweep deliberately leaves alone (linked to an open
+# opportunity, a call/meeting, or score>15). It SURFACES them to the owner rather
+# than auto-rescheduling, so important slipped work is never silently hidden.
+
+ACTIVITY_AGENT_UUID = "00000000-0000-0000-0000-000000000005"
+
+
+def _load_activity_ctx_sync(activity_id: str) -> Optional[Dict[str, Any]]:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT a.activity_id, a.status, a.due_at, a.type, a.subject,
+                          a.owner_id, a.opportunity_id, a.account_id, a.contact_id,
+                          a.lead_id, a.activity_score,
+                          (now()::date - a.due_at::date) AS days_overdue,
+                          ow.first_name AS owner_first
+                   FROM   activities a
+                   LEFT   JOIN owners ow ON ow.owner_id = a.owner_id
+                   WHERE  a.activity_id = %s""",
+                (activity_id,),
+            )
+            row = cur.fetchone()
+            return dict(zip([d[0] for d in cur.description], row)) if row else None
+    finally:
+        conn.close()
+
+
+def _already_nudged_sync(activity_id: str) -> bool:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT 1 FROM notifications
+                   WHERE channel='in_app' AND status <> 'read'
+                     AND metadata->>'kind'='activity_nudge'
+                     AND metadata->>'activity_id' = %s
+                     AND created_at > now() - interval '48 hours'
+                   LIMIT 1""",
+                (activity_id,),
+            )
+            return cur.fetchone() is not None
+    finally:
+        conn.close()
+
+
+def _record_activity_nudge_sync(ctx: Dict[str, Any], event_uuid: str) -> None:
+    """Notify the activity's owner that material overdue work needs attention.
+    Anchored to the triggering event (notifications.event_uuid is NOT NULL); the
+    digest/triage classifies activity.overdue_flagged as ACTIONABLE, so this nudge
+    is preserved (not auto-digested) and is auto-resolved by triage once the
+    activity is completed or brought current."""
+    import json
+    days = ctx.get("days_overdue") or 0
+    subject = ctx.get("subject") or "(untitled)"
+    link = ("opportunity" if ctx.get("opportunity_id") else
+            "account" if ctx.get("account_id") else
+            "lead" if ctx.get("lead_id") else "record")
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO notifications
+                     (employee_uuid, event_uuid, channel, status, title, body,
+                      metadata, created_at)
+                   VALUES (%(owner)s, %(ev)s::uuid, 'in_app', 'pending',
+                           %(title)s, %(body)s, %(meta)s, now())""",
+                {
+                    "owner": ctx["owner_id"], "ev": event_uuid,
+                    "title": f"⏰ Overdue {ctx.get('type') or 'task'}: {subject}",
+                    "body": (f"'{subject}' is {days} day(s) overdue and tied to an open "
+                             f"{link}. Please action or reschedule it."),
+                    "meta": json.dumps({
+                        "kind": "activity_nudge", "source": "agent_bus",
+                        "activity_id": str(ctx["activity_id"]),
+                        "days_overdue": days,
+                        "opportunity_id": str(ctx["opportunity_id"]) if ctx.get("opportunity_id") else None,
+                    }),
+                },
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _is_material_overdue(ctx: Dict[str, Any]) -> bool:
+    return bool(ctx.get("opportunity_id")) \
+        or (ctx.get("type") in ("call", "meeting")) \
+        or (int(ctx.get("activity_score") or 0) > 15)
+
+
+async def handle_activity_overdue_flagged(event: Dict[str, Any]) -> Dict[str, Any]:
+    """ActivityAgent's reaction to an overdue-flagged activity: if it's material
+    (vs. the low-value tasks the nightly snooze handles), nudge the owner."""
+    activity_id = str(event["entity_uuid"])
+    ctx = await asyncio.to_thread(_load_activity_ctx_sync, activity_id)
+
+    if not ctx:
+        return {"status": "skipped", "reason": "activity not found"}
+    # Re-check at action time — it may have been completed/rescheduled since emit.
+    if ctx["status"] != "open" or (ctx.get("days_overdue") or 0) <= 0:
+        return {"status": "skipped", "reason": "no longer open & overdue"}
+    if not _is_material_overdue(ctx):
+        return {"status": "skipped", "reason": "low-value — left for nightly snooze sweep"}
+    if not ctx.get("owner_id"):
+        return {"status": "skipped", "reason": "no owner to nudge"}
+    if await asyncio.to_thread(_already_nudged_sync, activity_id):
+        return {"status": "skipped", "reason": "owner already nudged within 48h"}
+
+    await asyncio.to_thread(_record_activity_nudge_sync, ctx, event["event_uuid"])
+
+    # Phase 4: post to the shared blackboard so the supervisor / account 360s see
+    # the slipped commitment without asking the Activity agent.
+    if ctx.get("account_id"):
+        from app.core import blackboard
+        await asyncio.to_thread(
+            blackboard.post, "account", str(ctx["account_id"]), "activities",
+            "overdue_activity",
+            f"Overdue {ctx.get('type') or 'task'} '{ctx.get('subject')}' "
+            f"({ctx.get('days_overdue')}d) — owner nudged",
+            {"activity_id": str(ctx["activity_id"]),
+             "days_overdue": ctx.get("days_overdue"),
+             "opportunity_id": str(ctx["opportunity_id"]) if ctx.get("opportunity_id") else None},
+            0.85, "warning", 72)
+
+    return {
+        "status": "ok",
+        "action": "owner nudged",
+        "activity": ctx.get("subject"),
+        "days_overdue": ctx.get("days_overdue"),
+        "owner": ctx.get("owner_first"),
+    }
+
+
+HANDLERS["activity.overdue_flagged"] = handle_activity_overdue_flagged
+
+
+# ============================================================================
 # TICK + LOOP
 # ============================================================================
 
@@ -544,6 +687,161 @@ async def run_once() -> Dict[str, Any]:
     if events:
         logger.info(f"[agent_bus] tick — {summary}")
     return summary
+
+
+def _rollup_overdue_sync(apply: bool) -> Dict[str, Any]:
+    """One-time per-OWNER rollup of the material overdue-activity backlog: instead
+    of ~660 per-activity nudges, raise ONE 'N overdue items' summary per owner.
+    Absorbs any per-activity nudges already created, and settles the pending
+    activity.overdue_flagged queue rows (+ their agent_inbox copies) so the backlog
+    is drained and won't regenerate individual nudges. The per-activity handler
+    stays for go-forward (low daily volume). Idempotent: one rollup per owner/day."""
+    import json
+    from datetime import date
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            # Global fallback anchor (notifications.event_uuid is NOT NULL).
+            cur.execute("""SELECT event_uuid::text FROM events
+                           WHERE event_type='activity.overdue_flagged' LIMIT 1""")
+            r = cur.fetchone()
+            fallback_anchor = r[0] if r else None
+
+            cur.execute("""
+                WITH mat AS (
+                    SELECT a.owner_id, a.subject,
+                           (now()::date - a.due_at::date) AS days_overdue
+                    FROM   activities a
+                    WHERE  a.status='open' AND a.due_at < now() AND a.owner_id IS NOT NULL
+                      AND  (a.opportunity_id IS NOT NULL OR a.type IN ('call','meeting')
+                            OR COALESCE(a.activity_score,0) > 15)
+                ),
+                by_subj AS (
+                    SELECT owner_id, subject, count(*) AS cnt, max(days_overdue) AS maxd
+                    FROM mat GROUP BY owner_id, subject
+                )
+                SELECT t.owner_id::text, t.n, t.max_days,
+                       (SELECT e.event_uuid::text FROM events e
+                          JOIN activities a2 ON a2.activity_id = e.entity_uuid
+                         WHERE a2.owner_id = t.owner_id
+                           AND e.event_type='activity.overdue_flagged' LIMIT 1) AS anchor,
+                       (SELECT json_agg(json_build_object('subject', s.subject,
+                                        'cnt', s.cnt, 'maxd', s.maxd))
+                          FROM (SELECT * FROM by_subj b WHERE b.owner_id = t.owner_id
+                                ORDER BY cnt DESC, maxd DESC LIMIT 5) s) AS top_subjects
+                FROM (SELECT owner_id, count(*) AS n, max(days_overdue) AS max_days
+                      FROM mat GROUP BY owner_id) t
+            """)
+            owners = [dict(zip([d[0] for d in cur.description], row)) for row in cur.fetchall()]
+
+            total_items = sum(o["n"] for o in owners)
+            if not apply:
+                return {"owners": len(owners), "would_rollup_items": total_items,
+                        "rollups": 0, "nudges_absorbed": 0, "queue_settled": 0}
+
+            today = date.today().isoformat()
+            rollups = 0
+            for o in owners:
+                anchor = o["anchor"] or fallback_anchor
+                if not anchor:
+                    continue
+                tops = o["top_subjects"] or []
+                lines = [f"### ⏰ {o['n']} overdue items need your attention", ""]
+                shown = 0
+                for s in tops:
+                    suffix = f" ×{s['cnt']}" if s["cnt"] > 1 else ""
+                    lines.append(f"- {s['subject']}{suffix} — up to **{s['maxd']}d** overdue")
+                    shown += s["cnt"]
+                if o["n"] > shown:
+                    lines.append(f"- …and {o['n'] - shown} more")
+                body = "\n".join(lines)
+                meta = json.dumps({"kind": "overdue_rollup", "source": "agent_bus",
+                                   "count": o["n"], "max_days": o["max_days"], "day": today})
+                # One active rollup per owner: refresh the existing unread one
+                # (supersede prior days) rather than stacking a new row each run.
+                cur.execute(
+                    """SELECT notification_uuid FROM notifications
+                       WHERE employee_uuid=%(o)s::uuid AND channel='in_app'
+                         AND status <> 'read' AND metadata->>'kind'='overdue_rollup'
+                       ORDER BY created_at DESC LIMIT 1""",
+                    {"o": o["owner_id"]})
+                ex = cur.fetchone()
+                title = f"⏰ {o['n']} overdue items to action"
+                if ex:
+                    cur.execute("""UPDATE notifications SET title=%s, body=%s, metadata=%s,
+                                   created_at=now() WHERE notification_uuid=%s""",
+                                (title, body, meta, ex[0]))
+                else:
+                    cur.execute(
+                        """INSERT INTO notifications
+                             (employee_uuid, event_uuid, channel, status, title, body, metadata, created_at)
+                           VALUES (%s::uuid, %s::uuid, 'in_app', 'pending', %s, %s, %s, now())""",
+                        (o["owner_id"], anchor, title, body, meta))
+                # Absorb any per-activity nudges already raised for this owner.
+                cur.execute("""UPDATE notifications SET status='read', read_at=now()
+                               WHERE employee_uuid=%s::uuid AND channel='in_app'
+                                 AND status <> 'read' AND metadata->>'kind'='activity_nudge'""",
+                            (o["owner_id"],))
+                rollups += 1
+
+            # Settle the pending overdue_flagged backlog (+ agent_inbox copies) so it
+            # is drained and won't regenerate per-activity nudges.
+            cur.execute("""UPDATE event_queue q
+                           SET status='completed', last_attempt_at=now(), locked_by=NULL,
+                               error_context='{"settled_by":"overdue_rollup"}'
+                           FROM events e
+                           WHERE e.event_uuid=q.event_uuid AND q.status='pending'
+                             AND e.event_type='activity.overdue_flagged'""")
+            queue_settled = cur.rowcount
+            cur.execute("""UPDATE notifications n SET status='read', read_at=now()
+                           FROM events e
+                           WHERE e.event_uuid=n.event_uuid AND n.channel='agent_inbox'
+                             AND n.status <> 'read' AND e.event_type='activity.overdue_flagged'""")
+            inbox_settled = cur.rowcount
+        conn.commit()
+        return {"owners": len(owners), "rollups": rollups,
+                "items_rolled_up": total_items, "queue_settled": queue_settled,
+                "agent_inbox_settled": inbox_settled}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+async def rollup_overdue_activities(apply: bool = False) -> Dict[str, Any]:
+    """Per-owner rollup of the material overdue-activity backlog (see
+    _rollup_overdue_sync). Dry-run unless apply=True."""
+    return await asyncio.to_thread(_rollup_overdue_sync, apply)
+
+
+async def drain_backlog(max_total: int = 500, since_days: int = 365) -> Dict[str, Any]:
+    """One-off controlled drain of the HISTORICAL queue (events emitted before the
+    daemon's boot cutoff). Temporarily widens the eligibility window, processes in
+    BATCH-sized waves until the queue is clear or `max_total` is reached, then
+    restores the live cutoff. Only handler-registered types are ever touched, and
+    every handler re-validates + idempotency-guards, so stale events (paid invoice,
+    converted lead, completed activity) are safely skipped. Concurrency-safe with
+    the live loop (FOR UPDATE SKIP LOCKED). Restartable: re-run to continue."""
+    global _CUTOFF
+    saved = _CUTOFF
+    _CUTOFF = datetime.now(timezone.utc) - timedelta(days=since_days)
+    processed, agg = 0, {}
+    try:
+        while processed < max_total:
+            s = await run_once()
+            if not s["claimed"]:
+                break
+            processed += s["claimed"]
+            for r in s["results"]:
+                key = f'{r.get("event")}:{r.get("status")}'
+                agg[key] = agg.get(key, 0) + 1
+    finally:
+        _CUTOFF = saved
+    logger.info(f"[agent_bus] drain_backlog processed={processed} breakdown={agg}")
+    return {"processed": processed, "max_total": max_total,
+            "since_days": since_days, "breakdown": agg,
+            "note": "re-run to continue; live cutoff restored"}
 
 
 async def _loop() -> None:
@@ -609,3 +907,17 @@ async def agent_bus_run_once():
         # allow manual ticks even when the loop isn't running
         globals()["_CUTOFF"] = datetime.now(timezone.utc) - timedelta(minutes=max(BACKFILL_MIN, 60))
     return await run_once()
+
+
+@router.post("/agent-bus/drain")
+async def agent_bus_drain(max_total: int = 500, since_days: int = 365):
+    """Controlled drain of the historical backlog (handler types only, capped,
+    restartable). Safe even while gated — handlers re-validate every event."""
+    return await drain_backlog(max_total=max_total, since_days=since_days)
+
+
+@router.post("/agent-bus/rollup-overdue")
+async def agent_bus_rollup_overdue(apply: bool = False):
+    """Per-owner rollup of the material overdue-activity backlog (one summary per
+    owner instead of per-activity nudges). Dry-run unless ?apply=true."""
+    return await rollup_overdue_activities(apply=apply)
