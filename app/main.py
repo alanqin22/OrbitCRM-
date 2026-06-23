@@ -464,11 +464,12 @@ async def normalise_path(request: Request, call_next):
 #   require_admin   : hard gate on privileged COMMAND endpoints — enforced once
 #                     ADMIN_API_TOKEN is set; the frontend never calls these.
 from fastapi import Depends
-from app.core.auth_dep import require_admin, require_session, require_write
+from app.core.auth_dep import require_admin, require_data_access
 
-# _DATA = authenticated session + viewer read-only write-guard (RBAC #2).
-# require_session runs first (stashes the session); require_write reads its role.
-_DATA  = [Depends(require_session), Depends(require_write)]
+# _DATA = unified data gate. With API_PUBLIC_READ=1 (demo): anyone may READ, but
+# create/update/delete require a logged-in Admin/authorized (member) session.
+# With API_PUBLIC_READ=0: every data call requires a session (full lockdown).
+_DATA  = [Depends(require_data_access)]
 _ADMIN = [Depends(require_admin)]
 
 # -- Home dashboard (registered first for fast routing).
