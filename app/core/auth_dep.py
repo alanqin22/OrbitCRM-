@@ -38,8 +38,31 @@ def _flag(name: str, default: str = "0") -> bool:
     return os.getenv(name, default).strip().lower() in ("1", "true", "yes", "on")
 
 
-API_AUTH_ENABLED = _flag("API_AUTH_ENABLED")
 ADMIN_API_TOKEN = os.getenv("ADMIN_API_TOKEN", "").strip()
+# Roles allowed to write. viewer + anonymous are read-only.
+WRITE_ROLES = {"admin", "member"}
+
+# Two ways to choose the data-endpoint posture, in priority order:
+#   1) API_SECURITY_MODE — a single switch (recommended; foolproof):
+#        open        → no auth (anyone read + write)
+#        public-read → anyone READS; create/update/delete need an Admin/writer login
+#        locked      → every data call requires a login (full lockdown)
+#   2) Otherwise fall back to the individual flags API_AUTH_ENABLED / API_PUBLIC_READ.
+_MODE = os.getenv("API_SECURITY_MODE", "").strip().lower().replace("_", "-")
+if _MODE in ("open", "off"):
+    API_AUTH_ENABLED, API_PUBLIC_READ = False, False
+elif _MODE in ("public-read", "publicread", "read"):
+    API_AUTH_ENABLED, API_PUBLIC_READ = True, True
+elif _MODE in ("locked", "lockdown", "full", "strict"):
+    API_AUTH_ENABLED, API_PUBLIC_READ = True, False
+else:
+    API_AUTH_ENABLED = _flag("API_AUTH_ENABLED")
+    API_PUBLIC_READ = _flag("API_PUBLIC_READ")
+
+_POSTURE = ("open" if not API_AUTH_ENABLED else
+            "public-read" if API_PUBLIC_READ else "locked")
+logger.info(f"[security] data-endpoint posture: {_POSTURE} "
+            f"(API_AUTH_ENABLED={int(API_AUTH_ENABLED)}, API_PUBLIC_READ={int(API_PUBLIC_READ)})")
 
 # Surface the posture once at import (startup) rather than per request.
 if not ADMIN_API_TOKEN:
@@ -152,3 +175,48 @@ async def require_write(request: Request) -> None:
             status_code=403,
             detail="Read-only (viewer) role: write operations are not permitted.",
         )
+
+
+async def require_data_access(request: Request) -> Optional[Dict[str, Any]]:
+    """Unified data-endpoint gate (the demo-friendly model).
+
+      • API_AUTH_ENABLED=0  → no enforcement (open).
+      • API_PUBLIC_READ=1   → anyone may READ; a WRITE (structured mode in
+        WRITE_MODES) requires a logged-in session whose role is in WRITE_ROLES
+        (admin/member). Anonymous writes → 401 (login); viewer writes → 403.
+      • API_PUBLIC_READ=0   → every data call requires a valid session (full
+        lockdown), and writes still require a write-capable role.
+
+    Replaces the require_session + require_write pair on the data routers."""
+    if not API_AUTH_ENABLED:
+        return None
+
+    # Resolve the caller's role up front and stamp it on the request context, so
+    # the in-agent write guard (write_guard.guard_query, called from execute_sp)
+    # can block NL-driven writes even on requests the HTTP layer reads as a read.
+    from app.agents.auth.router import get_session
+    from app.core.write_guard import set_request_role
+    sess = get_session(_bearer(request) or "")
+    role = (sess or {}).get("role", "anonymous")
+    set_request_role(role)
+    if sess:
+        request.state.session = sess
+
+    mode = await _request_mode(request)
+    is_write = bool(mode and mode in WRITE_MODES)
+
+    # Public reads: allow anonymous when nothing needs a session (role already
+    # stamped above for the deep write guard).
+    if API_PUBLIC_READ and not is_write:
+        return None
+
+    # From here a session is required (a structured write, or full-lockdown read).
+    if not sess:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if is_write and role not in WRITE_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="Your role is read-only — only Admin/authorized users may "
+                   "create, update, or delete records.",
+        )
+    return sess

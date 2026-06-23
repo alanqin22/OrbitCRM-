@@ -74,6 +74,11 @@ def execute_sp(query: str, params: Optional[Dict[str, Any]] = None) -> List[Dict
     logger.info("Executing SP query")
     logger.debug(f"SQL: {query[:300]}...")
 
+    # Block read-only callers from write SPs (catches NL-driven writes the HTTP
+    # gate misses). No-op outside a request / when auth is off — see write_guard.
+    from app.core.write_guard import guard_query
+    guard_query(query)
+
     try:
         conn = get_connection()
         try:
