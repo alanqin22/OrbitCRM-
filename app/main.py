@@ -471,8 +471,10 @@ from app.core.auth_dep import require_admin, require_session, require_write
 _DATA  = [Depends(require_session), Depends(require_write)]
 _ADMIN = [Depends(require_admin)]
 
-# -- Home dashboard (registered first for fast routing)
-app.include_router(home_router, dependencies=_DATA)
+# -- Home dashboard (registered first for fast routing).
+#    PUBLIC: the landing page / KPI summary must render for anonymous visitors
+#    (the marketing front page), so it is not session-gated.
+app.include_router(home_router)
 
 # -- Register all 10 AI agent routers
 app.include_router(accounts_router,      dependencies=_DATA)
@@ -487,8 +489,9 @@ app.include_router(analytics_router,     dependencies=_DATA)
 app.include_router(notifications_router, dependencies=_DATA)
 app.include_router(orchestrator_router,  dependencies=_DATA)
 
-# -- Store module (direct SP routing — no AI agent)
-app.include_router(store_router, dependencies=_DATA)
+# -- Store module (direct SP routing — no AI agent).
+#    PUBLIC: the customer-facing storefront must be browsable without a CRM login.
+app.include_router(store_router)
 
 # -- Auth module (direct DB routing — no AI agent). MUST stay open: it issues the
 #    sessions the other endpoints check (login can't require being logged in).
@@ -522,6 +525,10 @@ app.include_router(blackboard_router, dependencies=_ADMIN)
 # -- Governance (Phase 5 — confidence-gating + approval queue)
 from app.core.governance import router as governance_router
 app.include_router(governance_router, dependencies=_ADMIN)
+
+# -- Admin Users console (manage auth_credentials). Router self-gates on require_admin.
+from app.agents.admin_users.router import router as admin_users_router
+app.include_router(admin_users_router)
 
 
 @app.get("/auth.html")
