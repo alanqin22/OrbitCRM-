@@ -227,6 +227,9 @@ def _compute_summary(d: dict) -> dict:
 # PUBLIC API
 # ============================================================================
 
+from app.core.text_clean import clean_obj
+
+
 def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, Any]:
     """
     Format sp_analytics_dashboard DB rows into the output dict expected by main.py.
@@ -240,7 +243,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
       params         — echoed SP param names (p_start_date etc.)
       meta           — generation time + record counts per section
     """
-    response = _parse_response(db_rows)
+    response = clean_obj(_parse_response(db_rows))
     logger.info(f'Format Response (sp_analytics_dashboard v3.1) — keys: {list(response.keys())}')
 
     # ── Executive answer — pre-formatted by the shared executive layer ───────

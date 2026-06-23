@@ -48,6 +48,9 @@ def _first_result(db_rows: List[Dict]) -> Optional[Dict]:
     return None
 
 
+from app.core.text_clean import clean_obj
+
+
 def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
     """
     Format the store SP response into a JSON envelope string.
@@ -79,7 +82,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
         return json.dumps({"status": "error", "mode": f"{sp}/{mode}", "sp": sp,
                            "error": "Checkout produced no result"})
 
-    data = _first_result(db_rows)
+    data = clean_obj(_first_result(db_rows))
 
     if data is None:
         return json.dumps({

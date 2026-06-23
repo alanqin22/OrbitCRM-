@@ -139,6 +139,9 @@ def _detect_mode(response: dict, params_mode: str) -> str:
 # PUBLIC API
 # ============================================================================
 
+from app.core.text_clean import clean_obj
+
+
 def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, Any]:
     """
     Format sp_orders DB rows into the output dict expected by main.py.
@@ -179,7 +182,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
 
     # ── Executive answer — pre-formatted by the shared executive layer ───────
     if params_mode == 'executive_question':
-        _resp = _parse_response(db_rows)
+        _resp = clean_obj(_parse_response(db_rows))
         return {
             'output': _resp.get('exec_markdown') or 'No executive data available.',
             'mode': 'executive_question',
@@ -188,7 +191,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             'success': True,
         }
 
-    response    = _parse_response(db_rows)
+    response    = clean_obj(_parse_response(db_rows))
     mode        = _detect_mode(response, params_mode)
     context     = params.get('context')
     metadata    = response.get('metadata') or {}

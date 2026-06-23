@@ -319,6 +319,9 @@ def _product_detail_block(out: List[str], p: dict, price_history: list, mode_lab
 # PUBLIC API
 # ============================================================================
 
+from app.core.text_clean import clean_obj
+
+
 def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
     """
     Format sp_products DB rows into the markdown string expected by the
@@ -329,7 +332,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
     str — placed directly into ChatResponse.output.
     """
     mode = str(params.get('mode') or 'unknown').lower().strip()
-    response = _parse_response(db_rows)
+    response = clean_obj(_parse_response(db_rows))
     metadata = response.get('metadata', {})
 
     logger.info(f'Format Response (sp_products v3.4) — mode={mode}')

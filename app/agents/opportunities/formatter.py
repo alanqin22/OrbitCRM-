@@ -334,6 +334,9 @@ def _render_breakdown_table(out: list, title: str, data: list, name_col: str, na
 # PUBLIC API
 # ============================================================================
 
+from app.core.text_clean import clean_obj
+
+
 def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, Any]:
     """
     Format sp_opportunities DB rows into the output dict expected by main.py.
@@ -349,7 +352,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
       owners        — list (for get_owners mode)
     """
     mode = str(params.get('mode') or 'unknown').lower().strip()
-    response = _parse_response(db_rows)
+    response = clean_obj(_parse_response(db_rows))
     metadata_raw = response.get('metadata', {}) or {}
     meta_status = metadata_raw.get('status', 'success')
     meta_code   = metadata_raw.get('code', 0)

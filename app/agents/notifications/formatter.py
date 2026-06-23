@@ -244,6 +244,9 @@ def _parse_response(db_rows: List[Dict]) -> Dict:
 # PUBLIC API
 # ============================================================================
 
+from app.core.text_clean import clean_obj
+
+
 def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, Any]:
     """
     Format sp_notifications DB rows into the output dict expected by main.py.
@@ -254,7 +257,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
       success — bool
     """
     mode     = str(params.get('mode') or 'unknown').lower().strip()
-    response = _parse_response(db_rows)
+    response = clean_obj(_parse_response(db_rows))
 
     logger.info(f'Format Response (sp_notifications v2.6) — mode={mode}')
 

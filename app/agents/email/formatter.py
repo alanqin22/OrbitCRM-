@@ -35,6 +35,9 @@ def _extract_rows(db_rows: List) -> List[dict]:
     return out
 
 
+from app.core.text_clean import clean_obj
+
+
 def format_response(db_rows: List, params: dict, extra: dict = None) -> Dict[str, Any]:
     """
     Format the EmailAgent response.
@@ -83,7 +86,7 @@ def format_response(db_rows: List, params: dict, extra: dict = None) -> Dict[str
 
     # ── sent_emails ────────────────────────────────────────────────────────────
     if mode == 'sent_emails':
-        rows = _extract_rows(db_rows)
+        rows = clean_obj(_extract_rows(db_rows))
         if not rows:
             output = 'No sent emails found in audit log.'
         else:
@@ -99,7 +102,7 @@ def format_response(db_rows: List, params: dict, extra: dict = None) -> Dict[str
 
     # ── event_inbox ────────────────────────────────────────────────────────────
     if mode == 'event_inbox':
-        rows = _extract_rows(db_rows)
+        rows = clean_obj(_extract_rows(db_rows))
         raw_events = events or rows
         if not raw_events:
             output = 'No pending events in EmailAgent inbox.'
@@ -115,7 +118,7 @@ def format_response(db_rows: List, params: dict, extra: dict = None) -> Dict[str
 
     # ── list_templates ─────────────────────────────────────────────────────────
     if mode == 'list_templates':
-        rows = _extract_rows(db_rows)
+        rows = clean_obj(_extract_rows(db_rows))
         if not rows:
             output = 'No email templates found.'
         else:
@@ -152,7 +155,7 @@ def format_response(db_rows: List, params: dict, extra: dict = None) -> Dict[str
         if status:
             output = status
         else:
-            rows = _extract_rows(db_rows)
+            rows = clean_obj(_extract_rows(db_rows))
             r = rows[0] if rows else {}
             output = (
                 f'**EmailAgent Status: Online**\n'
@@ -165,6 +168,6 @@ def format_response(db_rows: List, params: dict, extra: dict = None) -> Dict[str
         return {'output': output, 'mode': mode, 'success': True}
 
     # ── conversational fallback ─────────────────────────────────────────────────
-    rows = _extract_rows(db_rows)
+    rows = clean_obj(_extract_rows(db_rows))
     output = str(rows[0]) if rows else 'Done.'
     return {'output': output, 'mode': mode, 'success': True}
