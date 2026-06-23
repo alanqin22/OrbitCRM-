@@ -108,6 +108,23 @@ def _clean_text(value: Optional[str]) -> Optional[str]:
     return _MANGLED_DASH_RE.sub(' - ', s)
 
 
+# Free-text fields on an activity/event object that may carry a mangled dash.
+_ACT_TEXT_FIELDS = ('subject', 'description', 'outcome', 'notes', 'details')
+
+
+def _clean_activity(act: Any) -> Any:
+    """Return a copy of an activity/event dict with its free-text fields
+    dash-normalized, so the STRUCTURED side-channel (used by the detail view) is
+    clean even when the stored data is mangled — no data fix required."""
+    if not isinstance(act, dict):
+        return act
+    out = dict(act)
+    for f in _ACT_TEXT_FIELDS:
+        if isinstance(out.get(f), str):
+            out[f] = _clean_text(out[f])
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -270,19 +287,19 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         report_mode = 'activity_detail'
         activity    = response.get('activity')
         if activity:
-            report_data['activity'] = activity
+            report_data['activity'] = _clean_activity(activity)
 
     elif mode in ('create', 'log_call', 'log_email', 'schedule_meeting', 'create_task', 'add_note'):
         report_mode = 'activity_created'
         activity    = response.get('activity')
         if activity:
-            report_data['activity'] = activity
+            report_data['activity'] = _clean_activity(activity)
 
     elif mode in ('update', 'complete', 'reopen'):
         report_mode = 'activity_updated'
         activity    = response.get('activity')
         if activity:
-            report_data['activity'] = activity
+            report_data['activity'] = _clean_activity(activity)
 
     elif mode == 'delete':
         report_mode = 'activity_deleted'
@@ -293,7 +310,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         # Pass the structured events through so the frontend can render full
         # details (amount, method, order/invoice numbers) instead of re-parsing
         # the markdown table — which only captures the "Details" cell text.
-        report_data['timeline'] = activities
+        report_data['timeline'] = [_clean_activity(a) for a in activities]
         # Forward entity_name so the frontend can display it in the timeline title
         if metadata.get('entity_name'):
             report_data['entity_name'] = metadata['entity_name']

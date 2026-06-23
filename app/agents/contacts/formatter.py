@@ -184,6 +184,9 @@ def _parse_response(db_rows: List[Dict]) -> Dict:
 # PUBLIC API
 # ============================================================================
 
+from app.core.text_clean import clean_obj
+
+
 def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
     """
     Format sp_contacts DB rows into the markdown string expected by the
@@ -196,7 +199,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
     raw_mode = str(params.get('mode') or 'unknown').lower().strip()
     mode = MODE_ALIASES.get(raw_mode, raw_mode)
 
-    response = _parse_response(db_rows)
+    response = clean_obj(_parse_response(db_rows))
     metadata = response.get('metadata', {})
 
     logger.info(f'Format Response (sp_contacts v4x) — mode={mode}')

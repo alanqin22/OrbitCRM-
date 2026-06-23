@@ -143,6 +143,9 @@ def _parse_response(db_rows: List[Dict]) -> Dict:
 # PUBLIC API
 # ============================================================================
 
+from app.core.text_clean import clean_obj
+
+
 def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
     """
     Format sp_accounts DB rows into a human-readable / machine-parseable
@@ -152,7 +155,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
     """
     mode = str(params.get('mode') or 'unknown').lower().strip()
 
-    response = _parse_response(db_rows)
+    response = clean_obj(_parse_response(db_rows))
     metadata = response.get('metadata', {})
 
     logger.info(f'Format Response (sp_accounts v2d) — mode={mode}')

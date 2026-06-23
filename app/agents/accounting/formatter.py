@@ -195,6 +195,9 @@ def _infer_mode_from_response(r: Dict) -> str:
 # MAIN FORMATTER
 # ============================================================================
 
+from app.core.text_clean import clean_obj
+
+
 def format_response(db_rows: List[Dict[str, Any]], params: Dict[str, Any]) -> str:
     """Format database response based on mode.
 
@@ -213,7 +216,7 @@ def format_response(db_rows: List[Dict[str, Any]], params: Dict[str, Any]) -> st
     if db_rows and len(db_rows) > 0:
         first_row = db_rows[0]
         if 'sp_accounting' in first_row:
-            response = safe_json(first_row['sp_accounting']) or first_row['sp_accounting']
+            response = clean_obj(safe_json(first_row['sp_accounting']) or first_row['sp_accounting'])
         elif 'result' in first_row:
             response = safe_json(first_row['result']) or first_row['result']
         else:
