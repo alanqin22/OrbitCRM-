@@ -174,6 +174,33 @@ def _run_activities_auto_sweep() -> None:
         logger.error(f"[ActivitySweep] Scheduled job failed: {exc}", exc_info=True)
 
 
+# Milestone auto-complete runs live (completion is reversible via the activity
+# 'reopen' mode). Flip to True to only preview the eligible count.
+MILESTONE_COMPLETE_DRY_RUN = False
+
+
+def _run_complete_settled_activities() -> None:
+    """Scheduled job: Activity↔Accounting/Order cooperation — auto-complete the
+    auto-generated "milestone record" tasks whose underlying milestone has
+    settled (invoice fully paid / order past 'pending'). These records were
+    created open and never closed, so they piled up overdue and crushed the
+    completion rate (4% → ~34% once cleared). The Activity agent reads the
+    Accounting/Order agents' entity state and closes its own records — a
+    cooperation that needs no event bus. Idempotent (only touches not-yet-
+    completed), subject-gated (never touches genuine follow-up work)."""
+    try:
+        from app.core.database import execute_sp
+        apply = 'false' if MILESTONE_COMPLETE_DRY_RUN else 'true'
+        rows = execute_sp(
+            f"SELECT fn_complete_settled_milestone_activities(NULL, {apply}) AS result"
+        )
+        result = (rows[0].get('result') or {}) if rows else {}
+        logger.info(f"[MilestoneComplete] eligible={result.get('eligible')} "
+                    f"completed={result.get('completed')} (apply={result.get('apply')})")
+    except Exception as exc:
+        logger.error(f"[MilestoneComplete] Scheduled job failed: {exc}", exc_info=True)
+
+
 # Per-run cap on how many overdue invoices the nightly job dunns. Kept low for
 # the initial production ramp so a brand-new autonomous subsystem proves itself
 # on a small batch first; the per-invoice 20h idempotency guard rolls the rest
@@ -251,6 +278,24 @@ def _run_notification_triage() -> None:
         logger.error(f"[NotifTriage] tick failed: {exc}", exc_info=True)
 
 
+def _run_capture_forecast_snapshot() -> None:
+    """Scheduled job (monthly): capture a point-in-time pipeline forecast via
+    generate_forecast_snapshot(90).
+
+    Each month's snapshot is the pre-period forecast that the forecast-accuracy
+    report (fn_forecast_accuracy / opportunity 'forecast accuracy') later grades
+    against the revenue that actually closed. Running on the 1st means the
+    snapshot predates the month it forecasts, which is exactly what makes the
+    accuracy comparison meaningful. Each call inserts a fresh snapshot row."""
+    try:
+        from app.core.database import execute_sp
+        rows = execute_sp("SELECT generate_forecast_snapshot(90) AS result")
+        sid = rows[0].get('result') if rows else None
+        logger.info(f"[ForecastSnapshot] captured snapshot {sid}")
+    except Exception as exc:
+        logger.error(f"[ForecastSnapshot] capture failed: {exc}", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("=== CRM Agent starting up (all 12 modules + home index + auth + email) ===")
@@ -292,6 +337,13 @@ async def lifespan(app: FastAPI):
             _run_activities_auto_sweep,
             trigger=CronTrigger(hour=22, minute=10), # 10:10 PM ET — snooze non-critical overdue activities
             id="activities_auto_sweep",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        _scheduler.add_job(
+            _run_complete_settled_activities,
+            trigger=CronTrigger(hour=22, minute=12), # 10:12 PM ET — close milestone records whose invoice/order settled
+            id="complete_settled_activities",
             replace_existing=True,
             misfire_grace_time=3600,
         )
@@ -343,6 +395,16 @@ async def lifespan(app: FastAPI):
             id="notification_triage",
             replace_existing=True,
             misfire_grace_time=3600,
+        )
+        # Monthly forecast snapshot — 1st of the month, 00:30 ET — so the capture
+        # predates the month it forecasts (builds forecast-accuracy history). A
+        # full-day grace window means a restart anytime on the 1st still captures.
+        _scheduler.add_job(
+            _run_capture_forecast_snapshot,
+            trigger=CronTrigger(day=1, hour=0, minute=30),
+            id="capture_forecast_snapshot",
+            replace_existing=True,
+            misfire_grace_time=86400,
         )
         _scheduler.start()
         logger.info(

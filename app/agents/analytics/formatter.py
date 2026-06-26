@@ -260,7 +260,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         error_code = response.get('code') or -999
         output = (
             f'### ❌ ERROR\n'
-            f'**Time:** {_fmt_date(datetime.utcnow())}\n'
+            f'**Time:** {_fmt_date(datetime.now())}\n'
             f'**Error Code:** {error_code}\n'
             f'**Error Message:** {error_msg}\n\n'
             f'Please fix the input and try again.'
@@ -299,6 +299,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         'owner_breakdown':       '### 👥 Owner Breakdown',
         'activity_productivity': '### ⚡ Activity Productivity',
         'ai_vs_human':           '### 🤖 AI vs Human Forecast',
+        'firmographics':         '### 🏭 Pipeline by Firmographics',
     }
     # Narrowed (single-section) report types skip empty sections entirely —
     # the full dashboard keeps "No data available" placeholders so users can
@@ -308,7 +309,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
 
     out: List[str] = []
     out.append(_REPORT_TITLES.get(_report_type, '### 📊 Analytics Dashboard'))
-    out.append(f'**Time:** {_fmt_date(datetime.utcnow())}')
+    out.append(f'**Time:** {_fmt_date(datetime.now())}')
     out.append(
         f'**Date Range:** {_fmt_date(params.get("startDate"))} '
         f'to {_fmt_date(params.get("endDate"))}'
@@ -334,7 +335,8 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
     # ── Section tables ────────────────────────────────────────────────────────
 
     _add_table(out, 'Forecast Summary', '🎯',
-               _safe_arr(dashboard_data.get('forecast_summary')), [
+               sorted(_safe_arr(dashboard_data.get('forecast_summary')),
+                      key=lambda r: str(r.get('period_key') or ''), reverse=True), [
                    {'key': 'period_key',        'label': 'Period'},
                    {'key': 'forecast_type',     'label': 'Type'},
                    {'key': 'total_amount',      'label': 'Total Amount',    'format': 'currency'},
@@ -369,7 +371,8 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                ], skip_if_empty=_narrow)
 
     _add_table(out, 'Forecast Accuracy', '🎯',
-               _safe_arr(dashboard_data.get('forecast_accuracy')), [
+               sorted(_safe_arr(dashboard_data.get('forecast_accuracy')),
+                      key=lambda r: str(r.get('period_key') or ''), reverse=True), [
                    {'key': 'period_key',        'label': 'Period'},
                    {'key': 'forecast_type',     'label': 'Type'},
                    {'key': 'avg_ai_confidence', 'label': 'Avg AI Confidence', 'format': 'percentage'},
@@ -442,7 +445,8 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                ], skip_if_empty=_narrow)
 
     _add_table(out, 'Lead Source Performance', '📣',
-               _safe_arr(dashboard_data.get('lead_source_performance')), [
+               sorted(_safe_arr(dashboard_data.get('lead_source_performance')),
+                      key=lambda r: float(r.get('weighted_pipeline') or 0), reverse=True), [
                    {'key': 'lead_source',       'label': 'Source'},
                    {'key': 'pipeline_amount',   'label': 'Pipeline',     'format': 'currency'},
                    {'key': 'weighted_pipeline', 'label': 'Weighted',     'format': 'currency'},
@@ -460,12 +464,55 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                    {'key': 'overdue_count',   'label': 'Overdue',   'format': 'number'},
                ], skip_if_empty=_narrow)
 
+    # ── Pipeline by Firmographics (industry / company size / revenue) ─────────
+    _firmo = dashboard_data.get('pipeline_by_firmographics') or {}
+    _firmo_cols = [
+        {'key': 'pipeline_amount',    'label': 'Pipeline',      'format': 'currency'},
+        {'key': 'weighted_pipeline',  'label': 'Weighted',      'format': 'currency'},
+        {'key': 'opportunity_count',  'label': 'Opportunities', 'format': 'number'},
+    ]
+    if isinstance(_firmo, dict) and any(_firmo.get(k) for k in ('by_industry', 'by_company_size', 'by_revenue_band')):
+        _add_table(out, 'Pipeline by Industry', '🏭',
+                   _safe_arr(_firmo.get('by_industry')),
+                   [{'key': 'bucket', 'label': 'Industry'}] + _firmo_cols,
+                   skip_if_empty=_narrow)
+        _add_table(out, 'Pipeline by Company Size', '👔',
+                   _safe_arr(_firmo.get('by_company_size')),
+                   [{'key': 'bucket', 'label': 'Employees'}] + _firmo_cols,
+                   skip_if_empty=_narrow)
+        _add_table(out, 'Pipeline by Revenue Band', '💵',
+                   _safe_arr(_firmo.get('by_revenue_band')),
+                   [{'key': 'bucket', 'label': 'Revenue'}] + _firmo_cols,
+                   skip_if_empty=_narrow)
+
+    # ── Forecast Calibration (predicted-vs-actual by month) ───────────────────
+    # Always surface for forecast-flavoured reports + the full dashboard, even
+    # when empty (shows the "accumulating" explainer), since other report types
+    # legitimately omit it.
+    _calib = _safe_arr(dashboard_data.get('forecast_calibration'))
+    _calib_relevant = ('forecast_calibration' in dashboard_data) and (
+        not _narrow or _report_type in ('forecast_summary', 'forecast_calibration', 'forecast_accuracy'))
+    if _calib:
+        _add_table(out, 'Forecast Calibration (predicted vs actual)', '🎯', _calib, [
+                       {'key': 'period_key',        'label': 'Month'},
+                       {'key': 'forecast_weighted', 'label': 'Forecast', 'format': 'currency'},
+                       {'key': 'actual_won',        'label': 'Actual',   'format': 'currency'},
+                       {'key': 'variance',          'label': 'Variance', 'format': 'currency'},
+                       {'key': 'attainment_pct',    'label': 'Attainment %'},
+                   ])
+    elif _calib_relevant:
+        out.append('**🎯 Forecast Calibration (predicted vs actual)**')
+        out.append('')
+        out.append('_History is still accumulating — the monthly snapshot job populates '
+                   'predicted-vs-actual once a month with a pre-period snapshot completes._')
+        out.append('')
+
     out.append('---')
     out.append('Need more details? Try filtering by owner, account, or product!')
 
     # ── Meta record counts ────────────────────────────────────────────────────
     meta = {
-        'generatedAt': datetime.utcnow().isoformat(),
+        'generatedAt': datetime.now().isoformat(),
         'recordCounts': {
             'forecast_summary':      len(_safe_arr(dashboard_data.get('forecast_summary'))),
             'owner_breakdown':       len(_safe_arr(dashboard_data.get('owner_breakdown'))),

@@ -352,6 +352,22 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
         r'(?:me\s+)?(?:the\s+)?'
     )
 
+    # orders by value/total — "top orders", "largest/biggest orders",
+    # "highest value orders", "orders by value/total/amount". Sorts by the
+    # order total DESC so the biggest-revenue orders lead (used by the
+    # orchestrator Revenue Snapshot; also a handy ad-hoc query). The verb is
+    # OPTIONAL here so bare phrasings ("largest orders") also match.
+    _value_prefix = (r'(?:please\s+)?(?:can\s+you\s+|could\s+you\s+)?'
+                     r'(?:(?:show|list|get|find|display|give|fetch)\s+)?'
+                     r'(?:in\s+)?(?:me\s+)?(?:the\s+)?')
+    if re.match(rf'^{_value_prefix}(?:top|largest|biggest|highest(?:[ -]value)?|high[ -]value)\s+orders?\b', msg, re.IGNORECASE) \
+       or re.match(rf'^{_value_prefix}(?:all\s+(?:the\s+)?)?orders?\s+by\s+(?:value|total|amount|size|highest(?:\s+value)?)\b', msg, re.IGNORECASE):
+        return _routed({
+            'mode': 'list', 'includeDeleted': False,
+            'sortField': 'total_amount', 'sortOrder': 'DESC',
+            'pageSize': 50, 'pageNumber': 1,
+        })
+
     # show all orders (or any phrasing without a status filter)
     if re.match(rf'^{_verb_prefix}all\s+(?:the\s+)?orders?\b', msg, re.IGNORECASE) \
        or re.match(rf'^{_verb_prefix}orders?\s*$', msg, re.IGNORECASE):

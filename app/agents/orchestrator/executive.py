@@ -68,13 +68,19 @@ def _fmt_forecast(p: dict) -> List[str]:
 
 
 def _fmt_by_owner(p: dict) -> List[str]:
-    rows = (p.get('by_owner') or [])[:10]
+    # Rank by weighted forecast DESC — the probability-weighted pipeline each rep
+    # is accountable to deliver is the actionable metric (Open Value is gross
+    # volume). Mirrors the analytics Owner Breakdown, which leads on Forecast.
+    rows = sorted((p.get('by_owner') or []),
+                  key=lambda r: float(r.get('weighted') or 0), reverse=True)[:10]
     out = ['#### 👥 Pipeline & Performance by Rep',
-           '| Rep | Open | Open Value | Weighted | Won Value | Win Rate | Avg Cycle |',
+           '_Ranked by weighted forecast — the probability-weighted pipeline each rep is accountable to deliver._',
+           '',
+           '| Rep | Weighted Forecast ▼ | Open | Open Value | Won Value | Win Rate | Avg Cycle |',
            '| --- | --- | --- | --- | --- | --- | --- |']
     for r in rows:
-        out.append(f"| {r.get('owner')} | {r.get('open_count')} | {_money(r.get('open_value'))} "
-                   f"| {_money(r.get('weighted'))} | {_money(r.get('won_value'))} "
+        out.append(f"| {r.get('owner')} | {_money(r.get('weighted'))} | {r.get('open_count')} "
+                   f"| {_money(r.get('open_value'))} | {_money(r.get('won_value'))} "
                    f"| {r.get('win_rate_pct') or '—'}% | {r.get('avg_cycle_days') or '—'}d |")
     out.append('')
     return out
@@ -309,6 +315,39 @@ def _fmt_industry_concentration(p: dict) -> List[str]:
     out = ['#### 🏭 Industry Concentration (trailing 12 months)',
            '| Industry | Revenue | % of Total |', '| --- | --- | --- |']
     out += [f"| {r.get('industry')} | {_money(r.get('revenue'))} | {r.get('pct')}% |" for r in rows]
+    out.append('')
+    return out
+
+
+def _fmt_forecast_calibration(p: dict) -> List[str]:
+    """Predicted-vs-actual by month, from the monthly forecast snapshots
+    (fn_forecast_accuracy). Sparse until pre-period snapshots accrue."""
+    rows = p.get('forecast_calibration') or []
+    out = ['#### 🎯 Forecast Calibration (predicted vs actual)']
+    if not rows:
+        out += ['Calibration history is still accumulating — a forecast snapshot is captured '
+                'monthly, and the first predicted-vs-actual comparison appears once a month '
+                'that had a pre-period snapshot completes.', '']
+        return out
+    out += ['| Month | Forecast | Actual | Variance | Attainment |',
+            '| --- | --- | --- | --- | --- |']
+    t_f = t_a = 0.0
+    for r in rows:
+        fw = float(r.get('forecast_weighted') or 0)
+        ac = float(r.get('actual_won') or 0)
+        var = float(r.get('variance') or 0)
+        t_f += fw
+        t_a += ac
+        att = r.get('attainment_pct')
+        att_s = f"{float(att):.1f}%" if att is not None else '—'
+        arrow = '▲' if var >= 0 else '▼'
+        label = (f"{r.get('period_key')} (in progress)"
+                 if r.get('is_current_month') else r.get('period_key'))
+        out.append(f"| {label} | {_money(fw)} | {_money(ac)} | {arrow} {_money(abs(var))} | {att_s} |")
+    tot_arrow = '▲' if (t_a - t_f) >= 0 else '▼'
+    tot_att = f"{(t_a / t_f * 100):.1f}%" if t_f > 0 else '—'
+    out.append(f"| **Total** | {_money(t_f)} | {_money(t_a)} | "
+               f"{tot_arrow} {_money(abs(t_a - t_f))} | {tot_att} |")
     out.append('')
     return out
 
@@ -653,6 +692,7 @@ _DRILL = {
     'recurring_split': ('Order analytics', 'order-mgmt.html'),
     'monthly_trend':   ('Order analytics', 'order-mgmt.html'),
     'forecast':        ('Opportunity pipeline', 'opportunity-mgmt.html'),
+    'forecast_calibration': ('Opportunity forecast', 'opportunity-mgmt.html'),
     'top_deals':       ('Opportunity pipeline', 'opportunity-mgmt.html'),
     'at_risk_deals':   ('Opportunity pipeline', 'opportunity-mgmt.html'),
     'aging_deals':     ('Opportunity pipeline', 'opportunity-mgmt.html'),
@@ -724,6 +764,7 @@ SECTION_FMT = {
     'contact_engagement':   _fmt_contact_engagement,
     'discount_by_account': _fmt_discount_by_account,
     'industry_concentration': _fmt_industry_concentration,
+    'forecast_calibration': _fmt_forecast_calibration,
     'low_engagement_accounts': _fmt_low_engagement,
     'churn_risk':      _fmt_churn,
     'ar_summary':      _fmt_ar,
@@ -774,11 +815,12 @@ EXEC_QA: List[Tuple[str, List[str], Optional[str]]] = [
      ['concentration'],
      'Contract documents and amendment terms are not stored in this CRM; '
      'revenue concentration below is the contract-risk proxy.'),
-    (r'forecast\s+accuracy|forecast\s+bias',
-     ['forecast', 'by_owner'],
-     'Only one forecast snapshot exists so far, so 3-quarter accuracy/bias '
-     'is not yet computable. Current weighted-vs-commit and per-rep numbers below; '
-     'accuracy tracking will accumulate as snapshots are taken.'),
+    (r'forecast\s+(accuracy|bias|calibration)|forecast\s+(?:vs\.?|versus)\s+actual'
+     r'|predicted\s+(?:vs\.?|versus)\s+actual|\bcalibrat\w+|how\s+accurate\w*\b[^.]*\bforecast',
+     ['forecast_calibration', 'forecast', 'by_owner'],
+     'Forecast calibration compares the snapshot taken before each month against what '
+     'actually closed; history accrues from the monthly snapshot job, so recent months '
+     'may be sparse. Current weighted-vs-commit and per-rep numbers are shown alongside.'),
     (r'strategic\s+initiative|partnership',
      ['lead_sources', 'monthly_trend'],
      'Strategic initiatives are not tracked as CRM objects; lead-source and '

@@ -214,7 +214,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
         msg  = metadata.get('message', 'Unknown error')
         return (
             f"[ERROR] ERROR REPORT\n"
-            f"Date: {_fmt_dt(datetime.utcnow().isoformat())}\n"
+            f"Date: {_fmt_dt(datetime.now().isoformat())}\n"
             f"Error Code: {code}\n"
             f"Error Message: {msg}\n\n"
             f"Please try again or contact support."

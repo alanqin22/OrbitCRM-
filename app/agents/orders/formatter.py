@@ -351,8 +351,10 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                 'sortBy':       metadata.get('sort_by', 'order_date'),
                 'sortOrder':    metadata.get('sort_order', 'DESC'),
             }
-            out.append(f"**Page:** {pg['page']} of {pg['totalPages']} | **Total:** {pg['totalRecords']} orders")
-            out.append(f"**Sort:** {pg['sortBy']} {pg['sortOrder']}")
+            # Use '·' (not '|') as the separator: any line containing a pipe is
+            # parsed as a table row by the orchestrator card renderer, which would
+            # turn this one-liner into a stray phantom table (extra vertical space).
+            out.append(f"**Page:** {pg['page']} of {pg['totalPages']} · **Total:** {pg['totalRecords']} orders")
             search_term = (params.get('search') or '').strip()
             if search_term:
                 out.append(f'**Search:** "{search_term}"')

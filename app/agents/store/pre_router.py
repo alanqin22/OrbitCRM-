@@ -102,14 +102,21 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         items = sd.get("items") or []
         if not items:
             return unrecognised("checkout has no items")
-        account_id = sd.get("account_id")
-        if not account_id:
-            return unrecognised("checkout missing account_id")
+        account_id = sd.get("account_id") or None
+        contact_id = sd.get("contact_id") or None
+        email      = (sd.get("email") or "").strip() or None
+        # We need SOME way to identify the buyer. account_id is ideal, but a
+        # signed-in session may only carry the email (e.g. a converted lead whose
+        # session didn't persist the account/contact IDs) — the checkout node
+        # resolves account_id/contact_id from contact_id or email when missing.
+        if not account_id and not contact_id and not email:
+            return unrecognised("checkout missing account_id / contact_id / email")
         return routed({
             "sp":         "checkout",       # special marker — sql_builder handles
             "mode":       "checkout",
             "accountId":  account_id,
-            "contactId":  sd.get("contact_id") or None,
+            "contactId":  contact_id,
+            "email":      email,
             "createdBy":  sd.get("created_by") or None,
             "notes":      sd.get("notes") or None,
             "items":      items,            # [{product_id, quantity}]

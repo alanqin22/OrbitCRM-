@@ -146,6 +146,62 @@ def _parse_response(db_rows: List[Dict]) -> Dict:
 from app.core.text_clean import clean_obj
 
 
+def _build_account_focus(summary: dict, focus: str) -> str:
+    """Single-topic firmographics report for accounts (rendered as a card)."""
+    now = _fmt_dt(datetime.now().isoformat())
+
+    def _rows(key):
+        v = summary.get(key) or []
+        if isinstance(v, list):
+            return [{'name': (r.get('name') or r.get('industry') or 'Unknown'),
+                     'count': r.get('count', 0)} for r in v]
+        if isinstance(v, dict):
+            return [{'name': k, 'count': c} for k, c in v.items()]
+        return []
+
+    def _table(seg, rows, suffix=''):
+        out = [f'| {seg} | Accounts |', '|--------|------:|']
+        for r in rows:
+            out.append(f"| {r['name']} | **{r['count']}{suffix}** |")
+        return out
+
+    total = sum(r['count'] for r in _rows('by_industry'))
+    out: List[str] = []
+
+    if focus == 'employee_size':
+        rows = _rows('by_employee_band')
+        smb_bands = {'1-10', '11-50', '51-200'}
+        smb = sum(r['count'] for r in rows if r['name'] in smb_bands)
+        ent = sum(r['count'] for r in rows if r['name'] not in smb_bands and r['name'] != 'Unknown')
+        out += ['### 👥 Enterprise vs SMB Account Mix', f'**Time:** {now}', '',
+                f"**Verdict:** **{ent}** enterprise (201+ employees) vs **{smb}** SMB (1–200).", '']
+        out += _table('Company Size', rows)
+    elif focus == 'revenue':
+        rows = _rows('by_revenue_band')
+        top = max(rows, key=lambda r: r['count']) if rows else None
+        out += ['### 💰 Account Revenue-Band Distribution', f'**Time:** {now}', '']
+        if top:
+            out += [f"**Verdict:** Most accounts sit in the **{top['name']}** revenue band "
+                    f"(**{top['count']}** accounts).", '']
+        out += _table('Revenue Band', rows)
+    elif focus == 'enrichment':
+        enriched = summary.get('enriched_count') or 0
+        pct = round(100.0 * enriched / total, 1) if total else 0
+        out += ['### 🌐 Account Firmographics Enrichment Coverage', f'**Time:** {now}', '',
+                f"**Verdict:** **{enriched}** of **{total}** accounts enriched (**{pct}%** coverage).", '']
+        out += _table('Industry', _rows('by_industry'))
+    else:  # industry
+        rows = _rows('by_industry')
+        top = rows[0] if rows else None
+        out += ['### 🌐 Account Industry Mix', f'**Time:** {now}', '']
+        if top:
+            out += [f"**Verdict:** Accounts span **{len(rows)}** industries — the largest is "
+                    f"**{top['name']}** (**{top['count']}** accounts).", '']
+        out += _table('Industry', rows)
+
+    return '\n'.join(out)
+
+
 def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
     """
     Format sp_accounts DB rows into a human-readable / machine-parseable
@@ -167,7 +223,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
         msg  = metadata.get('message', 'Unknown error occurred')
         return (
             f"[ERROR] ERROR REPORT\n"
-            f"Date: {_fmt_dt(datetime.utcnow().isoformat())}\n"
+            f"Date: {_fmt_dt(datetime.now().isoformat())}\n"
             f"Error Code: {code}\n"
             f"Error Message: {msg}\n\n"
             f"Please try again or contact support."
@@ -176,6 +232,10 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
     # ── Executive answer — pre-formatted by the shared executive layer ───────
     if mode == 'executive_question':
         return response.get('exec_markdown') or 'No executive data available.'
+
+    # ── Firmographics focused report (account exec-insight chips) ────────────
+    if mode == 'summary' and params.get('focus'):
+        return _build_account_focus(response.get('summary') or {}, params['focus'])
 
     # ── UI-only marker modes — frontend opens the inline form ────────────────
     _ui_form_messages = {
@@ -219,9 +279,16 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
                 created  = _fmt_dt(a.get('created_at'))
                 updated  = _fmt_dt(a.get('updated_at'))
 
+                emp_band = a.get('employee_band')
+                rev_band = a.get('revenue_band')
+
                 lines.append(f"**{idx}. {name}** [{acc_type}]")
                 lines.append(f"   ID: {acc_id}")
                 lines.append(f"   Industry: {industry}")
+                if emp_band:
+                    lines.append(f"   Company Size: {emp_band} employees")
+                if rev_band:
+                    lines.append(f"   Revenue: {rev_band}")
                 lines.append(f"   Location: {location}")
                 lines.append(f"   Email: {email}")
                 lines.append(f"   Phone: {phone}")
@@ -273,6 +340,20 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
             elif isinstance(by_industry, dict):
                 for ind, c in by_industry.items():
                     lines.append(f"   {ind or 'N/A'}: {c}")
+            lines.append('')
+
+        by_emp = summary.get('by_employee_band')
+        if by_emp:
+            lines.append('**By Company Size**')
+            for item in (by_emp if isinstance(by_emp, list) else [{'name': k, 'count': v} for k, v in by_emp.items()]):
+                lines.append(f"   {item.get('name') or 'Unknown'}: {item.get('count', 0)}")
+            lines.append('')
+
+        by_rev = summary.get('by_revenue_band')
+        if by_rev:
+            lines.append('**By Revenue**')
+            for item in (by_rev if isinstance(by_rev, list) else [{'name': k, 'count': v} for k, v in by_rev.items()]):
+                lines.append(f"   {item.get('name') or 'Unknown'}: {item.get('count', 0)}")
             lines.append('')
 
         by_status = summary.get('by_status', {})

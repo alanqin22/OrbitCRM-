@@ -58,6 +58,11 @@ class AccountChatInput(BaseModel):
     phone:    Optional[str] = None
     email:    Optional[str] = None
     website:  Optional[str] = None
+    employeeBand: Optional[str]   = None
+    revenueBand:  Optional[str]   = None
+    revenueMin:   Optional[float] = None
+    focus:        Optional[str]   = None
+    sort:         Optional[str]   = None
     status:   Optional[str] = None
 
     # ── Address fields (JSONB) ────────────────────────────────────────────────

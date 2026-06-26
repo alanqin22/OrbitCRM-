@@ -42,6 +42,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import socket
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -663,6 +664,322 @@ async def handle_activity_overdue_flagged(event: Dict[str, Any]) -> Dict[str, An
 
 
 HANDLERS["activity.overdue_flagged"] = handle_activity_overdue_flagged
+
+
+# ============================================================================
+# HANDLER #4  —  lead.created  →  Leads agent enriches via an EXTERNAL source
+# ============================================================================
+# The project's first OUTWARD function call (IBM: "agents use external tools —
+# APIs, data sources, web"). A new lead is auto-enriched with firmographics from
+# an external data source (stub by default — app/core/enrichment.py) and the
+# result is posted to the shared blackboard so other agents / account 360s can use
+# it. Non-disruptive: writes a blackboard note, never the lead row. Idempotent.
+
+def _load_lead_basic_sync(lead_id: str) -> Optional[Dict[str, Any]]:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT first_name, last_name, company, email FROM leads WHERE lead_id = %s",
+                (lead_id,))
+            row = cur.fetchone()
+            return dict(zip([d[0] for d in cur.description], row)) if row else None
+    finally:
+        conn.close()
+
+
+async def handle_lead_created(event: Dict[str, Any]) -> Dict[str, Any]:
+    """LeadAgent's reaction to a new lead: fetch external firmographics and post
+    them to the shared blackboard."""
+    lead_id = str(event["entity_uuid"])
+    ctx = await asyncio.to_thread(_load_lead_basic_sync, lead_id)
+    if not ctx:
+        return {"status": "skipped", "reason": "lead not found"}
+    if not (ctx.get("company") or ctx.get("email")):
+        return {"status": "skipped", "reason": "no company/email to enrich"}
+
+    from app.core import blackboard
+    if await asyncio.to_thread(blackboard.read, "lead", lead_id, "enrichment"):
+        return {"status": "skipped", "reason": "already enriched"}
+
+    from app.core import enrichment
+    data = await asyncio.to_thread(
+        enrichment.enrich_company, ctx.get("company"), ctx.get("email"), None)
+    if not data.get("matched"):
+        return {"status": "skipped", "reason": "no enrichment match"}
+
+    # Fill the lead's OWN fields (gap-fill — never overwrites). Best-effort: if the
+    # enrichment columns aren't migrated yet, log and still record on the blackboard.
+    filled = 0
+    try:
+        filled = await asyncio.to_thread(enrichment.apply_to_lead, lead_id, data)
+    except Exception as exc:
+        logger.warning(f"[agent_bus] lead field-fill skipped ({exc}); blackboard only")
+
+    note = (f"{data.get('industry')} · {data.get('employee_band')} employees · "
+            f"{data.get('revenue_band')} · {data.get('hq_location')}")
+    await asyncio.to_thread(
+        blackboard.post, "lead", lead_id, "leads", "enrichment", note, data,
+        float(data.get("confidence") or 0.8), "info", 168)
+
+    return {"status": "ok", "action": "enriched", "company": ctx.get("company"),
+            "industry": data.get("industry"), "fields_filled": bool(filled),
+            "source": data.get("source"), "handoff": "blackboard:lead/enrichment"}
+
+
+HANDLERS["lead.created"] = handle_lead_created
+
+
+# ── Activity ↔ Accounting/Order: real-time milestone-record completion ───────
+def _complete_milestone_sync(rel_type: str, rel_id: str) -> Dict[str, Any]:
+    """Close the auto-generated milestone-record task(s) for ONE just-settled
+    entity, via the SHARED SP — so the rule is identical to the nightly sweep, no
+    duplicated logic. The SP re-checks the entity is actually settled and is
+    idempotent, so a redelivered event or a task already closed by the sweep is a
+    safe no-op."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT fn_complete_settled_milestone_activities(NULL, true, %s, %s::uuid)",
+                (rel_type, rel_id),
+            )
+            res = (cur.fetchone() or [None])[0] or {}
+        conn.commit()
+        return res
+    finally:
+        conn.close()
+
+
+async def handle_milestone_settled(event: Dict[str, Any]) -> Dict[str, Any]:
+    """ActivityAgent's reaction when an invoice is fully paid (`invoice_paid`) or
+    an order advances (`order.status_changed`): immediately close that entity's
+    milestone-record task — sub-day latency instead of waiting for the 22:12
+    nightly sweep. Scoped to the one event entity (cheap), shares the sweep's
+    completion rule, idempotent + actionability re-checked inside the SP. The
+    nightly sweep remains the backstop for anything missed while the bus is off."""
+    et = event["event_type"]
+    rel_type = "invoice" if et == "invoice_paid" else "order"
+    rel_id = str(event["entity_uuid"])
+    res = await asyncio.to_thread(_complete_milestone_sync, rel_type, rel_id)
+    done = int((res or {}).get("completed") or 0)
+    return {
+        "status": "ok" if done else "skipped",
+        "reason": None if done else "no open milestone record (already closed / not settled)",
+        "entity": f"{rel_type}:{rel_id}",
+        "completed": done,
+    }
+
+
+# invoice_paid → invoice milestone ("Payment complete … paid in full").
+HANDLERS["invoice_paid"] = handle_milestone_settled
+# order.status_changed is handled by handle_order_status_changed below (which also
+# closes the order milestone via handle_milestone_settled).
+
+
+# ── Order → Email: buyer order-lifecycle emails (confirmation + shipped) ──────
+# Customers who SIGN UP with a real address (OTP-verified → contacts.is_email_verified)
+# get genuine order emails; the synthetic seed contacts (example.com, demo domains,
+# is_email_verified=false) never do — they stay draft+log. Real send only when
+# AGENT_BUS_AUTOSEND=1 AND the recipient passes _is_real_email().
+
+# Obvious placeholder / non-deliverable domains used by the seed data and RFC docs.
+_PLACEHOLDER_EMAIL_DOMAINS = {
+    "example.com", "examples.com", "example.org", "example.net",
+    "test.com", "test", "localhost", "invalid", "none.com",
+}
+
+def _is_real_email(addr: Optional[str], is_verified: bool) -> bool:
+    """A deliverable, opted-in recipient: verified through the OTP flow AND not an
+    obvious placeholder/seed domain. Seed contacts are is_email_verified=false, so
+    only addresses a human actually confirmed (like a real home-store signup) pass."""
+    if not addr or not is_verified:
+        return False
+    addr = addr.strip().lower()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", addr):
+        return False
+    domain = addr.rsplit("@", 1)[-1]
+    if domain in _PLACEHOLDER_EMAIL_DOMAINS:
+        return False
+    if any(domain.endswith(sfx) for sfx in (".invalid", ".test", ".example", ".local")):
+        return False
+    return True
+
+
+def _load_order_email_ctx_sync(order_id: str) -> Optional[Dict[str, Any]]:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT o.order_number, o.status, o.total_amount,
+                          o.account_id, o.contact_id, c.email,
+                          NULLIF(TRIM(COALESCE(c.first_name,'') || ' ' ||
+                                      COALESCE(c.last_name,'')), '') AS contact_name,
+                          -- "Verified" = the order's own contact is verified, OR the
+                          -- buyer's email is verified on ANY contact row (fallback for
+                          -- when checkout linked a duplicate/seed contact that shares
+                          -- the real, signed-up email).
+                          (COALESCE(c.is_email_verified, false)
+                           OR EXISTS (
+                                SELECT 1 FROM contacts c2
+                                WHERE c.email IS NOT NULL
+                                  AND lower(c2.email) = lower(c.email)
+                                  AND c2.is_email_verified
+                           )) AS is_email_verified
+                   FROM orders o
+                   LEFT JOIN contacts c ON c.contact_id = o.contact_id
+                   WHERE o.order_id = %s""",
+                (order_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            return {
+                "order_id": order_id, "order_number": row[0], "status": row[1],
+                "total_amount": float(row[2] or 0),
+                "account_id": row[3], "contact_id": row[4],
+                "contact_email": row[5], "contact_name": row[6] or "there",
+                "is_email_verified": bool(row[7]),
+            }
+    finally:
+        conn.close()
+
+
+def _order_email_already_sent_sync(order_id: str, kind: str) -> bool:
+    """Idempotency: have we already logged this order-email kind for this order?"""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT 1 FROM activities
+                   WHERE related_type='order' AND related_id=%s
+                     AND channel='email' AND subject ILIKE %s LIMIT 1""",
+                (order_id, f"Order {kind} email%"),
+            )
+            return cur.fetchone() is not None
+    finally:
+        conn.close()
+
+
+def _compose_order_email(ctx: Dict[str, Any], kind: str):
+    name = ctx["contact_name"]
+    num = ctx["order_number"]
+    total = f"${ctx['total_amount']:,.2f}"
+    if kind == "confirmation":
+        subject = f"Order confirmation — {num}"
+        body_text = (f"Hi {name},\n\nThanks for your order! We've received {num} "
+                     f"(total {total}) and it's now being processed. We'll email you "
+                     f"again as soon as it ships.\n\n— Conscestra CRM")
+        intro = "Thanks for your order! We've received it and it's now being processed."
+        tail = "We'll email you again as soon as it ships."
+    else:  # shipped
+        subject = f"Your order has shipped — {num}"
+        body_text = (f"Hi {name},\n\nGood news — your order {num} (total {total}) has "
+                     f"shipped and is on its way.\n\n— Conscestra CRM")
+        intro = "Good news — your order has shipped and is on its way."
+        tail = "Thank you for shopping with us."
+    body_html = (
+        f'<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">'
+        f'<h2 style="color:#0d9488;margin-bottom:8px">Conscestra CRM</h2>'
+        f'<p>Hi {name},</p><p>{intro}</p>'
+        f'<div style="background:#f0fdfa;border-radius:8px;padding:16px;margin:16px 0">'
+        f'<strong>Order:</strong> {num}<br><strong>Total:</strong> {total}</div>'
+        f'<p style="color:#6b7280;font-size:0.875rem">{tail}</p></div>'
+    )
+    return subject, body_text, body_html
+
+
+def _record_order_email_sync(ctx: Dict[str, Any], kind: str, body_text: str, sent: bool) -> None:
+    """Audit the order-email action as a COMPLETED activity (never an open task —
+    it's a record of a done send/draft, so it stays off the overdue worklist)."""
+    verb = "sent" if sent else "drafted"
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO activities
+                     (type, status, subject, description, due_at, completed_at,
+                      related_type, related_id, account_id, contact_id, channel,
+                      outcome, created_at, updated_at)
+                   VALUES ('task','completed', %(subj)s, %(desc)s, now(), now(),
+                           'order', %(oid)s, %(acct)s, %(ct)s, 'email',
+                           %(out)s, now(), now())""",
+                {"subj": f"Order {kind} email {verb} – {ctx['order_number']}",
+                 "desc": body_text, "oid": ctx["order_id"],
+                 "acct": ctx.get("account_id"), "ct": ctx.get("contact_id"),
+                 "out": f"auto: order {kind} email {verb} to buyer"},
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _send_order_email_sync(ctx: Dict[str, Any], subject: str, body_html: str, body_text: str) -> bool:
+    from app.agents.email.smtp_imap import send_email
+    res = send_email(to=ctx["contact_email"], subject=subject,
+                     body_html=body_html, body_text=body_text)
+    return bool(res.get("success"))
+
+
+async def handle_order_status_changed(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Two reactions to an order status change:
+      1. Close the order's milestone activity (existing behaviour).
+      2. Email the BUYER — an order confirmation when the order is placed
+         (pending/processing) or a shipped notice on dispatch. Real outbound only
+         when AUTOSEND=1 AND the buyer's contact email is verified & deliverable
+         (_is_real_email); otherwise draft + log. Idempotent per (order, kind)."""
+    milestone = await handle_milestone_settled(event)
+
+    order_id = str(event["entity_uuid"])
+    payload = event.get("payload") or {}
+    new_status = (((payload.get("diff") or {}).get("status") or {}).get("new")
+                  or (payload.get("after") or {}).get("status"))
+    kind = ("confirmation" if new_status in ("pending", "processing")
+            else "shipped" if new_status == "shipped" else None)
+    if not kind:
+        return {"status": "ok", "milestone": milestone, "email": "skipped (status not emailable)"}
+
+    ctx = await asyncio.to_thread(_load_order_email_ctx_sync, order_id)
+    if not ctx:
+        return {"status": "skipped", "reason": "order not found", "milestone": milestone}
+
+    # Only real, opted-in customers get an order email (or a draft+log). The
+    # synthetic seed contacts (is_email_verified=false) are skipped entirely — no
+    # log row — so the high-volume generated orders don't flood the activity table.
+    real = _is_real_email(ctx.get("contact_email"), ctx.get("is_email_verified"))
+    if not real:
+        return {"status": "skipped", "milestone": milestone,
+                "reason": "recipient not verified/deliverable", "order": ctx["order_number"]}
+
+    if await asyncio.to_thread(_order_email_already_sent_sync, order_id, kind):
+        return {"status": "skipped", "reason": f"{kind} email already logged",
+                "milestone": milestone}
+
+    subject, body_text, body_html = _compose_order_email(ctx, kind)
+
+    sent = False
+    if AUTOSEND:
+        try:
+            sent = await asyncio.to_thread(
+                _send_order_email_sync, ctx, subject, body_html, body_text)
+        except Exception as exc:  # delivery is best-effort; never fail the event
+            logger.warning(f"[agent_bus] order {kind} email send failed: {exc}")
+
+    await asyncio.to_thread(_record_order_email_sync, ctx, kind, body_text, sent)
+
+    return {
+        "status": "ok",
+        "milestone": milestone,
+        "order": ctx["order_number"],
+        "email_kind": kind,
+        "action": "sent" if sent else "drafted",
+        "recipient_real": real,           # verified + deliverable?
+        "verified": ctx["is_email_verified"],
+        "autosend": AUTOSEND,
+    }
+
+
+HANDLERS["order.status_changed"] = handle_order_status_changed
 
 
 # ============================================================================

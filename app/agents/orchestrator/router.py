@@ -348,6 +348,16 @@ async def orchestrator_chat(req: OrchChatRequest):
         try:
             rows = execute_sp("SELECT sp_orchestrator('executive') AS result")
             pack = (rows[0].get('result') or {}) if rows else {}
+            # Enrich with forecast calibration on demand (kept out of the big
+            # sp_orchestrator pack — sourced from fn_forecast_accuracy instead).
+            if 'forecast_calibration' in sections:
+                try:
+                    cr = execute_sp("SELECT fn_forecast_accuracy(12) AS result")
+                    cal = (cr[0].get('result') or {}) if cr else {}
+                    pack['forecast_calibration'] = ((cal.get('data') or {}).get('periods')) or []
+                except Exception as ce:
+                    logger.error(f'forecast calibration enrich failed: {ce}')
+                    pack['forecast_calibration'] = []
             return JSONResponse({
                 'sessionId': session_id, 'success': True,
                 'mode': 'executive', 'sections': sections,

@@ -188,6 +188,11 @@ def _lead_dict(l: dict) -> dict:
         'province':              l.get('province'),
         'postal_code':           l.get('postal_code'),
         'country':               l.get('country'),
+        'industry':              l.get('industry'),
+        'website':               l.get('website'),
+        'employee_band':         l.get('employee_band'),
+        'revenue_band':          l.get('revenue_band'),
+        'enriched_at':           l.get('enriched_at'),
         'status':                l.get('status'),
         'rating':                l.get('rating'),
         'score':                 l.get('score'),
@@ -243,6 +248,93 @@ def _parse_response(db_rows: List[Dict]) -> Dict:
 from app.core.text_clean import clean_obj
 
 
+def _build_firmographics_focus(pipeline: dict, focus: str) -> str:
+    """Single-topic firmographics report (rendered as a card by the frontend).
+
+    Each Lead-AI 'executive insight' chip maps to one focus so the answers stay
+    distinct instead of all returning the full pipeline dashboard.
+    """
+    now = _fmt_dt(datetime.now().isoformat())
+
+    def _rows(key):
+        v = pipeline.get(key) or []
+        return v if isinstance(v, list) else [{'name': k, 'count': c} for k, c in v.items()]
+
+    def _table(seg_header, val_header, rows, suffix=''):
+        lines = [f'| {seg_header} | {val_header} |', '|--------|------:|']
+        for r in rows:
+            lines.append(f"| {r.get('name') or 'Unknown'} | **{r.get('count', 0)}{suffix}** |")
+        return lines
+
+    total = sum(r.get('count', 0) for r in _rows('by_status'))
+    out: List[str] = []
+
+    if focus == 'industry_score':
+        rows = _rows('by_industry_score')
+        top = rows[0] if rows else None
+        out += [f'### 🎯 Average Lead Score by Industry', f'**Time:** {now}', '']
+        if top:
+            out += [f"**Verdict:** **{top['name']}** has the highest average lead score "
+                    f"(**{top['count']}**) — prioritise outreach there.", '']
+        out += _table('Industry', 'Avg Score', rows)
+
+    elif focus == 'industry_conversion':
+        rows = _rows('by_industry_conversion')
+        top = next((r for r in rows if r.get('count')), None)
+        out += [f'### 🔄 Conversion Rate by Industry', f'**Time:** {now}', '']
+        if top:
+            out += [f"**Verdict:** **{top['name']}** converts best at **{top['count']}%**.", '']
+        out += _table('Industry', 'Conversion %', rows, suffix='%')
+
+    elif focus == 'revenue':
+        rows = _rows('by_revenue_band')
+        top = max(rows, key=lambda r: r.get('count', 0)) if rows else None
+        out += [f'### 💰 Revenue-Band Distribution', f'**Time:** {now}', '']
+        if top:
+            out += [f"**Verdict:** Most leads sit in the **{top['name']}** revenue band "
+                    f"(**{top['count']}** leads).", '']
+        out += _table('Revenue Band', 'Leads', rows)
+
+    elif focus == 'employee_size':
+        rows = _rows('by_employee_band')
+        smb_bands = {'1-10', '11-50', '51-200'}
+        smb = sum(r.get('count', 0) for r in rows if r.get('name') in smb_bands)
+        ent = sum(r.get('count', 0) for r in rows
+                  if r.get('name') not in smb_bands and r.get('name') != 'Unknown')
+        out += [f'### 👥 Enterprise vs SMB Lead Mix', f'**Time:** {now}', '',
+                f"**Verdict:** **{ent}** enterprise (201+ employees) vs **{smb}** SMB (1–200).", '']
+        out += _table('Company Size', 'Leads', rows)
+
+    elif focus == 'size_conversion':
+        rows = _rows('by_employee_band_conversion')
+        top = next((r for r in rows if r.get('count')), None)
+        out += [f'### 🔄 Conversion Rate by Company Size', f'**Time:** {now}', '']
+        if top:
+            out += [f"**Verdict:** The **{top['name']}** employee band converts best "
+                    f"at **{top['count']}%**.", '']
+        out += _table('Company Size', 'Conversion %', rows, suffix='%')
+
+    elif focus == 'enrichment':
+        enriched = pipeline.get('enriched_count') or 0
+        pct = round(100.0 * enriched / total, 1) if total else 0
+        out += [f'### 🌐 Firmographics Enrichment Coverage', f'**Time:** {now}', '',
+                f"**Verdict:** **{enriched}** of **{total}** leads enriched "
+                f"(**{pct}%** coverage).", '']
+        out += _table('Industry', 'Leads', _rows('by_industry'))
+
+    else:  # 'industry' — mix / concentration / whitespace targeting
+        rows = _rows('by_industry')
+        top = rows[0] if rows else None
+        out += [f'### 🌐 Industry Mix', f'**Time:** {now}', '']
+        if top:
+            out += [f"**Verdict:** Leads span **{len(rows)}** industries — the largest is "
+                    f"**{top['name']}** (**{top['count']}** leads). Thin segments are "
+                    f"whitespace worth targeting.", '']
+        out += _table('Industry', 'Leads', rows)
+
+    return '\n'.join(out)
+
+
 def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, Any]:
     """
     Format sp_leads DB rows into the output dict expected by main.py.
@@ -290,7 +382,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             hint = '\n\nPlease fix the input and try again.'
         output = (
             f'### ❌ ERROR\n'
-            f'**Time:** {_fmt_dt(datetime.utcnow().isoformat())}\n'
+            f'**Time:** {_fmt_dt(datetime.now().isoformat())}\n'
             f'**Error Code:** {code}\n'
             f'**Error Message:** {msg}\n'
             f'{hint}'
@@ -393,6 +485,9 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
     elif mode == 'pipeline':
         report_mode = 'pipeline'
         report_data['pipeline'] = response.get('pipeline') or {}
+        if (params or {}).get('focus'):
+            report_mode = 'firmographics_focus'
+            report_data['focus'] = params['focus']
 
     elif mode == 'list_employee':
         report_mode = 'list_employee'
@@ -418,9 +513,23 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
     # OUTPUT BUILDING
     # =========================================================================
 
+    # ── Firmographics focused report — EARLY RETURN ───────────────────────────
+    # A single-topic, Executive-Answer-style report (rendered as a card by the
+    # frontend) instead of the full pipeline dashboard. Keeps each chip distinct.
+    if report_mode == 'firmographics_focus':
+        return {
+            'output':      _build_firmographics_focus(report_data.get('pipeline') or {},
+                                                       report_data.get('focus')),
+            'mode':        'firmographics_focus',
+            'report_mode': 'firmographics_focus',
+            'success':     True,
+            'leads': [], 'lead': None, 'pipeline': None, 'employees': [],
+            'account': None, 'contact': None, 'opportunity': None, 'address': None,
+        }
+
     out: List[str] = []
     out.append(f'### 🎯 {_mode_name(mode)}')
-    out.append(f'**Time:** {_fmt_dt(datetime.utcnow().isoformat())}')
+    out.append(f'**Time:** {_fmt_dt(datetime.now().isoformat())}')
     out.append('')
 
     # ── Lead List ─────────────────────────────────────────────────────────────
@@ -537,6 +646,13 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         city_line  = ', '.join(p for p in city_parts if p)
         if city_line: out.append(f'| **City / Province / Postal** | {city_line} |')
         if lead.get('country'): out.append(f"| **Country** | {lead['country']} |")
+
+        # External enrichment (firmographics) — shown only when present.
+        if lead.get('industry'):      out.append(f"| **Industry** | {lead['industry']} |")
+        if lead.get('website'):       out.append(f"| **Website** | {lead['website']} |")
+        if lead.get('employee_band'): out.append(f"| **Company Size** | {lead['employee_band']} employees |")
+        if lead.get('revenue_band'):  out.append(f"| **Revenue** | {lead['revenue_band']} |")
+        if lead.get('enriched_at'):   out.append(f"| **Enriched** | {_fmt_dt(lead.get('enriched_at'))} |")
 
         out.append(f"| **Status** | {_status_badge(lead.get('status') or '')} |")
         if lead.get('rating'):
@@ -815,7 +931,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         if lead_id_val:
             out.append(f'| **Lead ID** | `{lead_id_val}` |')
         out.append(f'| **Action** | Lead {action} |')
-        out.append(f'| **Timestamp** | {_fmt_dt(datetime.utcnow().isoformat())} |')
+        out.append(f'| **Timestamp** | {_fmt_dt(datetime.now().isoformat())} |')
         out.append('')
         if is_archived:
             out.append('> ℹ️ This lead is no longer visible in standard lists. '
@@ -890,6 +1006,16 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         _render_group('By Status', pipeline.get('by_status'))
         _render_group('By Rating', pipeline.get('by_rating'), _rating_icon)
         _render_group('By Source', pipeline.get('by_source'))
+        _render_group('By Industry', pipeline.get('by_industry'))
+        _render_group('By Company Size', pipeline.get('by_employee_band'))
+        _render_group('By Revenue', pipeline.get('by_revenue_band'))
+        _render_group('Avg Score by Industry', pipeline.get('by_industry_score'))
+        _render_group('Conversion Rate by Industry (%)', pipeline.get('by_industry_conversion'))
+        _render_group('Conversion Rate by Company Size (%)', pipeline.get('by_employee_band_conversion'))
+
+        if pipeline.get('enriched_count') is not None:
+            out.append(f"**Enriched with firmographics:** {pipeline['enriched_count']} leads")
+            out.append('')
 
         if pipeline.get('dedupe_stats'):
             ds = pipeline['dedupe_stats']

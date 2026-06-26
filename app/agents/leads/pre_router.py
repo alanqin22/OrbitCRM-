@@ -105,6 +105,37 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
         logger.info(f'→ routerAction SHORT-CIRCUIT: mode={_params.get("mode")}')
         return {'router_action': True, 'params': _params}
 
+    # ── Firmographics focused insight (Lead AI "executive insight" chips) ─────
+    # Route specific analytical firmographics questions to a single-topic report
+    # (mode=pipeline + focus) so each chip yields a distinct, card-styled answer
+    # instead of all returning the full pipeline dashboard. Imperative segment
+    # filters ("show software leads", "$50M revenue") are NOT caught here — they
+    # lack these analytical keywords and fall through to the filter routes below.
+    _focus = None
+    if re.search(r'\benrich', msg) and re.search(r'how many|percent|coverage|enriched|%', msg):
+        _focus = 'enrichment'
+    elif re.search(r'\bindustr', msg) and re.search(r'\bconver', msg):
+        _focus = 'industry_conversion'
+    elif re.search(r'\bindustr', msg) and re.search(r'\bscore\b|priorit', msg):
+        _focus = 'industry_score'
+    elif (re.search(r'\bcompany[\s-]?size\b', msg) or (re.search(r'\bsize\b', msg) and re.search(r'\bsegment\b', msg))) \
+            and re.search(r'\bconver', msg):
+        _focus = 'size_conversion'
+    elif (re.search(r'\benterprise\b', msg) and re.search(r'\bsmb\b', msg)) \
+            or re.search(r'\bcompany[\s-]?size\b', msg) \
+            or (re.search(r'\bsize\b', msg) and re.search(r'\bmix\b|\bsegment\b|\benterprise\b|\bsmb\b', msg)):
+        _focus = 'employee_size'
+    elif re.search(r'\brevenue\b', msg) \
+            and re.search(r'distribut|\bband\b|\bmix\b|\bshare\b|\blargest\b|breakdown', msg) \
+            and '$' not in msg:
+        _focus = 'revenue'
+    elif re.search(r'\bindustr', msg) \
+            and re.search(r'concentrat|\bmix\b|\bmost\b|underrepresent|target|priorit|spread|breakdown|by industr', msg):
+        _focus = 'industry'
+    if _focus:
+        logger.info(f'[firmographics] focus={_focus}')
+        return _routed({'mode': 'pipeline', 'focus': _focus})
+
     # ── Executive questions (CEO / CFO / VP bank) ─────────────────────────────
     # Interrogative phrasings route to the shared executive Q&A layer with the
     # decision-grade format. Imperative commands ("Show hot leads", "Show
@@ -145,6 +176,10 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
             'province':   _val(chat_input.get('province')),
             'postalCode': _val(chat_input.get('postalCode')),
             'country':    _val(chat_input.get('country')),
+            'industry':     _val(chat_input.get('industry')),
+            'employeeBand': _val(chat_input.get('employeeBand')),
+            'revenueBand':  _val(chat_input.get('revenueBand')),
+            'revenueMin':   _val(chat_input.get('revenueMin')),
         })
 
     # ── "get lead:" ──────────────────────────────────────────────────────────
@@ -190,6 +225,10 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
             'province':     _val(chat_input.get('province')),
             'postalCode':   _val(chat_input.get('postalCode')),
             'country':      _val(chat_input.get('country')),
+            'industry':     _val(chat_input.get('industry')),
+            'website':      _val(chat_input.get('website')),
+            'employeeBand': _val(chat_input.get('employeeBand')),
+            'revenueBand':  _val(chat_input.get('revenueBand')),
             'ownerId':      _val(chat_input.get('ownerId')),
             'createdBy':    _val(chat_input.get('createdBy')),
         })
@@ -229,6 +268,10 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
             'province':     _val(chat_input.get('province')),
             'postalCode':   _val(chat_input.get('postalCode')),
             'country':      _val(chat_input.get('country')),
+            'industry':     _val(chat_input.get('industry')),
+            'website':      _val(chat_input.get('website')),
+            'employeeBand': _val(chat_input.get('employeeBand')),
+            'revenueBand':  _val(chat_input.get('revenueBand')),
             'ownerId':      _val(chat_input.get('ownerId')),
             'updatedBy':    _val(chat_input.get('updatedBy')),
         })
@@ -365,6 +408,57 @@ def route_request(body: dict, chat_input: dict, session_id: str) -> dict:
                 'mode': 'list', 'source': _src,
                 'pageSize': 50, 'pageNumber': 1,
             })
+
+    # ── NL: industry filter — "show <industry> leads", "leads in <X> industry" ─
+    _KNOWN_INDUSTRIES = {
+        'software': 'Software', 'tech': 'Software', 'technology': 'Software', 'saas': 'Software',
+        'manufacturing': 'Manufacturing', 'industrial': 'Manufacturing',
+        'marketing': 'Marketing', 'advertising': 'Marketing', 'agency': 'Marketing',
+        'creative': 'Marketing', 'digital': 'Marketing',
+        'healthcare': 'Healthcare', 'health': 'Healthcare', 'medical': 'Healthcare',
+        'financial': 'Financial', 'finance': 'Financial', 'fintech': 'Financial', 'banking': 'Financial',
+        'retail': 'Retail', 'consulting': 'Consulting', 'construction': 'Construction',
+        'energy': 'Energy', 'utilities': 'Energy', 'utility': 'Energy',
+        'food': 'Food', 'beverage': 'Food', 'hospitality': 'Food',
+        'logistics': 'Logistics', 'transportation': 'Logistics', 'transport': 'Logistics',
+        'real estate': 'Real Estate', 'property': 'Real Estate',
+        'education': 'Education', 'legal': 'Legal', 'law': 'Legal',
+        'professional services': 'Professional Services',
+    }
+    _ind_m = re.search(
+        r'\b(?:in|from|within)\s+(?:the\s+)?([a-z][a-z&\s]{1,30}?)\s+(?:industry|sector|vertical|space)\b',
+        msg,
+    )
+    if not _ind_m:
+        _ind_m = re.match(
+            r'^(?:show|list|find|display|get)(?:\s+me)?\s+(?:all\s+)?([a-z][a-z&\s]{1,30}?)\s+leads?\s*$',
+            msg,
+        )
+    if _ind_m:
+        _ind_raw = _ind_m.group(1).strip()
+        _ind = (_KNOWN_INDUSTRIES.get(_ind_raw)
+                or _KNOWN_INDUSTRIES.get(_ind_raw.rstrip('s'))
+                or _KNOWN_INDUSTRIES.get(_ind_raw.replace(' ', '')))
+        if _ind:
+            logger.info(f'[list] industry filter → {_ind}')
+            return _routed({'mode': 'list', 'industry': _ind, 'pageSize': 50, 'pageNumber': 1})
+
+    # ── NL: company size (employee band) — "leads with 51-200 employees" ─────
+    _emp_m = re.search(r'(\d{1,5})\s*[-–]\s*(\d{1,5})\s*(?:employees|emp\b|staff|people|headcount)', msg)
+    if _emp_m:
+        return _routed({'mode': 'list', 'employeeBand': f'{_emp_m.group(1)}-{_emp_m.group(2)}',
+                        'pageSize': 50, 'pageNumber': 1})
+
+    # ── NL: revenue floor — "leads at $50M+ revenue" (>= $50M, not the band that
+    #    merely contains "$50M" — '$10M-$50M' must NOT match a "$50M+" query) ───
+    _rev_m = re.search(r'\$\s*(\d{1,4})\s*([mb])\b', msg)
+    if _rev_m and re.search(r'\brevenue\b', msg):
+        _amt = int(_rev_m.group(1)) * (1000 if _rev_m.group(2).lower() == 'b' else 1)
+        return _routed({'mode': 'list', 'revenueMin': _amt, 'pageSize': 50, 'pageNumber': 1})
+
+    # ── NL: "leads with a website (on file)" — has-website filter ────────────
+    if re.search(r'\b(?:with|has|have|having)\b.*\bwebsite\b', msg) and re.search(r'\bleads?\b', msg):
+        return _routed({'mode': 'list', 'search': 'https', 'pageSize': 50, 'pageNumber': 1})
 
     # ── NL: "show leads in <city/province>" — address filter ─────────────────
     _CA_PROV_MAP = {
