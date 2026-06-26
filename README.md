@@ -26,7 +26,7 @@ _Listed in the same order as the launcher page on [agentorc.ca](https://agentorc
 | 📝&nbsp;Activities | _"create task for Bob tomorrow"_ — typeahead Related-Name lookup across every entity |
 | 📊&nbsp;Analytics | KPI dashboards driven by Postgres stored procedures, rendered with Chart.js |
 | 🔔&nbsp;Notifications | Real-time activity stream with unread/read state |
-| 📧&nbsp;Email | Outbound mail + inbox + autonomous inbound auto-reply (SMTP/IMAP + LangGraph) |
+| 📧&nbsp;Email | Outbound mail + inbox + autonomous inbound auto-reply (SMTP/IMAP + LangGraph), plus event-driven order-confirmation / shipped emails to verified customers |
 | 🧭&nbsp;Orchestrator | _"daily briefing"_, _"pipeline health"_, _"company pulse"_ — symphonic workflows that fan out to multiple agents and weave the results into one report, plus a curated executive Q&A bank for CEO/CFO-style questions |
 
 ### Why it's interesting
@@ -34,6 +34,8 @@ _Listed in the same order as the launcher page on [agentorc.ca](https://agentorc
 - **11 conversational AI agents** (Accounts, Contacts, Leads, Opportunities, Orders, Products, Activities, Notifications, Accounting, Analytics, Orchestrator) — each a LangGraph state machine with deterministic pre-routing plus an LLM fallback.
 - **Orchestrator agent** — symphonic multi-agent workflows (Daily Briefing, Pipeline Health, Revenue Snapshot, Weekly Report, Team Activity, New Business, Follow-ups Due, System Alerts, Company Pulse) plus an executive Q&A bank shared with every other agent for interrogative "executive question" phrasings.
 - **4 supporting modules** — Email (SMTP/IMAP + LangGraph), Store (direct-SP catalogue), Auth (direct DB), Voice (Azure Speech token mint), plus a Home-Index KPI dashboard.
+- **Agents that cooperate automatically** — an event-driven cooperation bus lets agents react to each other's work instead of waiting to be asked: a store order makes the Email agent send order-confirmation and shipped notices to the buyer (real SMTP, gated on a **verified, opted-in** address), overdue invoices auto-draft tiered dunning, hot leads auto-schedule outreach, and settled milestones self-complete — all idempotent and safe-by-default (`AGENT_BUS_AUTOSEND=0` keeps it draft-only until you flip it on).
+- **Self-serve signup that actually converts** — a store signup creates a lead and sends an OTP verification email; on verify it **auto-converts to a verified account + contact** (authored by the owning AI agents), carrying the buyer's firmographics and **CASL/GDPR marketing consent** — so checkout then flows straight through with no manual data entry.
 - **Hybrid routing** — common intents (search, list, update, delete) skip the LLM entirely for sub-second response; novel phrasings fall through to GPT-4o-mini.
 - **Voice everywhere** — Azure Speech SDK (Bing-style) primary, Web Speech API fallback, with BFCache-safe cleanup across navigation.
 - **Real analytics, not toys** — invoice-level cost/margin tracking, effective-dated wholesale/retail pricing, AR aging buckets, forecast attainment, data-quality badges, and a DB-level `wholesale ≤ retail` trigger.

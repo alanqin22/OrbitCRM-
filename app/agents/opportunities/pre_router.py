@@ -288,21 +288,59 @@ def _match_nl(message: str) -> Optional[dict]:
     if not _has_uuid and 'product' not in msg and re.search(r'\b(?:update|edit)\b.*\bopportunit', msg):
         return {'mode': 'show_opportunity_update_form'}
 
+    # Single-section focus for the analytical reports — "pipeline by owner",
+    # "forecast by lead source", "win rate by owner", "top accounts", etc. → the
+    # formatter emits only that breakdown instead of the whole dashboard.
+    def _detect_focus(m: str):
+        if re.search(r'\bby\s+stage\b', m):                                return 'by_stage'
+        if re.search(r'\bby\s+(owner|owners|rep|reps|sales\s*rep)\b', m):  return 'by_owner'
+        if re.search(r'\bby\s+(account|accounts|company)\b', m):           return 'by_account'
+        if re.search(r'\bby\s+(lead\s*source|sources?)\b', m):             return 'by_lead_source'
+        if re.search(r'\bby\s+(close\s*)?horizon\b', m):                   return 'by_horizon'
+        if re.search(r'\bby\s+(product|products)\b', m):                   return 'by_product'
+        if re.search(r'\bby\s+month\b', m):                                return 'by_month'
+        if re.search(r'\btop\s+accounts?\b', m):                          return 'top_accounts'
+        if re.search(r'\btop\s+products?\b', m):                          return 'top_products'
+        if re.search(r'\bmargin\s+health\b', m):                          return 'margin_health'
+        return None
+
     # Pipeline / opportunity summary
     if re.search(r'\b(pipeline|sales pipeline)\b', msg) \
             or re.search(r'\bopportunit\w*\s+summary\b', msg) \
             or re.search(r'\bsummary\b.*\bopportunit', msg):
-        return {'mode': 'pipeline'}
+        params = {'mode': 'pipeline'}
+        _f = _detect_focus(msg)
+        if _f:
+            params['focus'] = _f
+        return params
 
     # Win rate / win-loss statistics
     if re.search(r'\bwin.?(rate|loss)\b', msg) or re.search(r'\bwin\s*/\s*loss\b', msg):
-        return {'mode': 'win_rate'}
+        params = {'mode': 'win_rate'}
+        _f = _detect_focus(msg)
+        if _f:
+            params['focus'] = _f
+        return params
+
+    # Forecast accuracy — predicted-vs-actual by month from the monthly
+    # snapshots. Checked BEFORE the plain 'forecast' route because these phrases
+    # also contain the word "forecast".
+    if re.search(r'\bforecast\s+(accuracy|attainment|variance|error)\b', msg) \
+            or re.search(r'\b(accuracy|attainment|variance)\b.*\bforecast\b', msg) \
+            or re.search(r'\bforecast\b.*\b(vs\.?|versus|against)\b.*\bactual', msg) \
+            or re.search(r'\bactual\w*\b.*\b(vs\.?|versus|against)\b.*\bforecast\b', msg) \
+            or re.search(r'\b(predicted|forecast\w*)\s+(vs\.?|versus)\s+(actual|real)', msg) \
+            or re.search(r'\bhow\s+accurate\b.*\bforecast', msg):
+        return {'mode': 'forecast_accuracy'}
 
     # Forecast — honour an explicit "N month" horizon by passing a close-date
     # window to the SP (which defaults to ±6 months when no dates are given).
     # Without this, "3 / 6 / 12 month forecast" all returned identical output.
-    if re.search(r'\bforecast\b', msg):
+    if re.search(r'\bforecast\b', msg) or re.search(r'\btop\s+accounts?\b.*\bforecast\b|\bforecast\b.*\btop\s+accounts?\b', msg):
         params = {'mode': 'forecast'}
+        _f = _detect_focus(msg)
+        if _f:
+            params['focus'] = _f
         hm = re.search(r'\b(\d{1,2})\s*[-]?\s*month', msg)
         if hm:
             n = max(1, min(int(hm.group(1)), 36))

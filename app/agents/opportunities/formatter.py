@@ -114,9 +114,12 @@ def _health_icon(h: str) -> str:
     }.get(h or '', '🔴')
 
 
-def _sort_desc_by_revenue(arr: list) -> list:
+def _sort_desc_by_margin(arr: list) -> list:
+    # Rank forecast breakdowns by expected profit (forecast margin $) DESC, not
+    # revenue — consistent with the Weighted-Margin ordering of the pipeline.
     def key(r):
-        return (_safe_num(r.get('forecast_revenue')), _safe_num(r.get('historical_revenue')))
+        return (_safe_num(r.get('forecast_margin_dollars')),
+                _safe_num(r.get('historical_margin_dollars')))
     return sorted(arr, key=key, reverse=True)
 
 
@@ -137,6 +140,7 @@ def _mode_name(mode: str) -> str:
         'search_opportunities': 'Opportunity Search',
         'pipeline':             'Sales Pipeline Summary',
         'forecast':             'Revenue Forecast',
+        'forecast_accuracy':    'Forecast Accuracy',
         'win_rate':             'Win Rate Statistics',
         'delete':               'Opportunity Deleted',
     }.get(mode, 'Unknown')
@@ -309,6 +313,10 @@ def _render_breakdown_table(out: list, title: str, data: list, name_col: str, na
     """
     if not data:
         return
+    # Rank by Weighted Margin (expected profit) DESC — the truest measure of
+    # what each owner/account/product/source contributes to the bottom line,
+    # rather than the SP's default Weighted-Amount (revenue) ordering.
+    data = sorted(data, key=lambda r: _safe_num(r.get('weighted_margin_dollars')), reverse=True)
     out.append(f'#### {title}')
     out.append('')
     out.append(_md_header([name_label, 'Count', 'Amount', 'Weighted Amount', 'Margin Dollars', 'Weighted Margin']))
@@ -367,7 +375,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
     if is_error:
         output = (
             f'### ERROR\n'
-            f'**Time:** {_fmt_dt(datetime.utcnow().isoformat())}\n'
+            f'**Time:** {_fmt_dt(datetime.now().isoformat())}\n'
             f'**Error Code:** {meta_code}\n'
             f'**Error Message:** {meta_msg}\n\n'
             f'Please fix the input and try again.'
@@ -530,6 +538,13 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         report_mode = 'get_owners'
         report_data['owners'] = response.get('owners') or []
 
+    elif mode == 'forecast_accuracy':
+        report_mode = 'forecast_accuracy'
+        report_data['forecast_accuracy'] = {
+            'periods':  (response.get('data') or {}).get('periods') or [],
+            'metadata': response.get('metadata') or {},
+        }
+
     # =========================================================================
     # OUTPUT BUILDING
     # =========================================================================
@@ -550,8 +565,16 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         title = f'Top {n} Opportunities {sort_label}'.strip()
 
     out.append(f'### {title}')
-    out.append(f'**Time:** {_fmt_dt(datetime.utcnow().isoformat())}')
+    out.append(f'**Time:** {_fmt_dt(datetime.now().isoformat())}')
     out.append('')
+
+    # Optional single-section focus for the analytical reports (pipeline /
+    # forecast / win_rate). When set, only the matching breakdown is emitted so
+    # a "pipeline by owner" question shows just the owner table, not the whole
+    # dashboard. _show(section) returns True when unfocused or focus matches.
+    _focus = (params or {}).get('focus')
+    def _show(section: str) -> bool:
+        return (not _focus) or (_focus == section)
 
     # ── Opportunity List ──────────────────────────────────────────────────────
     if report_mode == 'opportunity_list':
@@ -577,7 +600,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             out.append(_md_header([
                 'Opportunity', 'Stage', 'Probability', 'Amount', 'Weighted',
                 'Account', 'Contact', 'Lead Source', 'Owner', 'Close Date',
-                'Created At', 'Updated At', 'Opportunity ID',
+                'Created At', 'Updated At', 'Opp ID',
             ]))
             for opp in opportunities:
                 stage = opp.get('stage') or ''
@@ -597,7 +620,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                     _fmt_date(opp.get('close_date')),
                     _fmt_dt(opp.get('created_at')),
                     _fmt_dt(opp.get('updated_at')),
-                    opp.get('opportunity_id') or 'N/A',
+                    _trunc_uuid(opp.get('opportunity_id')),
                 ]))
             out.append('')
 
@@ -764,7 +787,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         out.append('')
 
         # by_stage — has stage icon prefix
-        if pl.get('by_stage'):
+        if pl.get('by_stage') and _show('by_stage'):
             out.append('#### Pipeline by Stage')
             out.append('')
             out.append(_md_header(['Stage', 'Count', 'Amount', 'Weighted Amount', 'Margin Dollars', 'Weighted Margin']))
@@ -782,10 +805,12 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             out.append(_md_row(['**Total**', int(totals['cnt']), _fmt_currency(totals['amt']), _fmt_currency(totals['w']), _fmt_currency(totals['m']), _fmt_currency(totals['wm'])]))
             out.append('')
 
-        _render_breakdown_table(out, 'Pipeline by Owner',       pl.get('by_owner', []),       'owner_name',  'Owner')
-        _render_breakdown_table(out, 'Pipeline by Lead Source', pl.get('by_lead_source', []), 'lead_source', 'Lead Source')
+        if _show('by_owner'):
+            _render_breakdown_table(out, 'Pipeline by Owner',       pl.get('by_owner', []),       'owner_name',  'Owner')
+        if _show('by_lead_source'):
+            _render_breakdown_table(out, 'Pipeline by Lead Source', pl.get('by_lead_source', []), 'lead_source', 'Lead Source')
 
-        if pl.get('by_horizon'):
+        if pl.get('by_horizon') and _show('by_horizon'):
             out.append('#### Pipeline by Close Horizon')
             out.append('')
             out.append(_md_header(['Horizon', 'Count', 'Amount', 'Weighted Amount', 'Margin Dollars', 'Weighted Margin']))
@@ -797,10 +822,12 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                 ]))
             out.append('')
 
-        _render_breakdown_table(out, 'Pipeline by Product', pl.get('by_product', []), 'product_name', 'Product')
-        _render_breakdown_table(out, 'Pipeline by Account', pl.get('by_account', []), 'account_name', 'Account')
+        if _show('by_product'):
+            _render_breakdown_table(out, 'Pipeline by Product', pl.get('by_product', []), 'product_name', 'Product')
+        if _show('by_account'):
+            _render_breakdown_table(out, 'Pipeline by Account', pl.get('by_account', []), 'account_name', 'Account')
 
-        if pl.get('margin_health_rollup'):
+        if pl.get('margin_health_rollup') and _show('margin_health'):
             out.append('#### Margin Health Rollup')
             out.append('')
             out.append(_md_header(['Margin Health', 'Margin Dollars']))
@@ -848,8 +875,10 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                 ]))
             out.append('')
 
-        _win_rate_table('Win Rate by Owner',       wr.get('by_owner', []),       'owner_name',  'Owner')
-        _win_rate_table('Win Rate by Lead Source', wr.get('by_lead_source', []), 'lead_source', 'Lead Source')
+        if _show('by_owner'):
+            _win_rate_table('Win Rate by Owner',       wr.get('by_owner', []),       'owner_name',  'Owner')
+        if _show('by_lead_source'):
+            _win_rate_table('Win Rate by Lead Source', wr.get('by_lead_source', []), 'lead_source', 'Lead Source')
 
     # ── Forecast ──────────────────────────────────────────────────────────────
     elif report_mode == 'forecast' and report_data.get('forecast'):
@@ -880,7 +909,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             cols += ['Historical Revenue', 'Forecast Revenue', 'Historical Margin Dollars', 'Forecast Margin Dollars']
             out.append(_md_header(cols))
             totals = {'hr': 0.0, 'fr': 0.0, 'hm': 0.0, 'fm': 0.0}
-            for r in _sort_desc_by_revenue(data):
+            for r in _sort_desc_by_margin(data):
                 hr = _safe_num(r.get('historical_revenue'))
                 fr = _safe_num(r.get('forecast_revenue'))
                 hm = _safe_num(r.get('historical_margin_dollars'))
@@ -899,14 +928,18 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             out.append(_md_row(total_row))
             out.append('')
 
-        _fc_table('Forecast by Owner',       fc.get('by_owner', []),       'owner_name',   'Owner Name',   show_id=True, id_col='owner_id')
-        _fc_table('Top Accounts',             fc.get('top_accounts', []),   'account_name', 'Account Name', show_id=True, id_col='account_id')
-        _fc_table('Top Products',             fc.get('top_products', []),   'product_name', 'Product Name', show_id=True, id_col='product_id')
-        _fc_table('Forecast by Lead Source (Aggregated over Months)', fc.get('by_lead_source', []), 'lead_source', 'Lead Source')
+        if _show('by_owner'):
+            _fc_table('Forecast by Owner',       fc.get('by_owner', []),       'owner_name',   'Owner Name',   show_id=True, id_col='owner_id')
+        if _show('top_accounts'):
+            _fc_table('Top Accounts',             fc.get('top_accounts', []),   'account_name', 'Account Name', show_id=True, id_col='account_id')
+        if _show('top_products'):
+            _fc_table('Top Products',             fc.get('top_products', []),   'product_name', 'Product Name', show_id=True, id_col='product_id')
+        if _show('by_lead_source'):
+            _fc_table('Forecast by Lead Source (Aggregated over Months)', fc.get('by_lead_source', []), 'lead_source', 'Lead Source')
 
         # by_month_lead_source — aggregate by month
         by_month = fc.get('by_month_lead_source') or []
-        if by_month:
+        if by_month and _show('by_month'):
             out.append('#### Forecast by Month (Aggregated over Lead Sources)')
             out.append('')
             out.append(_md_header(['Month', 'Historical Revenue', 'Forecast Revenue', 'Historical Margin Dollars', 'Forecast Margin Dollars']))
@@ -931,6 +964,77 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
                 out.append(_md_row([m, _fmt_currency(r['hr']), _fmt_currency(r['fr']), _fmt_currency(r['hm']), _fmt_currency(r['fm'])]))
             out.append(_md_row(['**Total**', _fmt_currency(totals_m['hr']), _fmt_currency(totals_m['fr']), _fmt_currency(totals_m['hm']), _fmt_currency(totals_m['fm'])]))
             out.append('')
+
+    # ── Forecast Accuracy (predicted-vs-actual by month) ──────────────────────
+    elif report_mode == 'forecast_accuracy':
+        periods = (report_data.get('forecast_accuracy') or {}).get('periods') or []
+        if not periods:
+            out.append('_No completed-month forecast comparisons yet._')
+            out.append('')
+            out.append(
+                'Forecast accuracy compares the **probability-weighted forecast captured '
+                '_before_ a month began** against the **revenue that actually closed** that '
+                'month. A snapshot is taken on the 1st of each month, so the first comparison '
+                'appears once a month that had a pre-period snapshot completes. Snapshots are '
+                'accumulating now — the next month-end will produce the first row.'
+            )
+            out.append('')
+        else:
+            out.append('#### Forecast vs Actual by Month')
+            out.append('')
+            out.append(_md_header(
+                ['Month', 'Forecast (Weighted)', 'Actual Won', 'Variance',
+                 'Attainment', 'Forecast Made', 'Deals']
+            ))
+            t_f = t_a = 0.0
+            for p in periods:
+                fwt = _safe_num(p.get('forecast_weighted'))
+                act = _safe_num(p.get('actual_won'))
+                var = _safe_num(p.get('variance'))
+                att = p.get('attainment_pct')
+                t_f += fwt
+                t_a += act
+                label = p.get('period_key') or '?'
+                if p.get('is_current_month'):
+                    label += ' (in progress)'
+                arrow = '▲' if var >= 0 else '▼'
+                att_s = f'{_safe_num(att):.1f}%' if att is not None else '—'
+                out.append(_md_row([
+                    label, _fmt_currency(fwt), _fmt_currency(act),
+                    f'{arrow} {_fmt_currency(abs(var))}', att_s,
+                    p.get('as_of_date') or '—', int(_safe_num(p.get('opp_count'))),
+                ]))
+            tot_var = t_a - t_f
+            tot_att = f'{(t_a / t_f * 100):.1f}%' if t_f > 0 else '—'
+            tot_arrow = '▲' if tot_var >= 0 else '▼'
+            out.append(_md_row([
+                '**Total**', _fmt_currency(t_f), _fmt_currency(t_a),
+                f'{tot_arrow} {_fmt_currency(abs(tot_var))}', tot_att, '', '',
+            ]))
+            out.append('')
+
+            # Calibration verdict — actionable guidance on the model's bias.
+            if t_f > 0:
+                ratio = t_a / t_f
+                if ratio >= 1.15:
+                    verdict = ('Actuals are running **well ahead** of forecast — the model is '
+                               'conservative; consider raising stage probabilities.')
+                elif ratio >= 1.05:
+                    verdict = 'Actuals are **modestly ahead** of forecast (model slightly conservative).'
+                elif ratio >= 0.95:
+                    verdict = ('Forecast is **well-calibrated** — actuals are landing within ±5% '
+                               'of plan.')
+                elif ratio >= 0.85:
+                    verdict = 'Actuals are **modestly below** forecast (model slightly optimistic).'
+                else:
+                    verdict = ('Actuals are running **well below** forecast — the model is '
+                               'optimistic; consider lowering stage probabilities or tightening '
+                               'qualification.')
+                out.append(f'**Calibration:** {verdict}')
+                out.append('')
+                out.append('_In-progress months are partial (the month has not closed yet), '
+                           'so their attainment will rise as deals land._')
+                out.append('')
 
     # ── Search: Accounts ──────────────────────────────────────────────────────
     elif report_mode == 'search_accounts':

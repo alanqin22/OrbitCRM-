@@ -30,6 +30,7 @@ VALID_MODES = {
 VALID_PARAMS = {
     'mode', 'operation', 'accountId', 'accountName',
     'type', 'industry', 'phone', 'email', 'website',
+    'employeeBand', 'revenueBand', 'revenueMin', 'focus', 'sort',
     'billingAddress', 'shippingAddress', 'ownerId', 'status',
     'payload', 'createdBy', 'updatedBy', 'pageSize', 'pageNumber',
     'search', 'includeDeleted', 'deletedOnly', 'dateFrom', 'dateTo',

@@ -971,7 +971,7 @@ def _fmt_accounting_summary(response: Dict, metadata: Dict, params: Dict) -> lis
                 f"| {_cost_badge(a.get('cost_complete_pct'))} |"
             )
         lines.append('')
-        lines.append('<span style="color:#f59e0b">_Data column: ✓ all invoices have full cost data · ⚠ partial · - none (figures below may understate cost / overstate margin)_</span>')
+        lines.append('> ⚠️ **Data column:** ✓ all invoices have full cost data · ⚠ partial · - none — rows marked ⚠/- may understate cost / overstate margin.')
         lines.append('')
 
     if product_profit:

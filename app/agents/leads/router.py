@@ -61,6 +61,13 @@ class LeadChatInput(BaseModel):
     postalCode:     Optional[str]  = None
     country:        Optional[str]  = None
 
+    # Firmographics (external enrichment)
+    industry:       Optional[str]  = None
+    website:        Optional[str]  = None
+    employeeBand:   Optional[str]  = None
+    revenueBand:    Optional[str]  = None
+    revenueMin:     Optional[float] = None
+
     # Lead scoring / qualify
     score:          Optional[int]  = None
     reason:         Optional[str]  = None

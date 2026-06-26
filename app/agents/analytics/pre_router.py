@@ -90,6 +90,7 @@ VALID_REPORT_TYPES = {
     'owner_breakdown',
     'activity_productivity',
     'ai_vs_human',
+    'firmographics',
 }
 
 
@@ -244,6 +245,12 @@ _RT_PATTERNS = [
                               r'|\bforecast\s+(?:vs\.?|versus)\s+actuals?\b|\bforecast\s+comparison\b'
                               r'|\bforecast\s+accuracy\b'),
     ('invoiced_revenue',      r'\binvoiced\s+revenue\b'),
+    # Firmographics — must precede pipeline/revenue (which match "pipeline by
+    # industry" / "revenue band" generically).
+    ('firmographics',         r'\bfirmograph\w*\b|\bby\s+industry\b|\bby\s+company\s+size\b'
+                              r'|\bby\s+revenue\s+band\b|\bby\s+employee\s+band\b'
+                              r'|\bpipeline\s+by\s+(?:industry|company\s+size|employees?|employee\s+band|revenue(?:\s+band)?|size)\b'
+                              r'|\bindustry\s+breakdown\b'),
     ('forecast_summary',      r'\bforecast\b'),
     ('pipeline_summary',      r'\bpipeline\b|\bsales\s+funnel\b|\bfunnel\b'),
     ('ar_aging',              r'\bar\s+age?ing\b|\bage?ing\s+(?:report|snapshot)\b|\bage?ing\b'

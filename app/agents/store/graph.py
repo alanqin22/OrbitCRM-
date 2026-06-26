@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from langgraph.graph import StateGraph, END
 
@@ -96,6 +96,47 @@ def db_node(state: Dict[str, Any]) -> Dict[str, Any]:
         return {**state, "db_rows": error_row}
 
 
+def _resolve_buyer(contact_id: Optional[str] = None,
+                   email: Optional[str] = None) -> Dict[str, Any]:
+    """Resolve {account_id, contact_id} for a checkout from a contact_id or the
+    buyer's email — used when the signed-in session didn't carry the account_id
+    (e.g. a converted lead whose session only persisted lead_id/email).
+    Prefers a verified contact; falls back to any contact, then the converted lead."""
+    # 1) direct by contact_id
+    if contact_id:
+        rows = execute_sp(
+            "SELECT jsonb_build_object('account_id', account_id, 'contact_id', contact_id) AS result "
+            "FROM contacts WHERE contact_id = %(cid)s::uuid AND account_id IS NOT NULL LIMIT 1",
+            {"cid": contact_id})
+        r = (rows[0].get("result") if rows else None) or {}
+        if r.get("account_id"):
+            return r
+    # 2) by email — verified contact first, then any contact, then converted lead
+    if email:
+        rows = execute_sp(
+            """SELECT jsonb_build_object('account_id', x.account_id,
+                                         'contact_id', x.contact_id) AS result
+               FROM (
+                   SELECT c.account_id, c.contact_id, 1 AS pri,
+                          COALESCE(c.is_email_verified, false)::int AS vrank, c.created_at
+                   FROM contacts c
+                   WHERE lower(c.email) = lower(%(em)s) AND c.account_id IS NOT NULL
+                   UNION ALL
+                   SELECT l.converted_account_id, l.converted_contact_id, 2 AS pri,
+                          0 AS vrank, l.created_at
+                   FROM leads l
+                   WHERE lower(l.email) = lower(%(em)s)
+                     AND COALESCE(l.converted, false) AND l.converted_account_id IS NOT NULL
+               ) x
+               ORDER BY x.pri, x.vrank DESC, x.created_at
+               LIMIT 1""",
+            {"em": email})
+        r = (rows[0].get("result") if rows else None) or {}
+        if r.get("account_id"):
+            return r
+    return {}
+
+
 def _checkout_node(state: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
     """
     Runs the 4-step checkout sequence and returns assembled result in db_rows.
@@ -115,13 +156,30 @@ def _checkout_node(state: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, A
     def _sp_ok(data: Dict) -> bool:
         return (data.get("metadata") or {}).get("status") == "success"
 
+    # ── Step 0: resolve the billing account / contact ─────────────────────────
+    # account_id is required to create the order. A signed-in session may only
+    # carry the buyer's email (e.g. a converted lead whose session didn't persist
+    # the account/contact IDs), so resolve from contact_id, then email.
+    account_id = params.get("accountId")
+    contact_id = params.get("contactId")
+    if not account_id:
+        resolved = _resolve_buyer(contact_id=contact_id, email=params.get("email"))
+        account_id = resolved.get("account_id")
+        contact_id = contact_id or resolved.get("contact_id")
+        if not account_id:
+            return {**state, "db_rows": [{
+                "error": "We couldn't match your sign-in to a billing account. "
+                         "Please make sure you're signed in with the email you registered.",
+                "step": "0"}]}
+        logger.info(f"Checkout Step 0 — resolved account_id={account_id} contact_id={contact_id}")
+
     # ── Step A: create order as 'processing' ─────────────────────────────────
     try:
         query_a, _ = build_store_query({
             "sp":        "sp_orders",
             "mode":      "create",
-            "accountId": params["accountId"],
-            "contactId": params.get("contactId"),
+            "accountId": account_id,
+            "contactId": contact_id,
             "createdBy": params.get("createdBy"),
         })
         data_a = _exec(query_a)

@@ -49,7 +49,7 @@ ALLOWED_PARAMS = {
 ROUTING_ONLY_PARAMS = {
     'bypassAgent', 'sessionId', 'currentMessage',
     'chatInput', 'chatHistory', 'originalBody',
-    'top_n',
+    'top_n', 'focus',
 }
 
 REQUIRED_BY_MODE: Dict[str, list] = {
@@ -66,6 +66,7 @@ REQUIRED_BY_MODE: Dict[str, list] = {
     'remove_product':     ['opp_product_id'],
     'pipeline':           [],
     'forecast':           [],
+    'forecast_accuracy':  [],
     'win_rate':           [],
     'search_accounts':    [],
     'search_products':    [],

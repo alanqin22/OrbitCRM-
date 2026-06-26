@@ -177,6 +177,25 @@ When the user asks to "show leads from <source>" or "filter by source <source>",
 - Other → `{"mode":"list","source":"other"}`
 ⚠️ Always use underscore form (e.g. `google_ads` not `google ads`). Do NOT use `search` for source filtering — always use `source`.
 
+### Filter by Firmographics (Industry / Company Size / Revenue)
+Leads carry enrichment fields: `industry`, `website`, `employee_band` (e.g. "51-200"),
+`revenue_band` (e.g. "$10M-$50M"), and `enriched_at`. Use the matching `list` params
+(all partial ILIKE matches):
+- Industry → `{"mode":"list","industry":"Software"}` ("show software/tech leads", "leads in the manufacturing sector")
+- Company size → `{"mode":"list","employeeBand":"51-200"}` ("mid-size companies", "leads with 51-200 employees")
+- Revenue band → `{"mode":"list","revenueBand":"$50M"}` ("leads at $50M+ revenue")
+- Has website → use `{"mode":"list","search":"https"}` to find leads with a website on file.
+- "How many leads are enriched / have firmographics?" → `{"mode":"pipeline"}` (read `enriched_count`).
+- Only call `{"mode":"pipeline"}` when the user explicitly asks for the full pipeline summary/dashboard or an overall count. For a FOCUSED firmographics question (e.g. "rank industries by score", "enterprise vs SMB mix", "which industries convert best"), prefer `{"mode":"list"}` and write a SHORT, focused answer that addresses just that question — a one-line verdict, the relevant ranked table, and a recommended action. Do NOT dump the whole pipeline dashboard for a focused question.
+
+For **analytical / executive firmographics questions** ("which industries are we most
+concentrated in?", "what's our enterprise vs SMB mix?", "average score by industry",
+"which industries convert best?"), call `{"mode":"pipeline"}` — the pipeline response
+includes `by_industry` (count per industry) and `enriched_count`. Combine with a
+`{"mode":"list"}` (which returns each lead's industry / employee_band / revenue_band)
+when you need lead-level reasoning. Give a one-line verdict, the top industries with
+counts, and a recommended action + owner.
+
 ### Search by Name, Company, or Email
 ⚠️ When the user provides a name (first name, last name, or full name), ALWAYS use mode:list with search.
 NEVER use mode:get for a name — mode:get requires a UUID leadId.

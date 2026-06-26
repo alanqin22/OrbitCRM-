@@ -127,6 +127,36 @@ def _sp_leads_list(p: Dict[str, Any]) -> Any:
     return _sp_exec(build_leads_query, q)
 
 
+def _sp_leads_enrich(p: Dict[str, Any]) -> Any:
+    """OUTWARD function call: enrich a lead with external firmographics. Accepts a
+    lead_id (loads its company/email) or company/email/domain directly. See
+    app/core/enrichment.py — stub by default, pluggable to a real provider."""
+    from app.core import enrichment
+    lead_id = p.get("lead_id") or p.get("leadId")
+    company, email, domain = p.get("company"), p.get("email"), p.get("domain")
+    if lead_id and not (company or email or domain):
+        from app.core.database import get_connection
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT company, email FROM leads WHERE lead_id = %s", (lead_id,))
+                row = cur.fetchone()
+                if row:
+                    company, email = row[0], row[1]
+        finally:
+            conn.close()
+    data = enrichment.enrich_company(company=company, email=email, domain=domain)
+    # Gap-fill the lead row when called with apply=true (and a lead_id).
+    applied = 0
+    if lead_id and p.get("apply"):
+        try:
+            applied = enrichment.apply_to_lead(lead_id, data)
+        except Exception:
+            pass
+    return {"lead_id": lead_id, "company": company, "enrichment": data,
+            "applied": bool(applied)}
+
+
 def _sp_orders_sales_summary(p: Dict[str, Any]) -> Any:
     from app.agents.orders.sql_builder import build_orders_query
     return _sp_exec(build_orders_query, {"mode": "sales_summary"})
@@ -205,6 +235,11 @@ CAPABILITIES: Dict[str, Capability] = _reg(
     Capability("accounting.account_balance", "accounting", "/accounting-chat", "read",
                lambda p: f"account balance: {p.get('account', '')}",
                "outstanding / paid / overdue balance for an account"),
+    Capability("leads.enrich", "leads", "/lead-chat", "read",
+               lambda p: f"enrich lead {p.get('company') or p.get('lead_id') or ''}".strip(),
+               "enrich a lead with external firmographics (industry, size, revenue, "
+               "website, HQ) — outward function call to an external data source",
+               sp=_sp_leads_enrich),
     Capability("leads.list", "leads", "/lead-chat", "read",
                lambda p: "list leads:",
                "list leads (structured params: scoreMin/scoreMax/status/rating)",

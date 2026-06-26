@@ -251,6 +251,12 @@ class SignUpRequest(BaseModel):
     province:       Optional[str] = None
     postal_code:    Optional[str] = None
     country:        Optional[str] = None
+    # Business details (firmographics) — optional, power segmentation + scoring
+    industry:       Optional[str] = None
+    website:        Optional[str] = None
+    employee_band:  Optional[str] = None
+    revenue_band:   Optional[str] = None
+    marketing_consent: bool = False
     # Legacy: supply existing IDs instead of auto-creating
     account_id:     Optional[str] = None
     contact_id:     Optional[str] = None
@@ -452,6 +458,34 @@ async def signup(req: SignUpRequest):
     source_table  = payload.get("source_table", "leads")
 
     logger.info(f"Signup OK — lead={lead_id} account={account_id} cred={credential_id}")
+
+    # Persist the optional firmographics + marketing consent onto the lead. Done
+    # as a follow-up UPDATE (not new SP params) to avoid changing the signup SP's
+    # signature. The conversion (sp_convert_signup_lead) carries these onto the
+    # account/contact. enriched_at is stamped so enrichment won't clobber the
+    # buyer's self-reported values.
+    if lead_id and any([req.industry, req.website, req.employee_band,
+                        req.revenue_band, req.marketing_consent]):
+        try:
+            _db_execute(
+                """UPDATE public.leads SET
+                       industry          = COALESCE(NULLIF(TRIM(%s), ''), industry),
+                       website           = COALESCE(NULLIF(TRIM(%s), ''), website),
+                       employee_band     = COALESCE(NULLIF(TRIM(%s), ''), employee_band),
+                       revenue_band      = COALESCE(NULLIF(TRIM(%s), ''), revenue_band),
+                       marketing_consent = %s,
+                       consent_at        = CASE WHEN %s THEN now() ELSE consent_at END,
+                       enriched_at       = CASE WHEN %s OR %s OR %s OR %s
+                                                THEN now() ELSE enriched_at END,
+                       updated_at        = now()
+                   WHERE lead_id = %s::uuid""",
+                (req.industry or "", req.website or "", req.employee_band or "",
+                 req.revenue_band or "", req.marketing_consent, req.marketing_consent,
+                 bool(req.industry), bool(req.website), bool(req.employee_band),
+                 bool(req.revenue_band), lead_id),
+            )
+        except Exception as exc:
+            logger.warning(f"Could not persist signup firmographics for lead {lead_id}: {exc}")
 
     # Generate OTP and store pending verification
     code = _generate_otp()
@@ -721,29 +755,51 @@ async def verify_code(req: VerifyCodeRequest):
             detail=f"Incorrect code. {remaining} attempt{'s' if remaining != 1 else ''} remaining.",
         )
 
-    # Code correct — mark contact email verified if applicable
+    # Code correct — the email is now proven. CONVERT the signup lead into a real
+    # customer (account + contact, email-verified) and link the credential, so the
+    # session carries account_id/contact_id and store checkout works with no error.
+    # Signup only created a lead (account_id/contact_id NULL); conversion happens
+    # here, on verification — see sp_convert_signup_lead.
     sd = entry["session_data"]
-    if sd.get("contact_id"):
+    account_id = sd.get("account_id")
+    contact_id = sd.get("contact_id")
+    if sd.get("lead_id"):
+        try:
+            row = _db_fetchone(
+                "SELECT public.sp_convert_signup_lead(%s::uuid, %s::uuid) AS payload",
+                (sd["lead_id"], sd.get("credential_id")),
+            )
+            conv = (row[0] if row else None) or {}
+            if conv.get("success"):
+                account_id = conv.get("account_id") or account_id
+                contact_id = conv.get("contact_id") or contact_id
+                logger.info(f"Signup lead converted on verify — account={account_id} contact={contact_id}")
+            else:
+                logger.warning(f"Lead conversion returned no success for {identifier!r}: {conv}")
+        except Exception as exc:
+            logger.warning(f"Could not convert signup lead for {identifier!r}: {exc}")
+    elif contact_id:
+        # Edge case: a contact already existed (no lead to convert) — just verify it.
         try:
             _db_execute(
                 "UPDATE public.contacts SET is_email_verified = true, updated_at = now() "
                 "WHERE contact_id = %s::uuid",
-                (sd["contact_id"],),
+                (contact_id,),
             )
         except Exception as exc:
-            logger.warning(f"Could not mark email verified for contact {sd['contact_id']}: {exc}")
+            logger.warning(f"Could not mark email verified for contact {contact_id}: {exc}")
 
     _OTP_STORE.pop(identifier, None)
 
     session_token = _new_session(
-        account_id=sd.get("account_id") or "",
+        account_id=account_id or "",
         credential_id=sd["credential_id"],
         identifier=identifier,
         lead_id=sd.get("lead_id"),
-        contact_id=sd.get("contact_id"),
+        contact_id=contact_id,
         first_name=sd.get("first_name", ""),
         last_name=sd.get("last_name", ""),
-        source_table=sd.get("source_table", "leads"),
+        source_table="contacts" if account_id else sd.get("source_table", "leads"),
     )
 
     logger.info(f"Email verified and session issued for {identifier!r}")
@@ -753,13 +809,13 @@ async def verify_code(req: VerifyCodeRequest):
         session_token=session_token,
         credential_id=sd["credential_id"],
         lead_id=sd.get("lead_id"),
-        account_id=sd.get("account_id"),
-        contact_id=sd.get("contact_id"),
+        account_id=account_id,
+        contact_id=contact_id,
         identifier=identifier,
         email=identifier,
         first_name=sd.get("first_name", ""),
         last_name=sd.get("last_name", ""),
-        source_table=sd.get("source_table", "leads"),
+        source_table="contacts" if account_id else sd.get("source_table", "leads"),
     )
 
 

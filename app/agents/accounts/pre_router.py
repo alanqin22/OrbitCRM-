@@ -126,6 +126,39 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
         logger.info(f'→ routerAction SHORT-CIRCUIT: mode={_params.get("mode")}')
         return {'router_action': True, 'params': _params}
 
+    # ── Firmographics focused insight (account exec-insight chips) ────────────
+    # Single-topic firmographics reports → summary mode + focus. Gated on
+    # "account(s)" present and NOT a top/order ranking query so it never hijacks
+    # the existing list_top_revenue / list_top_orders routes below.
+    if re.search(r'\baccounts?\b', msg) and not re.search(r'\btop\b|\bhighest\b|\bbest\b|\bperforming\b|\border', msg):
+        _afocus = None
+        if re.search(r'\benrich', msg):
+            _afocus = 'enrichment'
+        elif re.search(r'\benterprise\b.*\bsmb\b|\bsmb\b.*\benterprise\b|company[\s-]?size', msg):
+            _afocus = 'employee_size'
+        elif re.search(r'\brevenue\b', msg) and re.search(r'distribut|\bmix\b|\bband\b|\bshare\b|breakdown', msg) and '$' not in msg:
+            _afocus = 'revenue'
+        elif re.search(r'\bindustr', msg) and re.search(r'concentrat|\bmix\b|\bmost\b|underrepresent|breakdown|spread', msg):
+            _afocus = 'industry'
+        if _afocus:
+            logger.info(f'[firmographics] account focus={_afocus}')
+            return {'router_action': True, 'params': {'mode': 'summary', 'focus': _afocus}}
+
+    # ── Firmographics filters: company size / revenue floor ──────────────────
+    _m = re.search(r'(\d{1,5})\s*[-–]\s*(\d{1,5})\s*(?:employees|emp|staff|people|headcount)', msg)
+    if _m and re.search(r'\baccount', msg):
+        return {'router_action': True, 'params': {'mode': 'list',
+                'employeeBand': f'{_m.group(1)}-{_m.group(2)}', 'pageSize': 20, 'pageNumber': 1}}
+    _m = re.search(r'\$\s*(\d{1,4})\s*([mb])\b', msg)
+    if _m and re.search(r'\brevenue\b', msg) and re.search(r'\baccount', msg) \
+            and not re.search(r'\btop\b|\bhighest\b|\bbest\b', msg):
+        _amt = int(_m.group(1)) * (1000 if _m.group(2).lower() == 'b' else 1)
+        return {'router_action': True, 'params': {'mode': 'list',
+                'revenueMin': _amt, 'sort': 'revenue_desc', 'pageSize': 20, 'pageNumber': 1}}
+    if re.search(r'\b(?:with|has|have|having)\b.*\bwebsite\b', msg) and re.search(r'\baccount', msg):
+        return {'router_action': True, 'params': {'mode': 'list',
+                'search': 'https', 'pageSize': 20, 'pageNumber': 1}}
+
     # ── "duplicate account(s)/entries/records [for <name>]" → duplicates  ───
     # Must run BEFORE the executive-question check below: the shared EXEC_QA
     # bank has a generic 'duplicates?' pattern (intended for the Leads page,
@@ -330,10 +363,26 @@ def route_request(message: str, chat_input: dict) -> Dict[str, Any]:
     # (Kept as passthru — SP list doesn't have a zero-orders filter parameter)
 
     # ── "list <X> accounts" (single word X, likely industry) ─────────────────
+    # Map common synonyms to a substring that ILIKE-matches the account industry
+    # taxonomy (e.g. "software" → "Tech" matches "Technology"). Falls back to the
+    # title-cased word for industries that already match by name.
+    _ACCT_INDUSTRY = {
+        'software': 'Tech', 'tech': 'Tech', 'technology': 'Tech', 'saas': 'Tech', 'it': 'Tech',
+        'finance': 'Finance', 'financial': 'Finance', 'fintech': 'Finance', 'banking': 'Finance',
+        'healthcare': 'Health', 'health': 'Health', 'medical': 'Health',
+        'manufacturing': 'Manufactur', 'industrial': 'Manufactur',
+        'marketing': 'Marketing', 'advertising': 'Marketing', 'agency': 'Marketing', 'media': 'Media',
+        'retail': 'Retail', 'consulting': 'Consult', 'construction': 'Construct',
+        'energy': 'Energy', 'utilities': 'Energy',
+        'logistics': 'Logistics', 'transport': 'Logistics', 'transportation': 'Logistics',
+        'education': 'Education', 'legal': 'Legal', 'law': 'Legal',
+        'insurance': 'Insurance', 'automotive': 'Automotive', 'agriculture': 'Agricultur',
+        'hospitality': 'Hospitality', 'entertainment': 'Entertainment',
+    }
     _GENERIC = {'all', 'the', 'my', 'these', 'some', 'active', 'inactive', 'archived'}
     _m = re.match(r'^(?:list|show|display)\s+([a-z]+)\s+accounts?\s*$', msg)
     if _m and _m.group(1) not in _GENERIC:
-        industry = _m.group(1).strip().title()
+        industry = _ACCT_INDUSTRY.get(_m.group(1)) or _m.group(1).strip().title()
         return routed({'mode': 'list', 'industry': industry, 'pageSize': 20, 'pageNumber': 1})
 
     # ── "show accounts in <city/location>" → search  ─────────────────────────
