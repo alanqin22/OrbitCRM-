@@ -417,6 +417,7 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             'totalRecords': metadata_raw.get('total_records', len(opportunities)),
             'totalPages':   metadata_raw.get('total_pages', 1),
             'totalAmount':  metadata_raw.get('total_amount', 0),
+            'openAmount':   metadata_raw.get('open_amount', 0),
         }
 
     elif mode == 'get':
@@ -583,13 +584,17 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
             top_total = sum(_safe_num(opp.get('amount')) for opp in opportunities)
             out.append(
                 f'**Total:** {len(opportunities)} opportunities | '
-                f'**Pipeline Value:** {_fmt_currency(top_total)}'
+                f'**Total Value:** {_fmt_currency(top_total)}'
             )
         else:
+            # "Open Pipeline" = SUM(amount) of OPEN opps only (matches the home
+            # "Active Pipeline" KPI + Sales Pipeline Summary). "Total Value" =
+            # SUM across the LISTED set (all statuses, incl. closed-won/lost).
             out.append(
                 f'**Page:** {pg["page"]} of {pg["totalPages"]} | '
                 f'**Total:** {pg["totalRecords"]} opportunities | '
-                f'**Pipeline Value:** {_fmt_currency(pg["totalAmount"])}'
+                f'**Open Pipeline:** {_fmt_currency(pg["openAmount"])} | '
+                f'**Total Value:** {_fmt_currency(pg["totalAmount"])}'
             )
         out.append('')
 
@@ -780,7 +785,9 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
         out.append('')
         out.append(_md_header(['Metric', 'Value']))
         out.append(_md_row(['Opportunities',          s.get('opportunity_count', 0)]))
-        out.append(_md_row(['Total Amount',           _fmt_currency(s.get('amount', 0))]))
+        # Open/active pipeline only (this report covers open stages) — labelled to
+        # match the home "Active Pipeline" KPI so the figures line up.
+        out.append(_md_row(['Active Pipeline',         _fmt_currency(s.get('amount', 0))]))
         out.append(_md_row(['Weighted Amount',         _fmt_currency(s.get('weighted_amount', 0))]))
         out.append(_md_row(['Margin Dollars',          _fmt_currency(s.get('margin_dollars', 0))]))
         out.append(_md_row(['Weighted Margin Dollars', _fmt_currency(s.get('weighted_margin_dollars', 0))]))

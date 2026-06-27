@@ -299,6 +299,12 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
                     f"Orders: {orders} | Revenue: {revenue}"
                 )
                 lines.append(f"   Status: {status}")
+                created_by = a.get('created_by_name')
+                updated_by = a.get('updated_by_name')
+                if created_by:
+                    lines.append(f"   Created by: {created_by}")
+                if updated_by:
+                    lines.append(f"   Updated by: {updated_by}")
                 lines.append(f"   Created: {created}")
                 lines.append(f"   Updated: {updated}")
                 lines.append('')

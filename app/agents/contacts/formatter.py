@@ -270,6 +270,8 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
             addr_parts = [p for p in addr_parts if p]
             if addr_parts:
                 out.append(f"   Address: {', '.join(addr_parts)}")
+            if c.get('created_by_name'): out.append(f"   Created by: {c['created_by_name']}")
+            if c.get('updated_by_name'): out.append(f"   Updated by: {c['updated_by_name']}")
             if c.get('created_at'): out.append(f"   Created: {_fmt_dt(c['created_at'])}")
             if c.get('updated_at'): out.append(f"   Updated: {_fmt_dt(c['updated_at'])}")
             if c.get('is_deleted'): out.append('   **[ARCHIVED]**')
