@@ -489,6 +489,13 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> str:
             out.append(f'   Status: {"Active" if p.get("is_active") else "Inactive"}')
             out.append(f'   Created: {_fmt_dt(p.get("created_at"))}')
             out.append(f'   Updated: {_fmt_dt(p.get("updated_at"))}')
+            # Audit attribution — emitted as "Created-By:" / "Updated-By:" so the
+            # frontend's /Created-By:/ /Updated-By:/ regexes parse them without
+            # colliding with the /Created:/ /Updated:/ timestamp parsers above.
+            if p.get('created_by_name'):
+                out.append(f'   Created-By: {p["created_by_name"]}')
+            if p.get('updated_by_name'):
+                out.append(f'   Updated-By: {p["updated_by_name"]}')
             # Primary image (sort_order = 1) — v3.1
             if p.get('primary_image_url'):
                 out.append(f'   Image-URL: {p["primary_image_url"]}')
