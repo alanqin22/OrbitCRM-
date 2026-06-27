@@ -278,6 +278,21 @@ def _run_notification_triage() -> None:
         logger.error(f"[NotifTriage] tick failed: {exc}", exc_info=True)
 
 
+def _run_pipeline_hygiene() -> None:
+    """Scheduled job: pipeline hygiene — Orchestrator + Opportunity + Activity
+    agents clean stale/slipped open deals (close-lost the dead, re-engage the
+    slipped) so Active Pipeline reflects reality. No-op unless
+    PIPELINE_HYGIENE_ENABLED=1; writes only when PIPELINE_HYGIENE_APPLY=1."""
+    try:
+        from app.core.pipeline_hygiene import run_pipeline_hygiene_tick
+        res = run_pipeline_hygiene_tick()
+        if not res.get("skipped"):
+            logger.info(f"[PipelineHygiene] apply={res.get('apply')} "
+                        f"closed_lost={res.get('closed_lost')} reengaged={res.get('reengaged')}")
+    except Exception as exc:
+        logger.error(f"[PipelineHygiene] tick failed: {exc}", exc_info=True)
+
+
 def _run_capture_forecast_snapshot() -> None:
     """Scheduled job (monthly): capture a point-in-time pipeline forecast via
     generate_forecast_snapshot(90).
@@ -393,6 +408,15 @@ async def lifespan(app: FastAPI):
             _run_notification_triage,
             trigger=CronTrigger(hour=21, minute=55), # 9:55 PM ET — triage alert backlog
             id="notification_triage",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        # Pipeline hygiene — daily 21:50 ET, just before notification triage.
+        # Self-gates on PIPELINE_HYGIENE_ENABLED; dry-run unless PIPELINE_HYGIENE_APPLY=1.
+        _scheduler.add_job(
+            _run_pipeline_hygiene,
+            trigger=CronTrigger(hour=21, minute=50),
+            id="pipeline_hygiene",
             replace_existing=True,
             misfire_grace_time=3600,
         )
@@ -580,6 +604,10 @@ app.include_router(supervisor_router, dependencies=_ADMIN)
 
 from app.core.notification_triage import router as notif_triage_router
 app.include_router(notif_triage_router, dependencies=_ADMIN)
+
+# -- Pipeline hygiene (Orchestrator + Opportunity + Activity cooperation)
+from app.core.pipeline_hygiene import router as pipeline_hygiene_router
+app.include_router(pipeline_hygiene_router, dependencies=_ADMIN)
 
 # -- Blackboard (Phase 4 — shared agent memory)
 from app.core.blackboard import router as blackboard_router
