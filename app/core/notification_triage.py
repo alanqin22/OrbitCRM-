@@ -361,6 +361,7 @@ _DEDUP_SQL = """
         JOIN events e ON e.event_uuid = n.event_uuid
         WHERE n.status = ANY(%(unread)s)
           AND e.event_type = ANY(%(types)s)
+          AND COALESCE(n.metadata->>'kind','') NOT IN ('digest','ar_digest')
     )
     UPDATE notifications SET status='read', read_at=now()
     WHERE notification_uuid IN (SELECT notification_uuid FROM ranked WHERE rn > 1)
@@ -374,6 +375,7 @@ _DEDUP_COUNT_SQL = """
         JOIN events e ON e.event_uuid = n.event_uuid
         WHERE n.status = ANY(%(unread)s)
           AND e.event_type = ANY(%(types)s)
+          AND COALESCE(n.metadata->>'kind','') NOT IN ('digest','ar_digest')
     ) z WHERE rn > 1
 """
 
@@ -388,6 +390,160 @@ def _pass_d(cur, apply: bool) -> Dict[str, Any]:
         n = int(cur.fetchone()[0])
     return {"pass": "dedup_actionable",
             "collapsed" if apply else "would_collapse": n}
+
+
+# ── Pass E: per-owner Accounts-Receivable digest ────────────────────────────────
+# Even de-duped, each owner still carries one invoice.overdue alert per overdue
+# invoice (e.g. 24 invoices → 24 alerts for one owner). Pass E rolls each owner's
+# still-overdue invoices into ONE refreshable "AR summary" notification and marks
+# the individual invoice.overdue alerts read. Self-healing: each tick re-validates
+# the digest's invoices against live state (paid ones drop off; an emptied digest
+# is resolved). One active AR digest per recipient (not per day) — refreshed, not
+# stacked. Runs after Pass C/D so only genuinely-overdue alerts are folded in.
+
+def _ar_overdue_by_owner(cur) -> Dict[str, Dict[str, Any]]:
+    """recipient → {invoices:{invoice_number:{balance,days}}, anchor} from their
+    still-overdue invoice.overdue alerts (live balance via the pipeline view)."""
+    cur.execute(
+        """
+        SELECT n.employee_uuid::text,
+               v.invoice_number,
+               ROUND(v.computed_balance_due::numeric, 2)::float8 AS bal,
+               (CURRENT_DATE - v.due_date::date)                  AS days,
+               n.event_uuid::text
+        FROM notifications n
+        JOIN events e ON e.event_uuid = n.event_uuid
+        JOIN accounting_invoice_pipeline v ON v.invoice_id = e.entity_uuid
+        WHERE n.channel = 'in_app' AND n.status = ANY(%(unread)s)
+          AND e.event_type IN ('invoice.overdue','invoice_overdue')
+          AND COALESCE(n.metadata->>'kind','') NOT IN ('digest','ar_digest')
+          AND v.payment_status IN ('unpaid','partial')
+          AND ROUND(v.computed_balance_due::numeric, 2) > %(floor)s
+        """,
+        {"unread": list(_UNREAD), "floor": MATERIAL_BALANCE},
+    )
+    out: Dict[str, Dict[str, Any]] = {}
+    for emp, inv_no, bal, days, anchor in cur.fetchall():
+        rec = out.setdefault(emp, {"invoices": {}, "anchor": anchor})
+        rec["invoices"][inv_no] = {"balance": float(bal), "days": int(days)}
+    return out
+
+
+def _ar_body(invoices: Dict[str, Dict[str, Any]], total: float) -> str:
+    n = len(invoices)
+    lines = [f"### 💰 Accounts-receivable summary — {n} overdue invoice"
+             f"{'s' if n != 1 else ''}, ${total:,.2f} outstanding", ""]
+    ordered = sorted(invoices.items(), key=lambda kv: -kv[1]["balance"])
+    for inv_no, d in ordered[:20]:
+        lines.append(f"- **{inv_no}** — ${d['balance']:,.2f}, {d['days']}d past due")
+    if n > 20:
+        lines.append(f"- …and {n - 20} more")
+    lines.append("")
+    lines.append("_Auto-summarised by the Accounting agent — one reminder per owner; "
+                 "individual overdue alerts are rolled up here and refresh as invoices are paid._")
+    return "\n".join(lines)
+
+
+def _ar_meta(invoices: Dict[str, Dict[str, Any]], total: float) -> str:
+    return json.dumps({"kind": "ar_digest", "source": "notification_triage",
+                       "count": len(invoices), "total": round(total, 2),
+                       "invoices": invoices})
+
+
+def _write_ar_digest(cur, emp: str, invoices: Dict[str, Dict[str, Any]], anchor: str) -> None:
+    """Upsert THE one active AR digest for a recipient (refresh content in place)."""
+    total = sum(d["balance"] for d in invoices.values())
+    title = f"💰 AR summary — {len(invoices)} overdue, ${total:,.0f} outstanding"
+    cur.execute(
+        """SELECT notification_uuid FROM notifications
+           WHERE employee_uuid=%(emp)s::uuid AND channel='in_app'
+             AND status = ANY(%(unread)s) AND metadata->>'kind'='ar_digest'
+           ORDER BY created_at DESC LIMIT 1""",
+        {"emp": emp, "unread": list(_UNREAD)},
+    )
+    row = cur.fetchone()
+    if row:
+        cur.execute(
+            """UPDATE notifications SET title=%(t)s, body=%(b)s, metadata=%(m)s, created_at=now()
+               WHERE notification_uuid=%(id)s""",
+            {"id": row[0], "t": title, "b": _ar_body(invoices, total),
+             "m": _ar_meta(invoices, total)},
+        )
+    else:
+        cur.execute(
+            """INSERT INTO notifications
+                 (employee_uuid, event_uuid, channel, status, title, body, metadata, created_at)
+               VALUES (%(emp)s::uuid, %(anchor)s::uuid, 'in_app', 'pending', %(t)s, %(b)s, %(m)s, now())""",
+            {"emp": emp, "anchor": anchor, "t": title,
+             "b": _ar_body(invoices, total), "m": _ar_meta(invoices, total)},
+        )
+
+
+def _revalidate_ar_digests(cur) -> int:
+    """Self-heal: re-check each active AR digest's invoices against live state.
+    Drop paid/settled ones; resolve a digest that no longer has any overdue."""
+    cur.execute(
+        """SELECT notification_uuid, metadata FROM notifications
+           WHERE channel='in_app' AND status = ANY(%(unread)s)
+             AND metadata->>'kind'='ar_digest'""",
+        {"unread": list(_UNREAD)},
+    )
+    rows = cur.fetchall()
+    resolved = 0
+    for nid, meta in rows:
+        invs = (meta or {}).get("invoices") or {}
+        if not invs:
+            cur.execute("UPDATE notifications SET status='read', read_at=now() WHERE notification_uuid=%s", (nid,))
+            resolved += 1
+            continue
+        cur.execute(
+            """SELECT invoice_number, payment_status,
+                      ROUND(computed_balance_due::numeric,2)::float8,
+                      (CURRENT_DATE - due_date::date)
+               FROM accounting_invoice_pipeline WHERE invoice_number = ANY(%s)""",
+            (list(invs.keys()),),
+        )
+        live = {r[0]: (r[1], float(r[2]), int(r[3])) for r in cur.fetchall()}
+        still = {}
+        for ino in invs:
+            st = live.get(ino)
+            if st and st[0] in ("unpaid", "partial") and st[1] > MATERIAL_BALANCE:
+                still[ino] = {"balance": st[1], "days": st[2]}
+        if not still:
+            cur.execute("UPDATE notifications SET status='read', read_at=now() WHERE notification_uuid=%s", (nid,))
+            resolved += 1
+        elif still != invs:
+            total = sum(d["balance"] for d in still.values())
+            cur.execute(
+                """UPDATE notifications SET title=%(t)s, body=%(b)s, metadata=%(m)s
+                   WHERE notification_uuid=%(id)s""",
+                {"id": nid, "t": f"💰 AR summary — {len(still)} overdue, ${total:,.0f} outstanding",
+                 "b": _ar_body(still, total), "m": _ar_meta(still, total)},
+            )
+    return resolved
+
+
+def _pass_e(cur, apply: bool) -> Dict[str, Any]:
+    by_owner = _ar_overdue_by_owner(cur)
+    owners = len(by_owner)
+    folded = sum(len(r["invoices"]) for r in by_owner.values())
+    if not apply:
+        return {"pass": "ar_digest", "owners": owners, "would_fold": folded}
+    for emp, rec in by_owner.items():
+        _write_ar_digest(cur, emp, rec["invoices"], rec["anchor"])
+        # Mark this owner's individual overdue alerts read — now in the digest.
+        cur.execute(
+            """UPDATE notifications n SET status='read', read_at=now()
+               FROM events e
+               WHERE n.event_uuid = e.event_uuid
+                 AND n.employee_uuid = %(emp)s::uuid AND n.channel='in_app'
+                 AND n.status = ANY(%(unread)s)
+                 AND e.event_type IN ('invoice.overdue','invoice_overdue')
+                 AND COALESCE(n.metadata->>'kind','') NOT IN ('digest','ar_digest')""",
+            {"emp": emp, "unread": list(_UNREAD)},
+        )
+    resolved = _revalidate_ar_digests(cur)
+    return {"pass": "ar_digest", "owners": owners, "folded": folded, "resolved_empty": resolved}
 
 
 # ============================================================================
@@ -410,6 +566,7 @@ def run_triage_tick(force: bool = False, apply: Optional[bool] = None) -> Dict[s
             b = _pass_b(cur, do_apply)
             c = _pass_c(cur, do_apply)
             d = _pass_d(cur, do_apply)
+            e = _pass_e(cur, do_apply)
         if do_apply:
             conn.commit()
         else:
@@ -424,9 +581,9 @@ def run_triage_tick(force: bool = False, apply: Optional[bool] = None) -> Dict[s
 
     summary = {"enabled": ENABLED, "apply": do_apply, "cap": CAP,
                "unread_before": before, "unread_after": after if do_apply else before,
-               "passes": [a, b, c, d]}
+               "passes": [a, b, c, d, e]}
     logger.info(f"[notif_triage] tick — apply={do_apply} before={before} "
-                f"after={summary['unread_after']} passes={[p['pass'] for p in (a,b,c,d)]}")
+                f"after={summary['unread_after']} passes={[p['pass'] for p in (a,b,c,d,e)]}")
     return summary
 
 
