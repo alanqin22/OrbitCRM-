@@ -342,6 +342,54 @@ def _pass_c(cur, apply: bool) -> Dict[str, Any]:
             "resolved" if apply else "would_resolve": total}
 
 
+# ── Pass D: de-dup re-emitted actionable alerts ─────────────────────────────────
+# Actionable events (invoice.overdue, lead.scored, activity.overdue_flagged) are
+# re-emitted on a schedule, so a single still-live entity accumulates one new
+# notification per recipient per run — the count balloons (e.g. 24 overdue
+# invoices → 576 unread) even though the signal is unchanged. Pass C only clears
+# the ones that became stale (paid/converted/done); this collapses the surviving
+# duplicates to the LATEST notification per (entity, recipient, type), keeping the
+# alert live while removing the noise. Runs after Pass C so stale ones are gone first.
+_DEDUP_SQL = """
+    WITH ranked AS (
+        SELECT n.notification_uuid,
+               ROW_NUMBER() OVER (
+                   PARTITION BY e.entity_uuid, n.employee_uuid, e.event_type
+                   ORDER BY n.created_at DESC
+               ) AS rn
+        FROM notifications n
+        JOIN events e ON e.event_uuid = n.event_uuid
+        WHERE n.status = ANY(%(unread)s)
+          AND e.event_type = ANY(%(types)s)
+    )
+    UPDATE notifications SET status='read', read_at=now()
+    WHERE notification_uuid IN (SELECT notification_uuid FROM ranked WHERE rn > 1)
+"""
+_DEDUP_COUNT_SQL = """
+    SELECT count(*) FROM (
+        SELECT ROW_NUMBER() OVER (
+                   PARTITION BY e.entity_uuid, n.employee_uuid, e.event_type
+                   ORDER BY n.created_at DESC) AS rn
+        FROM notifications n
+        JOIN events e ON e.event_uuid = n.event_uuid
+        WHERE n.status = ANY(%(unread)s)
+          AND e.event_type = ANY(%(types)s)
+    ) z WHERE rn > 1
+"""
+
+
+def _pass_d(cur, apply: bool) -> Dict[str, Any]:
+    params = {"unread": list(_UNREAD), "types": sorted(ACTIONABLE_TYPES)}
+    if apply:
+        cur.execute(_DEDUP_SQL, params)
+        n = cur.rowcount
+    else:
+        cur.execute(_DEDUP_COUNT_SQL, params)
+        n = int(cur.fetchone()[0])
+    return {"pass": "dedup_actionable",
+            "collapsed" if apply else "would_collapse": n}
+
+
 # ============================================================================
 # TICK
 # ============================================================================
@@ -361,6 +409,7 @@ def run_triage_tick(force: bool = False, apply: Optional[bool] = None) -> Dict[s
             a = _pass_a(cur, do_apply)
             b = _pass_b(cur, do_apply)
             c = _pass_c(cur, do_apply)
+            d = _pass_d(cur, do_apply)
         if do_apply:
             conn.commit()
         else:
@@ -375,9 +424,9 @@ def run_triage_tick(force: bool = False, apply: Optional[bool] = None) -> Dict[s
 
     summary = {"enabled": ENABLED, "apply": do_apply, "cap": CAP,
                "unread_before": before, "unread_after": after if do_apply else before,
-               "passes": [a, b, c]}
+               "passes": [a, b, c, d]}
     logger.info(f"[notif_triage] tick — apply={do_apply} before={before} "
-                f"after={summary['unread_after']} passes={[p['pass'] for p in (a,b,c)]}")
+                f"after={summary['unread_after']} passes={[p['pass'] for p in (a,b,c,d)]}")
     return summary
 
 
