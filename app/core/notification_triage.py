@@ -71,6 +71,12 @@ ENABLED = _flag("NOTIF_TRIAGE_ENABLED")
 APPLY   = _flag("NOTIF_TRIAGE_APPLY")
 CAP     = int(os.getenv("NOTIF_TRIAGE_CAP", "5000"))
 
+# Retention (Pass F) — keep the volume bounded with plain DELETE (autovacuum
+# reuses the space; NEVER VACUUM FULL on a tight volume — see the 2026-06-27
+# crash). 0 disables a given retention.
+NOTIF_RETENTION_DAYS = int(os.getenv("NOTIF_RETENTION_DAYS", "7"))   # delete READ notifications older than this
+EVENT_RETENTION_DAYS = int(os.getenv("EVENT_RETENTION_DAYS", "14"))  # delete settled/old events + queue rows
+
 _UNREAD = ("pending", "sent", "unread")
 
 # Materiality floor for "is this invoice still worth chasing" — matches agent_bus.
@@ -546,6 +552,61 @@ def _pass_e(cur, apply: bool) -> Dict[str, Any]:
     return {"pass": "ar_digest", "owners": owners, "folded": folded, "resolved_empty": resolved}
 
 
+# ── Pass F: retention — bound the volume with plain DELETE ───────────────────────
+# The structural fix for the volume creeping back: hard-delete history that no
+# pass will ever surface again, so row counts (and therefore the on-disk files,
+# via autovacuum reuse) stay bounded. ALWAYS plain DELETE — never VACUUM FULL on
+# a tight volume (it rewrites the table and can crash-loop recovery on No-space).
+#   • READ notifications older than NOTIF_RETENTION_DAYS  (the dominant grower)
+#   • settled event_queue + legacy pending older than EVENT_RETENTION_DAYS
+#   • events older than EVENT_RETENTION_DAYS no longer referenced anywhere
+# Unread notifications and recent rows are always kept.
+
+def _retention(cur, apply: bool) -> Dict[str, Any]:
+    out: Dict[str, Any] = {"pass": "retention",
+                           "notif_days": NOTIF_RETENTION_DAYS, "event_days": EVENT_RETENTION_DAYS}
+    verb = "deleted" if apply else "would_delete"
+
+    # 1) READ notifications past the retention window
+    n_sql_where = ("read_at IS NOT NULL AND read_at < now() - (%(d)s || ' days')::interval")
+    if apply:
+        cur.execute(f"DELETE FROM notifications WHERE {n_sql_where}", {"d": NOTIF_RETENTION_DAYS})
+        n_notif = cur.rowcount
+    else:
+        cur.execute(f"SELECT count(*) FROM notifications WHERE {n_sql_where}", {"d": NOTIF_RETENTION_DAYS})
+        n_notif = int(cur.fetchone()[0])
+
+    # 2) event_queue: settled rows + legacy pending past the window
+    if apply:
+        cur.execute("DELETE FROM event_queue WHERE status IN ('completed','superseded')")
+        nq = cur.rowcount
+        cur.execute("DELETE FROM event_queue WHERE status='pending' "
+                    "AND created_at < now() - (%(d)s || ' days')::interval", {"d": EVENT_RETENTION_DAYS})
+        nq += cur.rowcount
+    else:
+        cur.execute("SELECT count(*) FROM event_queue WHERE status IN ('completed','superseded') "
+                    "OR (status='pending' AND created_at < now() - (%(d)s || ' days')::interval)",
+                    {"d": EVENT_RETENTION_DAYS})
+        nq = int(cur.fetchone()[0])
+
+    # 3) events past the window, no longer referenced by any FK table
+    ev_where = """e.created_at < now() - (%(d)s || ' days')::interval
+        AND NOT EXISTS (SELECT 1 FROM event_queue q  WHERE q.event_uuid=e.event_uuid)
+        AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.event_uuid=e.event_uuid)
+        AND NOT EXISTS (SELECT 1 FROM workflow_runs w WHERE w.event_uuid=e.event_uuid)"""
+    if apply:
+        cur.execute(f"DELETE FROM events e WHERE {ev_where}", {"d": EVENT_RETENTION_DAYS})
+        ne = cur.rowcount
+    else:
+        cur.execute(f"SELECT count(*) FROM events e WHERE {ev_where}", {"d": EVENT_RETENTION_DAYS})
+        ne = int(cur.fetchone()[0])
+
+    out[f"notifications_{verb}"] = n_notif
+    out[f"event_queue_{verb}"] = nq
+    out[f"events_{verb}"] = ne
+    return out
+
+
 # ============================================================================
 # TICK
 # ============================================================================
@@ -567,6 +628,7 @@ def run_triage_tick(force: bool = False, apply: Optional[bool] = None) -> Dict[s
             c = _pass_c(cur, do_apply)
             d = _pass_d(cur, do_apply)
             e = _pass_e(cur, do_apply)
+            f = _retention(cur, do_apply)
         if do_apply:
             conn.commit()
         else:
@@ -581,9 +643,9 @@ def run_triage_tick(force: bool = False, apply: Optional[bool] = None) -> Dict[s
 
     summary = {"enabled": ENABLED, "apply": do_apply, "cap": CAP,
                "unread_before": before, "unread_after": after if do_apply else before,
-               "passes": [a, b, c, d, e]}
+               "passes": [a, b, c, d, e, f]}
     logger.info(f"[notif_triage] tick — apply={do_apply} before={before} "
-                f"after={summary['unread_after']} passes={[p['pass'] for p in (a,b,c,d,e)]}")
+                f"after={summary['unread_after']} passes={[p['pass'] for p in (a,b,c,d,e,f)]}")
     return summary
 
 
@@ -603,9 +665,12 @@ router = APIRouter(tags=["notification-triage"])
 @router.get("/notif-triage/status")
 def notif_triage_status():
     return {"enabled": ENABLED, "apply": APPLY, "cap": CAP,
+            "notif_retention_days": NOTIF_RETENTION_DAYS,
+            "event_retention_days": EVENT_RETENTION_DAYS,
             "critical_types": sorted(CRITICAL_TYPES),
             "actionable_types": sorted(ACTIONABLE_TYPES),
-            "policy": "everything else → informational digest + auto-read"}
+            "policy": "everything else → informational digest + auto-read; "
+                      "Pass F hard-deletes read notifications + settled/old events past retention"}
 
 
 @router.post("/notif-triage/run-once")
