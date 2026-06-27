@@ -204,6 +204,13 @@ def _load_invoice_ctx_sync(invoice_id: str) -> Optional[Dict[str, Any]]:
                        i.owner_id,
                        a.account_id, a.account_name,
                        ct.contact_id, ct.first_name AS contact_first, ct.email AS contact_email,
+                       -- Only verified, opted-in recipients are eligible for real
+                       -- outbound dunning. "Verified" = this contact is verified,
+                       -- OR the same email is verified on any other contact row.
+                       (COALESCE(ct.is_email_verified, false)
+                        OR EXISTS (SELECT 1 FROM contacts c2
+                                    WHERE lower(c2.email) = lower(ct.email)
+                                      AND c2.is_email_verified)) AS is_email_verified,
                        ow.first_name AS owner_first, ow.email AS owner_email
                 FROM   accounting_invoice_pipeline v
                 JOIN   invoices  i  ON i.invoice_id = v.invoice_id
@@ -343,8 +350,12 @@ async def handle_invoice_overdue(event: Dict[str, Any]) -> Dict[str, Any]:
     tier = _severity(int(ctx["days_overdue"]))
     draft = _compose_reminder(ctx, tier)
 
+    # Real outbound ONLY to verified, deliverable recipients — synthetic seed
+    # contacts (is_email_verified=false) are drafted+logged but never emailed,
+    # mirroring the order-email gate. Prevents dunning blasts to fake addresses.
+    real = _is_real_email(ctx.get("contact_email"), ctx.get("is_email_verified"))
     sent = False
-    if AUTOSEND and ctx.get("contact_email"):
+    if AUTOSEND and real:
         try:
             # Phase 2: typed, capability-routed A2A handoff. The Accounting
             # reaction delegates delivery to whichever agent owns the
@@ -390,6 +401,9 @@ async def handle_invoice_overdue(event: Dict[str, Any]) -> Dict[str, Any]:
         "action": "sent" if sent else "drafted",
         "invoice": ctx["invoice_number"],
         "tier": tier,
+        "recipient_real": real,                       # verified + deliverable?
+        "verified": bool(ctx.get("is_email_verified")),
+        "autosend": AUTOSEND,
         "handoff": "invoice.dunning_drafted → EmailAgent inbox",
     }
 
