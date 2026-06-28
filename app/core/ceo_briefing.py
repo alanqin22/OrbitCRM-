@@ -51,6 +51,92 @@ def _one(cur, sql: str, params=None):
     return r if r else ()
 
 
+# ── Metric snapshot (powers "▲ vs yesterday" deltas + trend history) ────────────
+# key, label, unit, higher_is_better, importance
+_METRICS = [
+    ("captured_7d",       "Captured (7d)",       "usd",   True,  9),
+    ("revenue_at_risk",   "Revenue at risk",     "usd",   False, 10),
+    ("forecast_30d",      "Likely to close 30d", "usd",   True,  9),
+    ("advocates_7d",      "New advocates (7d)",  "count", True,  6),
+    ("pipeline",          "Active pipeline",     "usd",   True,  7),
+    ("weighted_forecast", "Weighted forecast",   "usd",   True,  7),
+    ("overdue_ar",        "Overdue AR",          "usd",   False, 8),
+    ("slipped_value",     "Slipped deals",       "usd",   False, 7),
+]
+_HIB = {k: hib for (k, _l, _u, hib, _i) in _METRICS}
+
+
+def _metric_values(d: Dict[str, Any]) -> Dict[str, float]:
+    return {
+        "captured_7d":       float(d["rev_7d"] or 0),
+        "revenue_at_risk":   float(d["ar_amt"] or 0) + float(d["slipped_amt"] or 0),
+        "forecast_30d":      float(d["close_weighted"] or 0),
+        "advocates_7d":      float(d["advocates"] or 0),
+        "pipeline":          float(d["pipeline"] or 0),
+        "weighted_forecast": float(d["weighted"] or 0),
+        "overdue_ar":        float(d["ar_amt"] or 0),
+        "slipped_value":     float(d["slipped_amt"] or 0),
+    }
+
+
+def _previous_metrics(cur) -> Dict[str, float]:
+    """Metrics from the latest snapshot strictly BEFORE today (for deltas)."""
+    cur.execute(
+        "SELECT m.metric_key, m.value FROM executive_metric m "
+        "JOIN executive_snapshot s ON s.snapshot_id = m.snapshot_id "
+        "WHERE s.period_type='daily' AND s.snapshot_date = ("
+        "  SELECT MAX(snapshot_date) FROM executive_snapshot "
+        "  WHERE period_type='daily' AND snapshot_date < CURRENT_DATE)")
+    return {k: float(v) for k, v in cur.fetchall() if v is not None}
+
+
+def _compute_deltas(values: Dict[str, float], prev: Dict[str, float]) -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
+    for k, v in values.items():
+        pv = prev.get(k)
+        out[k] = {"abs": None, "pct": None} if pv is None else \
+                 {"abs": v - pv, "pct": ((v - pv) / pv * 100.0) if pv else None}
+    return out
+
+
+def _persist_snapshot(cur, values, deltas, summary) -> None:
+    """Upsert today's daily snapshot + its metric rows (idempotent per day)."""
+    cur.execute(
+        "INSERT INTO executive_snapshot (snapshot_date, period_type, summary_text) "
+        "VALUES (CURRENT_DATE, 'daily', %s) "
+        "ON CONFLICT (snapshot_date, period_type) "
+        "DO UPDATE SET summary_text=EXCLUDED.summary_text, created_at=now() RETURNING snapshot_id",
+        (summary,))
+    sid = cur.fetchone()[0]
+    meta = {k: (lbl, unit, hib, imp) for (k, lbl, unit, hib, imp) in _METRICS}
+    for k, v in values.items():
+        m = meta.get(k, (k, "", True, 0)); dd = deltas.get(k, {})
+        cur.execute(
+            "INSERT INTO executive_metric (snapshot_id, metric_key, value, unit, delta_abs, delta_pct, importance) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s) "
+            "ON CONFLICT (snapshot_id, metric_key) "
+            "DO UPDATE SET value=EXCLUDED.value, delta_abs=EXCLUDED.delta_abs, delta_pct=EXCLUDED.delta_pct",
+            (sid, k, v, m[1], dd.get("abs"), dd.get("pct"), m[3]))
+
+
+def _delta_html(deltas, key) -> str:
+    dd = (deltas or {}).get(key) or {}
+    pct = dd.get("pct")
+    if pct is None or abs(pct) < 0.1:
+        return ""
+    up = pct > 0
+    color = "#16a34a" if (up == _HIB.get(key, True)) else "#dc2626"
+    return f' <span style="color:{color};font-size:11px;font-weight:700;">{"▲" if up else "▼"} {abs(pct):.1f}%</span>'
+
+
+def _delta_text(deltas, key) -> str:
+    dd = (deltas or {}).get(key) or {}
+    pct = dd.get("pct")
+    if pct is None or abs(pct) < 0.1:
+        return ""
+    return f" ({'+' if pct > 0 else '-'}{abs(pct):.1f}% vs prev)"
+
+
 # ── Data gathering ──────────────────────────────────────────────────────────────
 
 def gather() -> Dict[str, Any]:
@@ -156,7 +242,7 @@ def _decision(d: Dict[str, Any]) -> str:
 
 # ── Rendering ───────────────────────────────────────────────────────────────────
 
-def render(d: Dict[str, Any]) -> Dict[str, str]:
+def render(d: Dict[str, Any], deltas: Dict[str, Any] = None) -> Dict[str, str]:
     today = datetime.now().strftime("%B %-d, %Y") if os.name != "nt" else datetime.now().strftime("%B %d, %Y")
     at_risk_total = float(d["ar_amt"] or 0) + float(d["slipped_amt"] or 0)
     decision = _decision(d)
@@ -177,12 +263,12 @@ def render(d: Dict[str, Any]) -> Dict[str, str]:
     t.append(f"MORNING CEO BRIEFING — {today}")
     t.append("")
     t.append("THE FIVE NUMBERS")
-    t.append(f"  1. {cap_label:<24}: {cap_val}  ({cap_sub})")
+    t.append(f"  1. {cap_label:<24}: {cap_val}  ({cap_sub}){_delta_text(deltas,'captured_7d')}")
     t.append(f"  2. Revenue at risk           : {_money(at_risk_total)}  "
-             f"({_money(d['ar_amt'])} overdue AR + {_money(d['slipped_amt'])} slipped deals)")
+             f"({_money(d['ar_amt'])} overdue AR + {_money(d['slipped_amt'])} slipped deals){_delta_text(deltas,'revenue_at_risk')}")
     t.append(f"  3. Likely to close (30d)     : {_money(d['close_weighted'])} weighted "
-             f"({_money(d['close_amt'])} gross, {d['close_cnt']} deals)")
-    t.append(f"  4. New advocates (won, 7d)   : {d['advocates']} accounts ({_money(d['won_amt'])})")
+             f"({_money(d['close_amt'])} gross, {d['close_cnt']} deals){_delta_text(deltas,'forecast_30d')}")
+    t.append(f"  4. New advocates (won, 7d)   : {d['advocates']} accounts ({_money(d['won_amt'])}){_delta_text(deltas,'advocates_7d')}")
     t.append(f"  5. #1 decision today         : {decision}")
     t.append("")
     t.append("1. REVENUE SNAPSHOT")
@@ -221,11 +307,11 @@ def render(d: Dict[str, Any]) -> Dict[str, str]:
     NAVY, INK, MUTE, LINE, CARD, ACCENT = "#15233f", "#26304a", "#7b8497", "#e7ecf3", "#f7f9fc", "#b08a46"
     SANS = "Arial,Helvetica,sans-serif"
 
-    def kpi(num, label, val, sub=""):
+    def kpi(num, label, val, sub="", delta=""):
         return (f'<td width="25%" valign="top" style="background:{CARD};border:1px solid {LINE};'
                 f'border-radius:8px;padding:12px 13px;font-family:{SANS};">'
                 f'<div style="font-size:10px;color:{MUTE};text-transform:uppercase;letter-spacing:.06em;font-weight:700;">{num} &middot; {label}</div>'
-                f'<div style="font-size:21px;line-height:1.05;font-weight:700;color:{NAVY};margin-top:7px;">{val}</div>'
+                f'<div style="font-size:21px;line-height:1.05;font-weight:700;color:{NAVY};margin-top:7px;">{val}{delta}</div>'
                 f'<div style="font-size:11px;color:{MUTE};margin-top:5px;min-height:13px;">{sub}</div></td>')
 
     def lis(rows, fmt):
@@ -252,10 +338,10 @@ def render(d: Dict[str, Any]) -> Dict[str, str]:
     # KPI grid (4 across) + the one decision (full width)
     h.append(f'<tr><td style="padding:10px 20px 2px;font-family:{SANS};">')
     h.append('<table role="presentation" width="100%" cellpadding="0" cellspacing="8" style="border-collapse:separate;"><tr>')
-    h.append(kpi("1", cap_label, cap_val, cap_sub))
-    h.append(kpi("2", "Revenue at risk", _money(at_risk_total), f"{_money(d['ar_amt'])} AR + {_money(d['slipped_amt'])} deals"))
-    h.append(kpi("3", "Likely to close (30d)", _money(d['close_weighted']), f"{d['close_cnt']} deals, weighted"))
-    h.append(kpi("4", "New advocates (7d)", str(d['advocates']), _money(d['won_amt'])))
+    h.append(kpi("1", cap_label, cap_val, cap_sub, _delta_html(deltas, "captured_7d")))
+    h.append(kpi("2", "Revenue at risk", _money(at_risk_total), f"{_money(d['ar_amt'])} AR + {_money(d['slipped_amt'])} deals", _delta_html(deltas, "revenue_at_risk")))
+    h.append(kpi("3", "Likely to close (30d)", _money(d['close_weighted']), f"{d['close_cnt']} deals, weighted", _delta_html(deltas, "forecast_30d")))
+    h.append(kpi("4", "New advocates (7d)", str(d['advocates']), _money(d['won_amt']), _delta_html(deltas, "advocates_7d")))
     h.append('</tr></table>')
     h.append('<table role="presentation" width="100%" cellpadding="0" cellspacing="8" style="border-collapse:separate;"><tr>'
              f'<td style="background:{NAVY};border-radius:8px;padding:14px 16px;">'
@@ -265,8 +351,8 @@ def render(d: Dict[str, Any]) -> Dict[str, str]:
     h.append('</td></tr>')
 
     h.append(section("1 &middot; Revenue Snapshot", lis([
-        ("Active pipeline",       f'{_money(d["pipeline"])} ({d["open_cnt"]} open)'),
-        ("Weighted forecast",     _money(d["weighted"])),
+        ("Active pipeline",       f'{_money(d["pipeline"])} ({d["open_cnt"]} open)' + _delta_html(deltas, "pipeline")),
+        ("Weighted forecast",     _money(d["weighted"]) + _delta_html(deltas, "weighted_forecast")),
         ("Closing next 30 days",  f'{_money(d["close_amt"])} ({d["close_cnt"]} deals)'),
         (cap_label,               f'{cap_val} &middot; {_money(d["rev_7d"])} last 7 days'),
     ], lambda r: f'{r[0]}: <b>{r[1]}</b>')))
@@ -301,8 +387,22 @@ def render(d: Dict[str, Any]) -> Dict[str, str]:
     return {"subject": subject, "html": "".join(h), "text": text}
 
 
-def build_briefing() -> Dict[str, str]:
-    return render(gather())
+def build_briefing(persist: bool = False) -> Dict[str, str]:
+    """Render the briefing with deltas vs the previous snapshot. When persist=True
+    (the real daily send), also store today's snapshot so tomorrow has a baseline."""
+    d = gather()
+    values = _metric_values(d)
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            deltas = _compute_deltas(values, _previous_metrics(cur))
+            msg = render(d, deltas)
+            if persist:
+                _persist_snapshot(cur, values, deltas, msg.get("text", "")[:4000])
+                conn.commit()
+        return msg
+    finally:
+        conn.close()
 
 
 # ── Send ────────────────────────────────────────────────────────────────────────
@@ -336,12 +436,14 @@ def send_briefing(force: bool = False) -> Dict[str, Any]:
     """Compose + email the CEO briefing to every executive subscribed to it.
     Gated by CEO_BRIEFING_ENABLED unless force. Internal email — bypasses the
     customer verification gate by design."""
+    # Always capture today's snapshot (builds trend history + tomorrow's deltas),
+    # even while emails are still disabled.
+    msg = build_briefing(persist=True)
     if not ENABLED and not force:
-        return {"enabled": False, "skipped": True}
+        return {"enabled": False, "skipped": True, "snapshot_captured": True}
     rcpts = recipients()
     if not rcpts:
         return {"error": "no recipients — add an executive with 'ceo_briefing' or set CEO_BRIEFING_EMAIL"}
-    msg = build_briefing()
     sent, failed = [], []
     from app.agents.email.smtp_imap import send_email
     for email, name in rcpts:
