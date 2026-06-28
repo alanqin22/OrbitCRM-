@@ -4100,12 +4100,14 @@
                 : '<span class="status-badge read">✅ Read</span>';
 
             // ── Clean title: prefer the human headline ("Lead Scored — Omar Haddad")
-            const cleanTitle = (formatted.headline || formatted.title || raw.title || 'Notification Inspector')
+            // The SP's resolved fields (headline/entity_summary) live on the parsed
+            // JSON object (raw_notification), not the text-derived `formatted`.
+            const cleanTitle = (raw.headline || formatted.headline || formatted.title || raw.title || 'Notification Inspector')
                 .replace(/\*\*/g, '').trim();
 
             // ── Entity summary (human-readable card built from the resolved entity) ─
             let entitySummarySection = '';
-            const es = formatted.entity_summary;
+            const es = raw.entity_summary || formatted.entity_summary;
             if (es) {
                 const sfields = (es.fields || []).filter(f =>
                     f && f.value != null && String(f.value).trim() !== ''

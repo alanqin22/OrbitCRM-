@@ -318,7 +318,9 @@ def format_response(db_rows: List[Dict], params: Dict[str, Any]) -> Dict[str, An
 
             for n in notifications:
                 icon    = _event_icon(n.get('event_type') or '')
-                title   = _clean_text(n.get('title') or 'Untitled')
+                # Prefer the human headline ("Lead Scored — Omar Haddad") over the
+                # generic "lead -> lead.scored" title so rows read distinctly.
+                title   = _clean_text(n.get('headline') or n.get('title') or 'Untitled')
                 created = _fmt_dt(n.get('created_at'))
 
                 # Determine read/unread status
