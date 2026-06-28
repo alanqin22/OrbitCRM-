@@ -111,3 +111,5 @@ dmypy.json
 # Deployment
 deploy_config.ps1
 deploy_winscp.log
+# HTML pages deploy separately to agentorc.ca (cPanel) — never commit them.
+*.html
