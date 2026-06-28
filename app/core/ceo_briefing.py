@@ -260,8 +260,9 @@ def render(d: Dict[str, Any]) -> Dict[str, str]:
              'Reply to this email to ask the Orchestrator a follow-up.</div>')
     h.append('</div>')
 
-    subject = (f"CEO Briefing {today} · risk {_money(at_risk_total)} · "
-               f"closing {_money(d['close_weighted'])}")
+    # Plain-ASCII subject (no $/·/em-dash) — shared-host spam filters down-rank
+    # currency symbols and non-ASCII in headers; the detail lives in the body.
+    subject = f"Morning CEO Briefing - {today}"
     return {"subject": subject, "html": "".join(h), "text": text}
 
 
