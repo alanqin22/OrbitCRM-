@@ -628,6 +628,8 @@ from app.core.notification_triage import router as notif_triage_router
 app.include_router(notif_triage_router, dependencies=_ADMIN)
 from app.core.ceo_briefing import router as ceo_briefing_router
 app.include_router(ceo_briefing_router, dependencies=_ADMIN)
+from app.agents.executives.router import router as executives_router
+app.include_router(executives_router)  # router already require_admin on every route
 
 # -- Pipeline hygiene (Orchestrator + Opportunity + Activity cooperation)
 from app.core.pipeline_hygiene import router as pipeline_hygiene_router

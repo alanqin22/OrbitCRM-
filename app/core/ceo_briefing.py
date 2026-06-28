@@ -289,24 +289,54 @@ def build_briefing() -> Dict[str, str]:
 
 # ── Send ────────────────────────────────────────────────────────────────────────
 
+def recipients() -> List[tuple]:
+    """Resolve briefing recipients from the executives table (the human-interface
+    layer): active execs with auto-email on and 'ceo_briefing' in their
+    notification_categories. Falls back to the CEO_BRIEFING_EMAIL env var if the
+    table is empty/unavailable, so the briefing always has a destination."""
+    try:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT email, full_name FROM executives "
+                    "WHERE is_active AND auto_email_enabled "
+                    "  AND 'ceo_briefing' = ANY(notification_categories) "
+                    "  AND email IS NOT NULL "
+                    "ORDER BY role_code")
+                rows = [(r[0], r[1]) for r in cur.fetchall() if r[0]]
+        finally:
+            conn.close()
+        if rows:
+            return rows
+    except Exception as exc:
+        logger.warning(f"[ceo_briefing] executives lookup failed, using env fallback: {exc}")
+    return [(RECIPIENT, "CEO")] if RECIPIENT else []
+
+
 def send_briefing(force: bool = False) -> Dict[str, Any]:
-    """Compose + email the CEO briefing. Gated by CEO_BRIEFING_ENABLED unless force.
-    Internal email — bypasses the customer verification gate by design."""
+    """Compose + email the CEO briefing to every executive subscribed to it.
+    Gated by CEO_BRIEFING_ENABLED unless force. Internal email — bypasses the
+    customer verification gate by design."""
     if not ENABLED and not force:
         return {"enabled": False, "skipped": True}
-    if not RECIPIENT:
-        return {"error": "CEO_BRIEFING_EMAIL not set"}
+    rcpts = recipients()
+    if not rcpts:
+        return {"error": "no recipients — add an executive with 'ceo_briefing' or set CEO_BRIEFING_EMAIL"}
     msg = build_briefing()
-    try:
-        from app.agents.email.smtp_imap import send_email
-        res = send_email(RECIPIENT, msg["subject"], msg["html"], msg["text"],
-                         from_name="Conscestra CRM")
-        ok = bool(res.get("success", True)) if isinstance(res, dict) else True
-        logger.info(f"[ceo_briefing] sent to {RECIPIENT}: {msg['subject']}")
-        return {"sent": ok, "to": RECIPIENT, "subject": msg["subject"]}
-    except Exception as exc:
-        logger.error(f"[ceo_briefing] send failed: {exc}", exc_info=True)
-        return {"error": str(exc)}
+    sent, failed = [], []
+    from app.agents.email.smtp_imap import send_email
+    for email, name in rcpts:
+        try:
+            res = send_email(email, msg["subject"], msg["html"], msg["text"], from_name="Conscestra CRM")
+            ok = bool(res.get("success", True)) if isinstance(res, dict) else True
+            (sent if ok else failed).append(email)
+        except Exception as exc:
+            logger.error(f"[ceo_briefing] send to {email} failed: {exc}", exc_info=True)
+            failed.append(email)
+    logger.info(f"[ceo_briefing] sent={len(sent)} failed={len(failed)} subject={msg['subject']}")
+    return {"sent_count": len(sent), "failed_count": len(failed),
+            "recipients": len(rcpts), "subject": msg["subject"]}
 
 
 # ── Admin endpoints ───────────────────────────────────────────────────────────────
@@ -316,7 +346,9 @@ router = APIRouter(tags=["ceo-briefing"])
 
 @router.get("/ceo-briefing/status")
 def ceo_briefing_status():
-    return {"enabled": ENABLED, "recipient_configured": bool(RECIPIENT)}
+    rc = recipients()
+    return {"enabled": ENABLED, "recipients": [n for _, n in rc],
+            "recipient_emails": len(rc), "env_fallback": bool(RECIPIENT)}
 
 
 @router.get("/ceo-briefing/preview")
