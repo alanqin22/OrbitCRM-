@@ -186,7 +186,7 @@ def render(d: Dict[str, Any]) -> Dict[str, str]:
     t.append("")
     t.append("5. CRITICAL EVENTS")
     for r in d["big_inv"]:
-        flag = "  ⚠ >$25k & 45d+" if float(r[2]) > 25000 and int(r[3]) >= 45 else ""
+        flag = "  (large balance, 45d+)" if float(r[2]) > 25000 and int(r[3]) >= 45 else ""
         t.append(f"   - Overdue invoice {r[0]} — {r[1]}: {_money(r[2])}, {r[3]}d overdue{flag}")
     t.append("")
     t.append(f"#1 CEO ACTION: {decision}")
@@ -207,7 +207,7 @@ def render(d: Dict[str, Any]) -> Dict[str, str]:
 
     h: List[str] = []
     h.append('<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:680px;margin:0 auto;color:#1f2738;">')
-    h.append(f'<h1 style="font-size:20px;margin:0 0 2px;">🌅 Morning CEO Briefing</h1>')
+    h.append(f'<h1 style="font-size:20px;margin:0 0 2px;">Morning CEO Briefing</h1>')
     h.append(f'<div style="color:#8a93a6;font-size:13px;margin-bottom:14px;">{today} · Conscestra CRM</div>')
     h.append('<table style="width:100%;border-collapse:separate;border-spacing:8px 0;margin-bottom:6px;"><tr>')
     h.append(card(1, "Captured yesterday", _money(d['rev_yest'])))
@@ -215,9 +215,9 @@ def render(d: Dict[str, Any]) -> Dict[str, str]:
     h.append(card(3, "Likely to close (wk)", _money(d['close_weighted']), f"{d['close_cnt']} deals, weighted"))
     h.append('</tr><tr><td style="height:8px"></td></tr><tr>')
     h.append(card(4, "New advocates (7d)", str(d['advocates']), _money(d['won_amt'])))
-    h.append(f'<td colspan="2" style="padding:10px 14px;background:#fff7ed;border-radius:10px;">'
-             f'<div style="font-size:11px;color:#b45309;text-transform:uppercase;letter-spacing:.04em;">5. #1 decision today</div>'
-             f'<div style="font-size:14px;font-weight:600;color:#7c2d12;margin-top:3px;">{decision.replace("**","")}</div></td>')
+    h.append(f'<td colspan="2" style="padding:10px 14px;background:#f6f8fc;border-radius:10px;">'
+             f'<div style="font-size:11px;color:#8a93a6;text-transform:uppercase;letter-spacing:.04em;">5. #1 decision today</div>'
+             f'<div style="font-size:14px;font-weight:600;color:#16213e;margin-top:3px;">{decision.replace("**","")}</div></td>')
     h.append('</tr></table>')
 
     def section(title, inner):
@@ -251,7 +251,7 @@ def render(d: Dict[str, Any]) -> Dict[str, str]:
         '<ul style="margin:0;padding-left:18px;font-size:13px;">'
         + li_rows(d["big_inv"], lambda r: (f'Overdue invoice {r[0]} <span style="color:#8a93a6">({r[1]})</span> — '
                   f'<b>{_money(r[2])}</b>, {r[3]}d overdue'
-                  + (' <span style="color:#b91c1c;font-weight:700">⚠ &gt;$25k &amp; 45d+</span>' if float(r[2])>25000 and int(r[3])>=45 else '')))
+                  + (' <span style="color:#8a93a6">(large balance, 45d+)</span>' if float(r[2])>25000 and int(r[3])>=45 else '')))
         + '</ul>'))
 
     h.append(f'<div style="margin-top:18px;padding:12px 14px;background:#eef6ff;border-radius:10px;font-size:14px;">'
@@ -283,7 +283,7 @@ def send_briefing(force: bool = False) -> Dict[str, Any]:
     try:
         from app.agents.email.smtp_imap import send_email
         res = send_email(RECIPIENT, msg["subject"], msg["html"], msg["text"],
-                         from_name="Conscestra CRM · Orchestrator")
+                         from_name="Conscestra CRM")
         ok = bool(res.get("success", True)) if isinstance(res, dict) else True
         logger.info(f"[ceo_briefing] sent to {RECIPIENT}: {msg['subject']}")
         return {"sent": ok, "to": RECIPIENT, "subject": msg["subject"]}
