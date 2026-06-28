@@ -29,10 +29,18 @@
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f1f5f9; color: #0f172a; }
-    .topbar { background: linear-gradient(135deg, #4c1d95 0%, #2e1065 55%, #1a0533 100%); color: #fff; padding: 0.9rem 1.5rem; display: flex; align-items: center; justify-content: space-between; }
+    .topbar { background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 50%, #6d28d9 100%); color: #fff; padding: 0.9rem 1.5rem; display: flex; align-items: center; justify-content: space-between; }
     .topbar h1 { font-size: 1.15rem; font-weight: 700; display: flex; gap: .5rem; align-items: center; }
     .topbar a { color: #fff; text-decoration: none; background: rgba(255,255,255,.15); padding: .4rem .9rem; border-radius: 8px; font-size: .85rem; font-weight: 600; }
     .topbar a:hover { background: rgba(255,255,255,.28); }
+    /* Connected indicator + Reset (matches the module home pages) */
+    .session-info { font-size: .8rem; display: flex; align-items: center; gap: .6rem; }
+    .polling-indicator { display: flex; align-items: center; gap: .5rem; font-size: .75rem; padding: .28rem .8rem; background: rgba(255,255,255,.22); border-radius: 20px; color: #fff; }
+    .polling-dot { width: 8px; height: 8px; border-radius: 50%; background: #34d399; box-shadow: 0 0 0 0 rgba(52,211,153,.6); animation: pulse-dot 2s ease-in-out infinite; }
+    .polling-dot.error { background: #f87171; animation: none; }
+    @keyframes pulse-dot { 0%,100% { box-shadow: 0 0 0 0 rgba(52,211,153,.5); } 50% { box-shadow: 0 0 0 5px rgba(52,211,153,0); } }
+    .session-info button { background: #fff; color: #6d28d9; border: none; border-radius: 20px; padding: .32rem .85rem; cursor: pointer; font-size: .75rem; font-weight: 700; }
+    .session-info button:hover { background: #ede9fe; }
     .wrap { max-width: 1150px; margin: 1.4rem auto; padding: 0 1rem; }
     .card { background: #fff; border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.06); padding: 1.1rem 1.2rem; margin-bottom: 1.2rem; }
     .card h2 { font-size: .95rem; color: #4c1d95; margin-bottom: .9rem; }
@@ -68,8 +76,12 @@
 <body>
 <div class="topbar">
     <h1>👔 Executives Console</h1>
-    <div style="display:flex;gap:.6rem">
-        <a href="index.html">← Back to CRM</a>
+    <div class="session-info">
+        <div class="polling-indicator">
+            <div class="polling-dot" id="pollingDot"></div>
+            <span id="pollingStatus">Connected</span>
+        </div>
+        <button onclick="resetView()">Reset</button>
     </div>
 </div>
 
@@ -151,9 +163,18 @@
         return data;
     }
 
+    function setConnected(ok) {
+        const d = document.getElementById('pollingDot'), s = document.getElementById('pollingStatus');
+        if (!d) return;
+        if (ok) { d.classList.remove('error'); s.textContent = 'Connected'; }
+        else { d.classList.add('error'); s.textContent = 'Disconnected'; }
+    }
+
+    function resetView() { resetForm(); load(); toast('Refreshed'); }
+
     async function load() {
-        try { const d = await api('/executives'); EXECS = d.executives || []; render(); }
-        catch (e) { document.getElementById('rows').innerHTML = `<tr><td colspan="8" class="no" style="padding:1.4rem;text-align:center">${esc(e.message)}</td></tr>`; }
+        try { const d = await api('/executives'); EXECS = d.executives || []; render(); setConnected(true); }
+        catch (e) { setConnected(false); document.getElementById('rows').innerHTML = `<tr><td colspan="8" class="no" style="padding:1.4rem;text-align:center">${esc(e.message)}</td></tr>`; }
     }
 
     function render() {
