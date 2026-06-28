@@ -813,7 +813,28 @@ BEGIN
                 -- inspector reads as a business event, not UUID soup.
                 'headline', initcap(translate(notif_row.event_type, '._', '  '))
                             || COALESCE(' — ' || (fn_notification_entity_summary(notif_row.entity_type, notif_row.entity_uuid)->>'label'), ''),
-                'entity_summary', fn_notification_entity_summary(notif_row.entity_type, notif_row.entity_uuid)
+                'entity_summary', fn_notification_entity_summary(notif_row.entity_type, notif_row.entity_uuid),
+                -- v2: resolve FK columns in the payload (owner_id, account_id,
+                -- contact_id, …) to human names → { "<uuid>": "Name", ... } so the
+                -- inspector can show names with the UUID kept as secondary detail.
+                'ref_names', (
+                    SELECT jsonb_object_agg(d.val, d.nm)
+                    FROM (
+                        SELECT DISTINCT kv.val AS val,
+                               fn_resolve_reference(kv.key, kv.val::uuid) AS nm
+                        FROM (
+                            SELECT key, (value #>> '{}') AS val
+                            FROM jsonb_each(COALESCE(v_payload->'after', '{}'::jsonb))
+                            UNION
+                            SELECT key, (value #>> '{}') AS val
+                            FROM jsonb_each(COALESCE(v_payload->'before', '{}'::jsonb))
+                        ) kv
+                        WHERE (kv.key ~ '_id$'
+                               OR kv.key IN ('employee_uuid','created_by','updated_by','assigned_to'))
+                          AND kv.val ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-'
+                    ) d
+                    WHERE d.nm IS NOT NULL
+                )
             )
         );
     END IF;

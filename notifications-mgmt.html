@@ -3933,6 +3933,20 @@
             const responseArea = document.getElementById('responseArea');
             const raw = data.raw_notification || {};
             const formatted = data.formatted || {};
+            const refNames = raw.ref_names || {};   // { "<uuid>": "Name" } for FK columns
+
+            // Render a payload value: if it's a UUID we resolved to a name, show the
+            // name (primary) with the UUID kept as muted secondary detail.
+            function refDisplay(val) {
+                if (val === null || val === undefined) return '<span class="kv-null">—</span>';
+                const s = String(val);
+                const name = refNames[s];
+                if (name) {
+                    return '<strong>' + escapeHTML(name) + '</strong>'
+                         + '<div style="font-family:monospace;font-size:0.72rem;color:#9aa;margin-top:1px;">' + escapeHTML(s) + '</div>';
+                }
+                return escapeHTML(s);
+            }
             const meta = raw.metadata || {};
             const payload = meta.payload || {};
             const before  = payload.before  || null;
@@ -4053,10 +4067,8 @@
                         const aVal   = afterHas  ? after[k]   : undefined;
                         const changed = JSON.stringify(bVal) !== JSON.stringify(aVal);
 
-                        const bDisplay = (bVal === null || bVal === undefined)
-                            ? '<span class="kv-null">—</span>' : escapeHTML(String(bVal));
-                        const aDisplay = (aVal === null || aVal === undefined)
-                            ? '<span class="kv-null">—</span>' : escapeHTML(String(aVal));
+                        const bDisplay = refDisplay(bVal);
+                        const aDisplay = refDisplay(aVal);
 
                         const rowCls    = changed ? ' class="row-changed"' : '';
                         const beforeCls = changed ? 'diff-before' : 'diff-same';
