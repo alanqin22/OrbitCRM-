@@ -3858,7 +3858,9 @@
         `;
 
                 notifications.forEach(n => {
-                    const title = n.title || 'Untitled';
+                    // v2: prefer the human headline ("Lead Scored — Omar Haddad")
+                    // over the generic "lead -> lead.scored" title.
+                    const title = n.headline || n.title || 'Untitled';
                     const created = formatDateTime(n.created_at);
                     const isUnread = n.status === 'pending' || n.status === 'sent' || n.status === 'unread';
                     const statusBadge = isUnread
@@ -4097,9 +4099,27 @@
                 ? '<span class="status-badge unread">🟢 Unread</span>'
                 : '<span class="status-badge read">✅ Read</span>';
 
-            // ── Clean title: strip markdown **bold** markers ───────────────────────
-            const cleanTitle = (formatted.title || raw.title || 'Notification Inspector')
+            // ── Clean title: prefer the human headline ("Lead Scored — Omar Haddad")
+            const cleanTitle = (formatted.headline || formatted.title || raw.title || 'Notification Inspector')
                 .replace(/\*\*/g, '').trim();
+
+            // ── Entity summary (human-readable card built from the resolved entity) ─
+            let entitySummarySection = '';
+            const es = formatted.entity_summary;
+            if (es) {
+                const sfields = (es.fields || []).filter(f =>
+                    f && f.value != null && String(f.value).trim() !== ''
+                    && String(f.value).trim().toLowerCase() !== 'null');
+                let head = '';
+                if (es.label)    head += '<div style="font-size:1.05rem;font-weight:700;color:#0078d7;">' + escapeHTML(es.label) + '</div>';
+                if (es.sublabel) head += '<div style="color:#777;margin:0.1rem 0 0.5rem;">' + escapeHTML(es.sublabel) + '</div>';
+                const linkHtml = es.module
+                    ? '<div style="margin-top:0.5rem;"><a href="' + escapeHTML(es.module) + '" style="color:#0078d7;text-decoration:none;font-weight:600;">Open in '
+                      + escapeHTML(raw.entity_type || 'record') + ' module →</a></div>'
+                    : '';
+                entitySummarySection = section('🧾', 'Summary',
+                    head + (sfields.length ? kvTable(sfields.map(f => kvRow(f.label, f.value))) : '') + linkHtml);
+            }
 
             // ── Formatted timestamp ────────────────────────────────────────────────
             const timestampDisplay = raw.created_at
@@ -4128,9 +4148,10 @@
                 +   '<div class="inspector-header-actions">' + backBtn + toggleBtn + '</div>'
                 + '</div>'
 
-                // Sections
+                // Sections — human-readable Summary first, technical IDs after
+                + entitySummarySection
                 + section('📋', 'Notification Details', kvTable(detailRows))
-                + section('🔗', 'Entity & Event',       kvTable(entityRows))
+                + section('🔗', 'Entity & Event (technical IDs)', kvTable(entityRows))
                 + templateSection
                 + payloadSection
                 + rawSection

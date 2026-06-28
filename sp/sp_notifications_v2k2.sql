@@ -124,7 +124,7 @@ BEGIN
           WITH base AS (
             SELECT
               m.notification_uuid,
-              e.event_type, e.entity_type,
+              e.event_type, e.entity_type, e.entity_uuid,
               m.title, m.body, m.created_at, m.metadata,
               (SELECT COUNT(*) FROM notification_recipients r
                  WHERE r.notification_uuid = m.notification_uuid) AS recip_total,
@@ -185,6 +185,10 @@ BEGIN
                         'event_type',  x.event_type,
                         'entity_type', x.entity_type,
                         'title',       x.title,
+                        -- v2: human headline ("Lead Scored — Omar Haddad") so rows
+                        -- read distinctly instead of a generic "lead -> lead.scored".
+                        'headline',    initcap(translate(x.event_type, '._', '  '))
+                                       || COALESCE(' — ' || (fn_notification_entity_summary(x.entity_type, x.entity_uuid)->>'label'), ''),
                         'body',        x.body,
                         'status',      x.eff_status,
                         'created_at',  x.created_at,
@@ -210,7 +214,7 @@ BEGIN
 
         -- v2: p_notification_uuid is a MESSAGE id; status is aggregated across the
         -- recipient group (per-person read state lives in notification_recipients).
-        SELECT m.notification_uuid, m.event_uuid, e.event_type, e.entity_type,
+        SELECT m.notification_uuid, m.event_uuid, e.event_type, e.entity_type, e.entity_uuid,
                m.title, m.body,
                CASE WHEN EXISTS (SELECT 1 FROM notification_recipients r
                                    WHERE r.notification_uuid = m.notification_uuid AND r.read_at IS NULL)
@@ -796,6 +800,7 @@ BEGIN
                 'event_uuid', notif_row.event_uuid,
                 'event_type', notif_row.event_type,
                 'entity_type', notif_row.entity_type,
+                'entity_uuid', notif_row.entity_uuid,
                 'title', notif_row.title,
                 'body', notif_row.body,
                 'status', notif_row.status,
@@ -803,7 +808,12 @@ BEGIN
                 'created_at', notif_row.created_at,
                 'sent_at', notif_row.sent_at,
                 'read_at', notif_row.read_at,
-                'metadata', notif_row.metadata
+                'metadata', notif_row.metadata,
+                -- v2: human-readable headline + resolved entity summary so the
+                -- inspector reads as a business event, not UUID soup.
+                'headline', initcap(translate(notif_row.event_type, '._', '  '))
+                            || COALESCE(' — ' || (fn_notification_entity_summary(notif_row.entity_type, notif_row.entity_uuid)->>'label'), ''),
+                'entity_summary', fn_notification_entity_summary(notif_row.entity_type, notif_row.entity_uuid)
             )
         );
     END IF;
