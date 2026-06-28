@@ -289,14 +289,19 @@ _STALE_SQL = {
           AND ( v.payment_status NOT IN ('unpaid','partial')
                 OR ROUND(v.computed_balance_due::numeric, 2) <= %(floor)s )
     """,
-    # lead.scored is stale once the lead is no longer a workable hot lead.
+    # lead.scored is stale once the lead is no longer a workable hot lead — OR the
+    # lead no longer exists at all (converted away / hard-deleted). LEFT JOIN so a
+    # missing lead row (l.lead_id IS NULL) is treated as stale and resolved, instead
+    # of lingering forever (the old inner join never matched a deleted lead).
     "lead": """
         UPDATE notifications n SET status='read', read_at=now()
-        FROM events e, leads l
-        WHERE n.event_uuid = e.event_uuid AND e.entity_uuid = l.lead_id
+        FROM events e
+        LEFT JOIN leads l ON e.entity_uuid = l.lead_id
+        WHERE n.event_uuid = e.event_uuid
           AND n.channel='in_app' AND n.status = ANY(%(unread)s)
           AND e.event_type = ANY(%(types)s)
-          AND ( COALESCE(l.score,0) < 70 OR COALESCE(l.converted,false)
+          AND ( l.lead_id IS NULL
+                OR COALESCE(l.score,0) < 70 OR COALESCE(l.converted,false)
                 OR COALESCE(l.is_deleted,false)
                 OR COALESCE(l.status,'') IN ('disqualified','converted') )
     """,
