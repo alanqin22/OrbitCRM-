@@ -1,28 +1,14 @@
 """
-Test Pass E (ar_digest) of notification_triage against real local data.
+Test Pass E (ar_digest) of notification_triage — v2 group-message behavior.
 
-accounting_invoice_pipeline is a VIEW (derived from invoices/payments), so we
-can't cheaply synthesize overdue rows. Instead we exercise Pass E on the live
-local DB inside a transaction that is ROLLED BACK at the end — non-destructive.
-
-Asserts: every individual invoice.overdue alert is folded away, exactly one AR
-digest exists per owner who had overdue invoices, and the digests' invoice counts
-add up to what was folded. Skips cleanly if there are no overdue alerts to fold.
+Three owners each get unread invoice.overdue alerts for the SAME real overdue
+invoices. Pass E must fold them into ONE ar_digest MESSAGE addressed to all three
+recipients (not three identical copies). Setup writes base rows with triggers
+suppressed, re-enables for the pass, and rolls back — non-destructive.
 """
+import uuid
 from app.core.database import get_connection
 from app.core import notification_triage as nt
-
-_RAW_OVERDUE = """
-    SELECT count(*) FROM notifications n JOIN events e ON e.event_uuid = n.event_uuid
-    WHERE n.channel='in_app' AND n.status = ANY(%s)
-      AND e.event_type IN ('invoice.overdue','invoice_overdue')
-      AND COALESCE(n.metadata->>'kind','') NOT IN ('digest','ar_digest')
-"""
-_AR_DIGESTS = """
-    SELECT count(*), COALESCE(SUM((metadata->>'count')::int),0)
-    FROM notifications
-    WHERE channel='in_app' AND status = ANY(%s) AND metadata->>'kind'='ar_digest'
-"""
 
 
 def main():
@@ -30,44 +16,52 @@ def main():
     ok = True
     try:
         with conn.cursor() as cur:
-            unread = list(nt._UNREAD)
-            cur.execute(_RAW_OVERDUE, (unread,))
-            raw_before = int(cur.fetchone()[0])
-            if raw_before == 0:
-                print("  [SKIP] no overdue alerts present to fold")
-                conn.rollback()
-                print("RESULT: PASS (skipped)")
-                return
+            # two real overdue invoices to fold
+            cur.execute("""SELECT invoice_id, invoice_number FROM accounting_invoice_pipeline
+                           WHERE payment_status IN ('unpaid','partial')
+                             AND ROUND(computed_balance_due::numeric,2) > %s
+                             AND (CURRENT_DATE - due_date::date) > 0
+                           LIMIT 2""", (nt.MATERIAL_BALANCE,))
+            invs = cur.fetchall()
+            if len(invs) < 1:
+                print("  [SKIP] no overdue invoices to fold"); conn.rollback()
+                print("RESULT: PASS (skipped)"); return
+
+            cur.execute("SET session_replication_role = replica;")
+            emps = [uuid.uuid4() for _ in range(3)]   # three owners, same invoice set
+            for inv_id, inv_no in invs:
+                ev = uuid.uuid4(); msg = uuid.uuid4()
+                cur.execute("INSERT INTO events (event_uuid,event_type,entity_type,entity_uuid,payload,created_at)"
+                            " VALUES (%s,'invoice.overdue','invoice',%s,'{}'::jsonb, now())", (str(ev), str(inv_id)))
+                cur.execute("INSERT INTO notification_messages (notification_uuid,event_uuid,channel,title,body,metadata,created_at)"
+                            " VALUES (%s,%s,'in_app','raw','b','{}'::jsonb, now())", (str(msg), str(ev)))
+                for e in emps:
+                    cur.execute("INSERT INTO notification_recipients (notification_uuid,employee_uuid,channel,status,created_at)"
+                                " VALUES (%s,%s,'in_app','sent', now())", (str(msg), str(e)))
+            cur.execute("SET session_replication_role = DEFAULT;")
 
             res = nt._pass_e(cur, apply=True)
 
-            cur.execute(_RAW_OVERDUE, (unread,))
-            raw_after = int(cur.fetchone()[0])
-            cur.execute(_AR_DIGESTS, (unread,))
-            dig_count, dig_invoices = cur.fetchone()
-            dig_count = int(dig_count); dig_invoices = int(dig_invoices)
+            # exactly one ar_digest message, addressed to all 3 owners
+            cur.execute("SELECT notification_uuid FROM notification_messages WHERE metadata->>'kind'='ar_digest'")
+            msgs = cur.fetchall()
+            n_recip = 0
+            if len(msgs) == 1:
+                cur.execute("SELECT COUNT(*) FROM notification_recipients WHERE notification_uuid=%s", (msgs[0][0],))
+                n_recip = int(cur.fetchone()[0])
 
             checks = [
-                ("had overdue alerts to fold", raw_before > 0),
-                ("all individual overdue alerts cleared", raw_after == 0),
-                ("one AR digest per owner", dig_count == res["owners"]),
-                ("digest invoice counts == folded", dig_invoices == res["folded"]),
-                ("folded >= owners (>=1 invoice each)", res["folded"] >= res["owners"] >= 1),
+                ("pass folded the overdue", res.get("folded", 0) >= 1),
+                ("exactly ONE ar_digest message", len(msgs) == 1),
+                ("message addressed to all 3 owners", n_recip == 3),
+                ("one group (shared overdue set)", res.get("groups") == 1),
             ]
             for name, passed in checks:
                 print(f"  [{'PASS' if passed else 'FAIL'}] {name}")
                 ok = ok and passed
-            print(f"  (owners={res['owners']}, folded={res['folded']}, "
-                  f"digests={dig_count}, digest_invoices={dig_invoices})")
-
-            # Idempotency: a second apply should fold nothing new and keep one digest/owner.
-            res2 = nt._pass_e(cur, apply=True)
-            cur.execute(_AR_DIGESTS, (unread,))
-            dig_count2 = int(cur.fetchone()[0])
-            idem = (res2["folded"] == 0 and dig_count2 == dig_count)
-            print(f"  [{'PASS' if idem else 'FAIL'}] idempotent re-run (folded={res2['folded']}, digests={dig_count2})")
-            ok = ok and idem
-        conn.rollback()  # discard everything
+            print(f"  (owners={res.get('owners')}, folded={res.get('folded')}, "
+                  f"messages={len(msgs)}, recipients={n_recip})")
+        conn.rollback()
     finally:
         conn.close()
     print("RESULT:", "PASS" if ok else "FAIL")

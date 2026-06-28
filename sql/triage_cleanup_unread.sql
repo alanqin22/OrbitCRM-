@@ -57,52 +57,10 @@ WITH ranked AS (
 UPDATE notifications SET read_at = now(), status = 'read'
 WHERE notification_uuid IN (SELECT notification_uuid FROM ranked WHERE rn > 1);
 
--- Pass E: per-owner Accounts-Receivable digest -------------------------------
--- Roll each owner's still-overdue invoices into ONE "AR summary" notification
--- and mark the individual invoice.overdue alerts read. Idempotent: skips owners
--- who already have an active AR digest. (The notification_triage module keeps
--- these refreshed/self-healing on the schedule.)
-WITH ovr AS (
-  SELECT n.employee_uuid AS emp, v.invoice_number AS inv,
-         ROUND(v.computed_balance_due::numeric, 2) AS bal,
-         (CURRENT_DATE - v.due_date::date) AS days,
-         (array_agg(n.event_uuid))[1] AS anchor
-  FROM notifications n
-  JOIN events e ON e.event_uuid = n.event_uuid
-  JOIN accounting_invoice_pipeline v ON v.invoice_id = e.entity_uuid
-  WHERE n.channel='in_app' AND n.read_at IS NULL
-    AND e.event_type IN ('invoice.overdue','invoice_overdue')
-    AND COALESCE(n.metadata->>'kind','') NOT IN ('digest','ar_digest')
-    AND v.payment_status IN ('unpaid','partial')
-    AND ROUND(v.computed_balance_due::numeric, 2) > 50
-  GROUP BY n.employee_uuid, v.invoice_number, bal, days
-),
-agg AS (
-  SELECT emp, COUNT(*) AS cnt, SUM(bal) AS total, (array_agg(anchor))[1] AS anchor,
-         jsonb_object_agg(inv, jsonb_build_object('balance', bal, 'days', days)) AS invoices,
-         string_agg('- **'||inv||'** — $'||to_char(bal,'FM999,999,990.00')||', '||days||'d past due',
-                    E'\n' ORDER BY bal DESC) AS body_lines
-  FROM ovr GROUP BY emp
-)
-INSERT INTO notifications (employee_uuid, event_uuid, channel, status, title, body, metadata, created_at)
-SELECT emp, anchor, 'in_app', 'pending',
-       '💰 AR summary — '||cnt||' overdue, $'||to_char(total,'FM999,999,990')||' outstanding',
-       '### 💰 Accounts-receivable summary — '||cnt||' overdue invoice(s), $'
-         ||to_char(total,'FM999,999,990.00')||' outstanding'||E'\n\n'||body_lines||E'\n\n'
-         ||'_Auto-summarised by the Accounting agent — one reminder per owner._',
-       jsonb_build_object('kind','ar_digest','source','triage_cleanup',
-                          'count',cnt,'total',total,'invoices',invoices),
-       now()
-FROM agg
-WHERE NOT EXISTS (
-  SELECT 1 FROM notifications d WHERE d.employee_uuid = agg.emp AND d.channel='in_app'
-    AND d.read_at IS NULL AND d.metadata->>'kind'='ar_digest');
-
-UPDATE notifications n SET read_at = now(), status='read'
-FROM events e
-WHERE n.event_uuid = e.event_uuid AND n.read_at IS NULL AND n.channel='in_app'
-  AND e.event_type IN ('invoice.overdue','invoice_overdue')
-  AND COALESCE(n.metadata->>'kind','') NOT IN ('digest','ar_digest');
+-- Pass E (per-owner AR digest) intentionally lives in the notification_triage
+-- module now (v2: ONE message per overdue-set addressed to the whole owner group,
+-- self-healing). It is NOT done here to avoid recreating per-recipient AR copies.
+-- Run the module's tick (or POST /notif-triage/run-once?apply=true) for AR digests.
 
 COMMIT;
 

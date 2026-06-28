@@ -50,6 +50,7 @@ CONFIG (env)
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -288,14 +289,19 @@ _STALE_SQL = {
           AND ( v.payment_status NOT IN ('unpaid','partial')
                 OR ROUND(v.computed_balance_due::numeric, 2) <= %(floor)s )
     """,
-    # lead.scored is stale once the lead is no longer a workable hot lead.
+    # lead.scored is stale once the lead is no longer a workable hot lead — OR the
+    # lead no longer exists at all (converted away / hard-deleted). LEFT JOIN so a
+    # missing lead row (l.lead_id IS NULL) is treated as stale and resolved, instead
+    # of lingering forever (the old inner join never matched a deleted lead).
     "lead": """
         UPDATE notifications n SET status='read', read_at=now()
-        FROM events e, leads l
-        WHERE n.event_uuid = e.event_uuid AND e.entity_uuid = l.lead_id
+        FROM events e
+        LEFT JOIN leads l ON e.entity_uuid = l.lead_id
+        WHERE n.event_uuid = e.event_uuid
           AND n.channel='in_app' AND n.status = ANY(%(unread)s)
           AND e.event_type = ANY(%(types)s)
-          AND ( COALESCE(l.score,0) < 70 OR COALESCE(l.converted,false)
+          AND ( l.lead_id IS NULL
+                OR COALESCE(l.score,0) < 70 OR COALESCE(l.converted,false)
                 OR COALESCE(l.is_deleted,false)
                 OR COALESCE(l.status,'') IN ('disqualified','converted') )
     """,
@@ -456,76 +462,73 @@ def _ar_meta(invoices: Dict[str, Dict[str, Any]], total: float) -> str:
                        "invoices": invoices})
 
 
-def _write_ar_digest(cur, emp: str, invoices: Dict[str, Dict[str, Any]], anchor: str) -> None:
-    """Upsert THE one active AR digest for a recipient (refresh content in place)."""
+def _ar_digest_key(emps: List[str]) -> str:
+    """Stable dedup key for a recipient GROUP (owners sharing the same overdue set)."""
+    return hashlib.md5((",".join(sorted(emps))).encode()).hexdigest()
+
+
+def _write_ar_digest_group(cur, emps: List[str], invoices: Dict[str, Dict[str, Any]], anchor: str) -> None:
+    """v2: ONE message for a group of owners that share the same overdue set, with
+    every owner attached as a recipient (so it shows as one row, "N recipients").
+    Operates on the BASE tables (the view's INSTEAD-OF INSERT would make a separate
+    message per recipient). Upsert by dedup_key → refresh content, preserve read state."""
     total = sum(d["balance"] for d in invoices.values())
     title = f"💰 AR summary — {len(invoices)} overdue, ${total:,.0f} outstanding"
-    cur.execute(
-        """SELECT notification_uuid FROM notifications
-           WHERE employee_uuid=%(emp)s::uuid AND channel='in_app'
-             AND status = ANY(%(unread)s) AND metadata->>'kind'='ar_digest'
-           ORDER BY created_at DESC LIMIT 1""",
-        {"emp": emp, "unread": list(_UNREAD)},
-    )
+    key   = _ar_digest_key(emps)
+    meta  = json.loads(_ar_meta(invoices, total)); meta["dedup_key"] = key
+
+    cur.execute("""SELECT notification_uuid FROM notification_messages
+                   WHERE metadata->>'kind'='ar_digest' AND metadata->>'dedup_key'=%s LIMIT 1""", (key,))
     row = cur.fetchone()
     if row:
-        cur.execute(
-            """UPDATE notifications SET title=%(t)s, body=%(b)s, metadata=%(m)s, created_at=now()
-               WHERE notification_uuid=%(id)s""",
-            {"id": row[0], "t": title, "b": _ar_body(invoices, total),
-             "m": _ar_meta(invoices, total)},
-        )
+        msg = row[0]
+        cur.execute("""UPDATE notification_messages SET title=%s, body=%s, metadata=%s
+                       WHERE notification_uuid=%s""",
+                    (title, _ar_body(invoices, total), json.dumps(meta), msg))
     else:
-        cur.execute(
-            """INSERT INTO notifications
-                 (employee_uuid, event_uuid, channel, status, title, body, metadata, created_at)
-               VALUES (%(emp)s::uuid, %(anchor)s::uuid, 'in_app', 'pending', %(t)s, %(b)s, %(m)s, now())""",
-            {"emp": emp, "anchor": anchor, "t": title,
-             "b": _ar_body(invoices, total), "m": _ar_meta(invoices, total)},
-        )
+        cur.execute("""INSERT INTO notification_messages (event_uuid, channel, title, body, metadata, created_at)
+                       VALUES (%s::uuid, 'in_app', %s, %s, %s, now()) RETURNING notification_uuid""",
+                    (anchor, title, _ar_body(invoices, total), json.dumps(meta)))
+        msg = cur.fetchone()[0]
+    for emp in emps:
+        cur.execute("""INSERT INTO notification_recipients (notification_uuid, employee_uuid, channel, status, created_at)
+                       VALUES (%s, %s::uuid, 'in_app', 'pending', now())
+                       ON CONFLICT (notification_uuid, employee_uuid, channel) DO NOTHING""", (msg, emp))
 
 
 def _revalidate_ar_digests(cur) -> int:
-    """Self-heal: re-check each active AR digest's invoices against live state.
-    Drop paid/settled ones; resolve a digest that no longer has any overdue."""
-    cur.execute(
-        """SELECT notification_uuid, metadata FROM notifications
-           WHERE channel='in_app' AND status = ANY(%(unread)s)
-             AND metadata->>'kind'='ar_digest'""",
-        {"unread": list(_UNREAD)},
-    )
-    rows = cur.fetchall()
+    """Self-heal: re-check each AR digest message's invoices against live state.
+    Drop paid/settled ones; DELETE a digest (and its recipients) once nothing is
+    overdue; refresh content otherwise. Operates on notification_messages."""
+    cur.execute("SELECT notification_uuid, metadata FROM notification_messages WHERE metadata->>'kind'='ar_digest'")
     resolved = 0
-    for nid, meta in rows:
+    for mid, meta in cur.fetchall():
         invs = (meta or {}).get("invoices") or {}
-        if not invs:
-            cur.execute("UPDATE notifications SET status='read', read_at=now() WHERE notification_uuid=%s", (nid,))
-            resolved += 1
-            continue
-        cur.execute(
-            """SELECT invoice_number, payment_status,
-                      ROUND(computed_balance_due::numeric,2)::float8,
-                      (CURRENT_DATE - due_date::date)
-               FROM accounting_invoice_pipeline WHERE invoice_number = ANY(%s)""",
-            (list(invs.keys()),),
-        )
-        live = {r[0]: (r[1], float(r[2]), int(r[3])) for r in cur.fetchall()}
-        still = {}
-        for ino in invs:
-            st = live.get(ino)
-            if st and st[0] in ("unpaid", "partial") and st[1] > MATERIAL_BALANCE:
-                still[ino] = {"balance": st[1], "days": st[2]}
+        still: Dict[str, Dict[str, Any]] = {}
+        if invs:
+            cur.execute(
+                """SELECT invoice_number, payment_status,
+                          ROUND(computed_balance_due::numeric,2)::float8,
+                          (CURRENT_DATE - due_date::date)
+                   FROM accounting_invoice_pipeline WHERE invoice_number = ANY(%s)""",
+                (list(invs.keys()),),
+            )
+            live = {r[0]: (r[1], float(r[2]), int(r[3])) for r in cur.fetchall()}
+            for ino in invs:
+                st = live.get(ino)
+                if st and st[0] in ("unpaid", "partial") and st[1] > MATERIAL_BALANCE:
+                    still[ino] = {"balance": st[1], "days": st[2]}
         if not still:
-            cur.execute("UPDATE notifications SET status='read', read_at=now() WHERE notification_uuid=%s", (nid,))
+            cur.execute("DELETE FROM notification_messages WHERE notification_uuid=%s", (mid,))  # cascades recipients
             resolved += 1
         elif still != invs:
             total = sum(d["balance"] for d in still.values())
-            cur.execute(
-                """UPDATE notifications SET title=%(t)s, body=%(b)s, metadata=%(m)s
-                   WHERE notification_uuid=%(id)s""",
-                {"id": nid, "t": f"💰 AR summary — {len(still)} overdue, ${total:,.0f} outstanding",
-                 "b": _ar_body(still, total), "m": _ar_meta(still, total)},
-            )
+            meta2 = dict(meta); meta2["invoices"] = still
+            meta2["count"] = len(still); meta2["total"] = round(total, 2)
+            cur.execute("""UPDATE notification_messages SET title=%s, body=%s, metadata=%s
+                           WHERE notification_uuid=%s""",
+                        (f"💰 AR summary — {len(still)} overdue, ${total:,.0f} outstanding",
+                         _ar_body(still, total), json.dumps(meta2), mid))
     return resolved
 
 
@@ -535,9 +538,23 @@ def _pass_e(cur, apply: bool) -> Dict[str, Any]:
     folded = sum(len(r["invoices"]) for r in by_owner.values())
     if not apply:
         return {"pass": "ar_digest", "owners": owners, "would_fold": folded}
+
+    # Clean up legacy per-recipient AR digests (pre-group, no dedup_key) so they
+    # collapse into the new shared group messages.
+    cur.execute("""DELETE FROM notification_messages
+                   WHERE metadata->>'kind'='ar_digest' AND NOT (metadata ? 'dedup_key')""")
+
+    # Group owners that share the SAME overdue set → one message, many recipients.
+    groups: Dict[Tuple[str, ...], Dict[str, Any]] = {}
     for emp, rec in by_owner.items():
-        _write_ar_digest(cur, emp, rec["invoices"], rec["anchor"])
-        # Mark this owner's individual overdue alerts read — now in the digest.
+        sig = tuple(sorted(rec["invoices"].keys()))
+        g = groups.setdefault(sig, {"emps": [], "invoices": rec["invoices"], "anchor": rec["anchor"]})
+        g["emps"].append(emp)
+    for g in groups.values():
+        _write_ar_digest_group(cur, g["emps"], g["invoices"], g["anchor"])
+
+    # Mark each owner's individual overdue alerts read — now folded into the digest.
+    for emp in by_owner:
         cur.execute(
             """UPDATE notifications n SET status='read', read_at=now()
                FROM events e
@@ -549,7 +566,8 @@ def _pass_e(cur, apply: bool) -> Dict[str, Any]:
             {"emp": emp, "unread": list(_UNREAD)},
         )
     resolved = _revalidate_ar_digests(cur)
-    return {"pass": "ar_digest", "owners": owners, "folded": folded, "resolved_empty": resolved}
+    return {"pass": "ar_digest", "owners": owners, "folded": folded,
+            "groups": len(groups), "resolved_empty": resolved}
 
 
 # ── Pass F: retention — bound the volume with plain DELETE ───────────────────────
