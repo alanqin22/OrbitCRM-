@@ -62,6 +62,13 @@ def gather() -> Dict[str, Any]:
                                  "WHERE payment_date::date = CURRENT_DATE - 1")[0]
             rev_7d = _one(cur, "SELECT COALESCE(SUM(amount),0) FROM payments "
                                "WHERE payment_date::date >= CURRENT_DATE - 7")[0]
+            # Most recent day that actually had revenue — so a gap day (weekend /
+            # generator didn't run) shows the last active day instead of a bare $0.
+            _recent = _one(cur, "SELECT payment_date::date, COALESCE(SUM(amount),0) "
+                                "FROM payments GROUP BY payment_date::date "
+                                "ORDER BY 1 DESC LIMIT 1")
+            rev_recent_date = _recent[0] if _recent else None
+            rev_recent_amt  = _recent[1] if _recent else 0
 
             pipeline, weighted, open_cnt = _one(cur,
                 "SELECT COALESCE(SUM(amount),0), "
@@ -121,6 +128,7 @@ def gather() -> Dict[str, Any]:
                 "ORDER BY v.computed_balance_due DESC LIMIT 3")
         return {
             "rev_yest": rev_yest, "rev_7d": rev_7d,
+            "rev_recent_date": rev_recent_date, "rev_recent_amt": rev_recent_amt,
             "pipeline": pipeline, "weighted": weighted, "open_cnt": open_cnt,
             "close_amt": close_amt, "close_weighted": close_weighted, "close_cnt": close_cnt,
             "ar_amt": ar_amt, "ar_cnt": ar_cnt, "slipped_amt": slipped_amt, "slipped_cnt": slipped_cnt,
@@ -153,13 +161,23 @@ def render(d: Dict[str, Any]) -> Dict[str, str]:
     at_risk_total = float(d["ar_amt"] or 0) + float(d["slipped_amt"] or 0)
     decision = _decision(d)
 
+    # Card #1 — "captured": yesterday if it had revenue, else the most recent
+    # active day (so a gap day shows real revenue, not a bare $0).
+    if float(d["rev_yest"] or 0) > 0:
+        cap_label, cap_val = "Captured yesterday", _money(d["rev_yest"])
+        cap_sub = f"{_money(d['rev_7d'])} last 7 days"
+    else:
+        rd = d.get("rev_recent_date")
+        rd_s = (f"{rd.strftime('%b')} {rd.day}" if rd else "recent")
+        cap_label, cap_val = f"Captured {rd_s}", _money(d.get("rev_recent_amt"))
+        cap_sub = f"{_money(d['rev_7d'])} last 7d · $0 yesterday"
+
     # ── plain text ──
     t: List[str] = []
     t.append(f"MORNING CEO BRIEFING — {today}")
     t.append("")
     t.append("THE FIVE NUMBERS")
-    t.append(f"  1. Captured yesterday        : {_money(d['rev_yest'])}  "
-             f"({_money(d['rev_7d'])} last 7 days)")
+    t.append(f"  1. {cap_label:<24}: {cap_val}  ({cap_sub})")
     t.append(f"  2. Revenue at risk           : {_money(at_risk_total)}  "
              f"({_money(d['ar_amt'])} overdue AR + {_money(d['slipped_amt'])} slipped deals)")
     t.append(f"  3. Likely to close (30d)     : {_money(d['close_weighted'])} weighted "
@@ -171,7 +189,7 @@ def render(d: Dict[str, Any]) -> Dict[str, str]:
     t.append(f"   Active pipeline      : {_money(d['pipeline'])} ({d['open_cnt']} open)")
     t.append(f"   Weighted forecast    : {_money(d['weighted'])}")
     t.append(f"   Closing next 30 days : {_money(d['close_amt'])} ({d['close_cnt']} deals)")
-    t.append(f"   Captured yesterday   : {_money(d['rev_yest'])} ({_money(d['rev_7d'])} last 7 days)")
+    t.append(f"   {cap_label:<20}: {cap_val} ({_money(d['rev_7d'])} last 7 days)")
     t.append("")
     t.append("2. REVENUE AT RISK")
     t.append(f"   Overdue AR: {_money(d['ar_amt'])} across {d['ar_cnt']} invoices")
@@ -234,7 +252,7 @@ def render(d: Dict[str, Any]) -> Dict[str, str]:
     # KPI grid (4 across) + the one decision (full width)
     h.append(f'<tr><td style="padding:10px 20px 2px;font-family:{SANS};">')
     h.append('<table role="presentation" width="100%" cellpadding="0" cellspacing="8" style="border-collapse:separate;"><tr>')
-    h.append(kpi("1", "Captured yesterday", _money(d['rev_yest']), f"{_money(d['rev_7d'])} last 7 days"))
+    h.append(kpi("1", cap_label, cap_val, cap_sub))
     h.append(kpi("2", "Revenue at risk", _money(at_risk_total), f"{_money(d['ar_amt'])} AR + {_money(d['slipped_amt'])} deals"))
     h.append(kpi("3", "Likely to close (30d)", _money(d['close_weighted']), f"{d['close_cnt']} deals, weighted"))
     h.append(kpi("4", "New advocates (7d)", str(d['advocates']), _money(d['won_amt'])))
@@ -250,7 +268,7 @@ def render(d: Dict[str, Any]) -> Dict[str, str]:
         ("Active pipeline",       f'{_money(d["pipeline"])} ({d["open_cnt"]} open)'),
         ("Weighted forecast",     _money(d["weighted"])),
         ("Closing next 30 days",  f'{_money(d["close_amt"])} ({d["close_cnt"]} deals)'),
-        ("Captured yesterday",    f'{_money(d["rev_yest"])} &middot; {_money(d["rev_7d"])} last 7 days'),
+        (cap_label,               f'{cap_val} &middot; {_money(d["rev_7d"])} last 7 days'),
     ], lambda r: f'{r[0]}: <b>{r[1]}</b>')))
 
     h.append(section("2 &middot; Revenue at Risk",
