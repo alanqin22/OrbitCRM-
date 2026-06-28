@@ -60,17 +60,20 @@ def gather() -> Dict[str, Any]:
         with conn.cursor() as cur:
             rev_yest = _one(cur, "SELECT COALESCE(SUM(amount),0) FROM payments "
                                  "WHERE payment_date::date = CURRENT_DATE - 1")[0]
+            rev_7d = _one(cur, "SELECT COALESCE(SUM(amount),0) FROM payments "
+                               "WHERE payment_date::date >= CURRENT_DATE - 7")[0]
 
             pipeline, weighted, open_cnt = _one(cur,
                 "SELECT COALESCE(SUM(amount),0), "
                 "       COALESCE(SUM(amount*COALESCE(probability,0)/100.0),0), COUNT(*) "
                 "FROM opportunities WHERE status='open'")
 
+            # Forecast horizon = next 30 days (B2B deals rarely close within 7).
             close_amt, close_weighted, close_cnt = _one(cur,
                 "SELECT COALESCE(SUM(amount),0), "
                 "       COALESCE(SUM(amount*COALESCE(probability,0)/100.0),0), COUNT(*) "
                 "FROM opportunities WHERE status='open' "
-                "  AND close_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 7")
+                "  AND close_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 30")
 
             ar_amt, ar_cnt = _one(cur,
                 "SELECT COALESCE(SUM(computed_balance_due),0), COUNT(*) "
@@ -93,7 +96,7 @@ def gather() -> Dict[str, Any]:
                 "SELECT o.name, COALESCE(a.account_name,'—'), ROUND(o.amount::numeric,2), "
                 "       COALESCE(o.probability,0), o.close_date "
                 "FROM opportunities o LEFT JOIN accounts a ON a.account_id=o.account_id "
-                "WHERE o.status='open' AND o.close_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 7 "
+                "WHERE o.status='open' AND o.close_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 30 "
                 "ORDER BY o.amount DESC LIMIT 5")
 
             biggest = _rows(cur,
@@ -117,7 +120,8 @@ def gather() -> Dict[str, Any]:
                 "WHERE v.payment_status IN ('unpaid','partial') AND v.due_date::date < CURRENT_DATE "
                 "ORDER BY v.computed_balance_due DESC LIMIT 3")
         return {
-            "rev_yest": rev_yest, "pipeline": pipeline, "weighted": weighted, "open_cnt": open_cnt,
+            "rev_yest": rev_yest, "rev_7d": rev_7d,
+            "pipeline": pipeline, "weighted": weighted, "open_cnt": open_cnt,
             "close_amt": close_amt, "close_weighted": close_weighted, "close_cnt": close_cnt,
             "ar_amt": ar_amt, "ar_cnt": ar_cnt, "slipped_amt": slipped_amt, "slipped_cnt": slipped_cnt,
             "advocates": advocates, "won_amt": won_amt,
@@ -154,10 +158,11 @@ def render(d: Dict[str, Any]) -> Dict[str, str]:
     t.append(f"MORNING CEO BRIEFING — {today}")
     t.append("")
     t.append("THE FIVE NUMBERS")
-    t.append(f"  1. Revenue captured yesterday : {_money(d['rev_yest'])}")
+    t.append(f"  1. Captured yesterday        : {_money(d['rev_yest'])}  "
+             f"({_money(d['rev_7d'])} last 7 days)")
     t.append(f"  2. Revenue at risk           : {_money(at_risk_total)}  "
              f"({_money(d['ar_amt'])} overdue AR + {_money(d['slipped_amt'])} slipped deals)")
-    t.append(f"  3. Likely to close this week : {_money(d['close_weighted'])} weighted "
+    t.append(f"  3. Likely to close (30d)     : {_money(d['close_weighted'])} weighted "
              f"({_money(d['close_amt'])} gross, {d['close_cnt']} deals)")
     t.append(f"  4. New advocates (won, 7d)   : {d['advocates']} accounts ({_money(d['won_amt'])})")
     t.append(f"  5. #1 decision today         : {decision}")
@@ -165,8 +170,8 @@ def render(d: Dict[str, Any]) -> Dict[str, str]:
     t.append("1. REVENUE SNAPSHOT")
     t.append(f"   Active pipeline      : {_money(d['pipeline'])} ({d['open_cnt']} open)")
     t.append(f"   Weighted forecast    : {_money(d['weighted'])}")
-    t.append(f"   Closing this week    : {_money(d['close_amt'])} ({d['close_cnt']} deals)")
-    t.append(f"   Captured yesterday   : {_money(d['rev_yest'])}")
+    t.append(f"   Closing next 30 days : {_money(d['close_amt'])} ({d['close_cnt']} deals)")
+    t.append(f"   Captured yesterday   : {_money(d['rev_yest'])} ({_money(d['rev_7d'])} last 7 days)")
     t.append("")
     t.append("2. REVENUE AT RISK")
     t.append(f"   Overdue AR: {_money(d['ar_amt'])} across {d['ar_cnt']} invoices")
@@ -174,11 +179,11 @@ def render(d: Dict[str, Any]) -> Dict[str, str]:
     for r in d["atrisk"]:
         t.append(f"     - {r[0]} ({r[1]}) — {_money(r[2])}, {r[3]}d past close")
     t.append("")
-    t.append("3. LIKELY TO CLOSE THIS WEEK")
+    t.append("3. LIKELY TO CLOSE — NEXT 30 DAYS")
     for r in d["closing"]:
         t.append(f"   - {r[0]} ({r[1]}) — {_money(r[2])} @ {int(r[3])}% · {r[4]}")
     if not d["closing"]:
-        t.append("   (none scheduled to close in the next 7 days)")
+        t.append("   (none scheduled to close in the next 30 days)")
     t.append("")
     t.append("4. GROWTH — BIGGEST DEALS IN PLAY")
     for r in d["biggest"]:
@@ -194,74 +199,86 @@ def render(d: Dict[str, Any]) -> Dict[str, str]:
     t.append("— Conscestra CRM · the orchestration of customer intelligence")
     text = "\n".join(t).replace("**", "")
 
-    # ── HTML ──
-    def card(num, label, val, sub=""):
-        return (f'<td style="padding:10px 14px;background:#f6f8fc;border-radius:10px;vertical-align:top;">'
-                f'<div style="font-size:11px;color:#8a93a6;text-transform:uppercase;letter-spacing:.04em;">{num}. {label}</div>'
-                f'<div style="font-size:20px;font-weight:800;color:#16213e;margin-top:2px;">{val}</div>'
-                f'<div style="font-size:11px;color:#8a93a6;margin-top:2px;">{sub}</div></td>')
+    # ── HTML (executive letterhead; email-client-safe tables + inline CSS) ──────
+    NAVY, INK, MUTE, LINE, CARD, ACCENT = "#15233f", "#26304a", "#7b8497", "#e7ecf3", "#f7f9fc", "#b08a46"
+    SANS = "Arial,Helvetica,sans-serif"
 
-    def li_rows(rows, fmt):
-        return "".join(f'<li style="margin:3px 0;">{fmt(r)}</li>' for r in rows) or \
-               '<li style="color:#8a93a6;">None.</li>'
+    def kpi(num, label, val, sub=""):
+        return (f'<td width="25%" valign="top" style="background:{CARD};border:1px solid {LINE};'
+                f'border-radius:8px;padding:12px 13px;font-family:{SANS};">'
+                f'<div style="font-size:10px;color:{MUTE};text-transform:uppercase;letter-spacing:.06em;font-weight:700;">{num} &middot; {label}</div>'
+                f'<div style="font-size:21px;line-height:1.05;font-weight:700;color:{NAVY};margin-top:7px;">{val}</div>'
+                f'<div style="font-size:11px;color:{MUTE};margin-top:5px;min-height:13px;">{sub}</div></td>')
 
-    h: List[str] = []
-    h.append('<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:680px;margin:0 auto;color:#1f2738;">')
-    h.append(f'<h1 style="font-size:20px;margin:0 0 2px;">Morning CEO Briefing</h1>')
-    h.append(f'<div style="color:#8a93a6;font-size:13px;margin-bottom:14px;">{today} · Conscestra CRM</div>')
-    h.append('<table style="width:100%;border-collapse:separate;border-spacing:8px 0;margin-bottom:6px;"><tr>')
-    h.append(card(1, "Captured yesterday", _money(d['rev_yest'])))
-    h.append(card(2, "Revenue at risk", _money(at_risk_total), f"{_money(d['ar_amt'])} AR + {_money(d['slipped_amt'])} deals"))
-    h.append(card(3, "Likely to close (wk)", _money(d['close_weighted']), f"{d['close_cnt']} deals, weighted"))
-    h.append('</tr><tr><td style="height:8px"></td></tr><tr>')
-    h.append(card(4, "New advocates (7d)", str(d['advocates']), _money(d['won_amt'])))
-    h.append(f'<td colspan="2" style="padding:10px 14px;background:#f6f8fc;border-radius:10px;">'
-             f'<div style="font-size:11px;color:#8a93a6;text-transform:uppercase;letter-spacing:.04em;">5. #1 decision today</div>'
-             f'<div style="font-size:14px;font-weight:600;color:#16213e;margin-top:3px;">{decision.replace("**","")}</div></td>')
-    h.append('</tr></table>')
+    def lis(rows, fmt):
+        body = "".join(f'<li style="margin:4px 0;">{fmt(r)}</li>' for r in rows) or f'<li style="color:{MUTE};">None.</li>'
+        return f'<ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.5;color:{INK};">{body}</ul>'
 
     def section(title, inner):
-        return (f'<h2 style="font-size:15px;margin:18px 0 6px;border-bottom:2px solid #eef1f6;padding-bottom:4px;">{title}</h2>{inner}')
+        return (f'<tr><td style="padding:16px 28px 0;font-family:{SANS};">'
+                f'<div style="font-size:12px;font-weight:700;color:{NAVY};text-transform:uppercase;letter-spacing:.06em;'
+                f'border-bottom:2px solid {LINE};padding-bottom:6px;margin-bottom:9px;">{title}</div>{inner}</td></tr>')
 
-    h.append(section("1 · Revenue Snapshot",
-        f'<ul style="margin:0;padding-left:18px;font-size:13px;">'
-        f'<li>Active pipeline: <b>{_money(d["pipeline"])}</b> ({d["open_cnt"]} open)</li>'
-        f'<li>Weighted forecast: <b>{_money(d["weighted"])}</b></li>'
-        f'<li>Closing this week: <b>{_money(d["close_amt"])}</b> ({d["close_cnt"]} deals)</li>'
-        f'<li>Captured yesterday: <b>{_money(d["rev_yest"])}</b></li></ul>'))
+    h: List[str] = []
+    h.append(f'<div style="background:#eef1f6;padding:26px 12px;">')
+    h.append('<table role="presentation" align="center" width="640" cellpadding="0" cellspacing="0" '
+             'style="width:640px;max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e1e6ef;border-radius:4px;">')
+    # Letterhead
+    h.append(f'<tr><td style="height:6px;background:{NAVY};border-top:3px solid {ACCENT};font-size:0;line-height:0;">&nbsp;</td></tr>')
+    h.append(f'<tr><td style="padding:24px 28px 8px;">'
+             f'<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:12px;letter-spacing:.24em;'
+             f'color:{ACCENT};font-weight:700;text-transform:uppercase;">Conscestra CRM</div>'
+             f'<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:25px;font-weight:700;color:{NAVY};margin-top:5px;">Morning Executive Briefing</div>'
+             f'<div style="font-family:{SANS};font-size:12.5px;color:{MUTE};margin-top:5px;">{today} &nbsp;&middot;&nbsp; Prepared for the Office of the CEO</div>'
+             f'</td></tr>')
+    # KPI grid (4 across) + the one decision (full width)
+    h.append(f'<tr><td style="padding:10px 20px 2px;font-family:{SANS};">')
+    h.append('<table role="presentation" width="100%" cellpadding="0" cellspacing="8" style="border-collapse:separate;"><tr>')
+    h.append(kpi("1", "Captured yesterday", _money(d['rev_yest']), f"{_money(d['rev_7d'])} last 7 days"))
+    h.append(kpi("2", "Revenue at risk", _money(at_risk_total), f"{_money(d['ar_amt'])} AR + {_money(d['slipped_amt'])} deals"))
+    h.append(kpi("3", "Likely to close (30d)", _money(d['close_weighted']), f"{d['close_cnt']} deals, weighted"))
+    h.append(kpi("4", "New advocates (7d)", str(d['advocates']), _money(d['won_amt'])))
+    h.append('</tr></table>')
+    h.append('<table role="presentation" width="100%" cellpadding="0" cellspacing="8" style="border-collapse:separate;"><tr>'
+             f'<td style="background:{NAVY};border-radius:8px;padding:14px 16px;">'
+             f'<div style="font-size:10px;color:{ACCENT};text-transform:uppercase;letter-spacing:.08em;font-weight:700;">5 &middot; The one decision today</div>'
+             f'<div style="font-size:15px;font-weight:600;color:#ffffff;margin-top:6px;line-height:1.45;">{decision.replace("**","")}</div>'
+             '</td></tr></table>')
+    h.append('</td></tr>')
 
-    h.append(section("2 · Revenue at Risk",
-        f'<div style="font-size:13px;">Overdue AR <b>{_money(d["ar_amt"])}</b> ({d["ar_cnt"]} invoices) · '
-        f'Slipped deals <b>{_money(d["slipped_amt"])}</b> ({d["slipped_cnt"]})</div>'
-        f'<ul style="margin:6px 0 0;padding-left:18px;font-size:13px;">'
-        + li_rows(d["atrisk"], lambda r: f'{r[0]} <span style="color:#8a93a6">({r[1]})</span> — <b>{_money(r[2])}</b>, {r[3]}d past close')
-        + '</ul>'))
+    h.append(section("1 &middot; Revenue Snapshot", lis([
+        ("Active pipeline",       f'{_money(d["pipeline"])} ({d["open_cnt"]} open)'),
+        ("Weighted forecast",     _money(d["weighted"])),
+        ("Closing next 30 days",  f'{_money(d["close_amt"])} ({d["close_cnt"]} deals)'),
+        ("Captured yesterday",    f'{_money(d["rev_yest"])} &middot; {_money(d["rev_7d"])} last 7 days'),
+    ], lambda r: f'{r[0]}: <b>{r[1]}</b>')))
 
-    h.append(section("3 · Likely to Close This Week",
-        '<ul style="margin:0;padding-left:18px;font-size:13px;">'
-        + li_rows(d["closing"], lambda r: f'{r[0]} <span style="color:#8a93a6">({r[1]})</span> — <b>{_money(r[2])}</b> @ {int(r[3])}% · {r[4]}')
-        + '</ul>'))
+    h.append(section("2 &middot; Revenue at Risk",
+        f'<div style="font-size:13px;color:{INK};margin-bottom:7px;">Overdue AR <b>{_money(d["ar_amt"])}</b> '
+        f'({d["ar_cnt"]} invoices) &nbsp;&middot;&nbsp; Slipped deals <b>{_money(d["slipped_amt"])}</b> ({d["slipped_cnt"]})</div>'
+        + lis(d["atrisk"], lambda r: f'{r[0]} <span style="color:{MUTE}">({r[1]})</span> — <b>{_money(r[2])}</b>, {r[3]}d past close')))
 
-    h.append(section("4 · Growth — Biggest Deals in Play",
-        '<ul style="margin:0;padding-left:18px;font-size:13px;">'
-        + li_rows(d["biggest"], lambda r: f'{r[0]} <span style="color:#8a93a6">({r[1]})</span> — <b>{_money(r[2])}</b> · {r[3]} @ {int(r[4])}%')
-        + '</ul>'))
+    h.append(section("3 &middot; Likely to Close — Next 30 Days",
+        lis(d["closing"], lambda r: f'{r[0]} <span style="color:{MUTE}">({r[1]})</span> — <b>{_money(r[2])}</b> at {int(r[3])}% &middot; {r[4]}')))
 
-    h.append(section("5 · Critical Events",
-        '<ul style="margin:0;padding-left:18px;font-size:13px;">'
-        + li_rows(d["big_inv"], lambda r: (f'Overdue invoice {r[0]} <span style="color:#8a93a6">({r[1]})</span> — '
-                  f'<b>{_money(r[2])}</b>, {r[3]}d overdue'
-                  + (' <span style="color:#8a93a6">(large balance, 45d+)</span>' if float(r[2])>25000 and int(r[3])>=45 else '')))
-        + '</ul>'))
+    h.append(section("4 &middot; Growth — Biggest Deals in Play",
+        lis(d["biggest"], lambda r: f'{r[0]} <span style="color:{MUTE}">({r[1]})</span> — <b>{_money(r[2])}</b> &middot; {r[3]} at {int(r[4])}%')))
 
-    h.append(f'<div style="margin-top:18px;padding:12px 14px;background:#eef6ff;border-radius:10px;font-size:14px;">'
-             f'<b>#1 CEO action today:</b> {decision.replace("**","")}</div>')
-    h.append('<div style="margin-top:16px;color:#9aa3b2;font-size:11px;">Conscestra CRM — the orchestration of customer intelligence. '
-             'Reply to this email to ask the Orchestrator a follow-up.</div>')
-    h.append('</div>')
+    h.append(section("5 &middot; Critical Events",
+        lis(d["big_inv"], lambda r: (f'Overdue invoice {r[0]} <span style="color:{MUTE}">({r[1]})</span> — '
+            f'<b>{_money(r[2])}</b>, {r[3]}d overdue'
+            + (f' <span style="color:{MUTE}">(large balance, 45d+)</span>' if float(r[2])>25000 and int(r[3])>=45 else '')))))
 
-    # Plain-ASCII subject (no $/·/em-dash) — shared-host spam filters down-rank
-    # currency symbols and non-ASCII in headers; the detail lives in the body.
+    # Footer
+    h.append(f'<tr><td style="padding:20px 28px 24px;font-family:{SANS};">'
+             f'<div style="border-top:1px solid {LINE};padding-top:13px;font-size:11px;color:{MUTE};line-height:1.55;">'
+             f'Generated by <b style="color:{NAVY};">Conscestra CRM</b> — the orchestration of customer intelligence. '
+             f'Reply to this email to ask the Orchestrator a follow-up.<br>'
+             f'<span style="color:#aab2c0;">Confidential · prepared exclusively for the Office of the CEO.</span></div>'
+             f'</td></tr>')
+    h.append('</table></div>')
+
+    # Plain-ASCII subject — shared-host spam filters down-rank $/non-ASCII headers.
     subject = f"Morning CEO Briefing - {today}"
     return {"subject": subject, "html": "".join(h), "text": text}
 
