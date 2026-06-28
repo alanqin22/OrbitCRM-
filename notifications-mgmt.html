@@ -3847,9 +3847,9 @@
                     <thead>
                         <tr>
                             <th style="text-align:center;">Title</th>
-                            <th style="text-align:center; min-width:170px;">Employee</th>
-                            <th style="text-align:center;">Status</th>
-                            <th style="text-align:center;">Created</th>
+                            <th style="text-align:center; width:110px;">Employee</th>
+                            <th style="text-align:center; min-width:95px;">Status</th>
+                            <th style="text-align:center; min-width:150px;">Created</th>
                             <th style="text-align:center;">Read / Unread</th>
                             <th style="text-align:center;">Inspect</th>
                         </tr>
@@ -3878,8 +3878,8 @@
                 <tr class="${isUnread ? 'unread' : ''}">
                     <td><strong>${escapeHTML(title)}</strong></td>
                     <td${recipTip}>${escapeHTML(empName)}</td>
-                    <td style="text-align:center;">${statusBadge}</td>
-                    <td>${created}</td>
+                    <td style="text-align:center; white-space:nowrap;">${statusBadge}</td>
+                    <td style="text-align:center; white-space:nowrap; font-size:0.78rem;">${created}</td>
                     <td style="text-align:center;">${readToggleBtn}</td>
                     <td style="text-align:center;"><button class="inspect-btn" onclick="inspectNotification('${n.notification_uuid}')">🔍 Inspect</button></td>
                 </tr>
