@@ -3991,28 +3991,42 @@
                 kvRow('Subscription UUID',  meta.subscription_uuid,  'kv-uuid'),
             ];
 
-            // ── Section 3: Template Preview ───────────────────────────────────────
-
+            // ── Section 3: Template Preview (rendered markdown; hide if trivial) ──
+            // A bare "**Time:** <date>" template is redundant with Created At, so we
+            // drop it; richer templates render their **bold** markup properly.
             let templateSection = '';
-            const templateBody = formatted.body || '';
-            if (templateBody) {
+            const templateBody = (formatted.body || '').trim();
+            const tbLines = templateBody.split('\n').map(s => s.trim()).filter(Boolean);
+            const onlyTime = tbLines.length <= 1 && /^\*\*\s*time\s*:?\s*\*\*/i.test(templateBody);
+            if (templateBody && !onlyTime) {
+                const renderedTpl = escapeHTML(templateBody)
+                    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+                    .replace(/\n/g, '<br>');
                 templateSection = section('📝', 'Template Preview',
-                    '<div class="template-body-box">' + escapeHTML(templateBody) + '</div>');
+                    '<div class="template-body-box">' + renderedTpl + '</div>');
             }
 
-            // ── Section 4: Payload ────────────────────────────────────────────────
+            // ── Section 4: Payload (only when there is real before/after/context) ──
+            // Events like lead.scored carry an empty payload — don't show a Payload
+            // card full of "—" / N/A; surface it only when there's actual data.
+            function _hasVals(o) {
+                return o && typeof o === 'object'
+                    && Object.keys(o).some(k => o[k] !== null && o[k] !== undefined && String(o[k]).trim() !== '');
+            }
+            const ctxHas    = _hasVals(context);
+            const beforeHas = _hasVals(before);
+            const afterHas  = _hasVals(after);
 
             let payloadSection = '';
-            if (before || after || context) {
+            if (ctxHas || beforeHas || afterHas) {
                 let payloadHtml = '';
 
-                // Context sub-table
-                if (context) {
-                    const ctxRows = [
-                        kvRow('Operation',   context.operation),
-                        kvRow('Table Name',  context.table_name),
-                        kvRow('Triggered At', formatDateTime(context.triggered_at)),
-                    ];
+                // Context sub-table — only the fields that have a value
+                if (ctxHas) {
+                    const ctxRows = [];
+                    if (context.operation)    ctxRows.push(kvRow('Operation', context.operation));
+                    if (context.table_name)   ctxRows.push(kvRow('Table Name', context.table_name));
+                    if (context.triggered_at) ctxRows.push(kvRow('Triggered At', formatDateTime(context.triggered_at)));
                     payloadHtml += '<div class="diff-subsection-label">⚙️ Context</div>'
                                  + '<div class="context-kv-wrapper">'
                                  + kvTable(ctxRows)
@@ -4020,8 +4034,8 @@
                 }
 
                 // Before / After diff table
-                if (before || after) {
-                    const src = before || after;
+                if (beforeHas || afterHas) {
+                    const src = (beforeHas ? before : null) || (afterHas ? after : null) || {};
                     const allKeys = Object.keys(src);
                     const hasAnyChange = allKeys.some(function(k) {
                         return JSON.stringify((before || {})[k]) !== JSON.stringify((after || {})[k]);
@@ -4029,14 +4043,14 @@
 
                     let thead = '<thead><tr>'
                               + '<th>Field</th>'
-                              + '<th>' + (before ? 'Before' : '—') + '</th>'
-                              + '<th>' + (after  ? 'After'  : '—') + '</th>'
+                              + '<th>' + (beforeHas ? 'Before' : '—') + '</th>'
+                              + '<th>' + (afterHas  ? 'After'  : '—') + '</th>'
                               + '</tr></thead>';
                     let tbodyRows = '';
 
                     allKeys.forEach(function(k) {
-                        const bVal   = before ? before[k]  : undefined;
-                        const aVal   = after  ? after[k]   : undefined;
+                        const bVal   = beforeHas ? before[k]  : undefined;
+                        const aVal   = afterHas  ? after[k]   : undefined;
                         const changed = JSON.stringify(bVal) !== JSON.stringify(aVal);
 
                         const bDisplay = (bVal === null || bVal === undefined)
