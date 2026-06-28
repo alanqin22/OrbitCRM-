@@ -293,6 +293,19 @@ def _run_pipeline_hygiene() -> None:
         logger.error(f"[PipelineHygiene] tick failed: {exc}", exc_info=True)
 
 
+def _run_ceo_briefing() -> None:
+    """Scheduled job: email the CEO the morning strategic briefing (08:00 ET).
+    No-op unless CEO_BRIEFING_ENABLED=1 and CEO_BRIEFING_EMAIL is set. Internal
+    admin email — the CEO recipient lives in env config, not accounts/contacts."""
+    try:
+        from app.core.ceo_briefing import send_briefing
+        res = send_briefing()
+        if not res.get("skipped"):
+            logger.info(f"[CEOBriefing] {res}")
+    except Exception as exc:
+        logger.error(f"[CEOBriefing] send failed: {exc}", exc_info=True)
+
+
 def _run_capture_forecast_snapshot() -> None:
     """Scheduled job (monthly): capture a point-in-time pipeline forecast via
     generate_forecast_snapshot(90).
@@ -417,6 +430,15 @@ async def lifespan(app: FastAPI):
             _run_pipeline_hygiene,
             trigger=CronTrigger(hour=21, minute=50),
             id="pipeline_hygiene",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        # CEO morning briefing — daily 08:00 ET. Self-gates on CEO_BRIEFING_ENABLED
+        # + CEO_BRIEFING_EMAIL (recipient is env config, not a contact/account).
+        _scheduler.add_job(
+            _run_ceo_briefing,
+            trigger=CronTrigger(hour=8, minute=0),  # 8:00 AM ET — strategic CEO briefing
+            id="ceo_briefing",
             replace_existing=True,
             misfire_grace_time=3600,
         )
@@ -604,6 +626,8 @@ app.include_router(supervisor_router, dependencies=_ADMIN)
 
 from app.core.notification_triage import router as notif_triage_router
 app.include_router(notif_triage_router, dependencies=_ADMIN)
+from app.core.ceo_briefing import router as ceo_briefing_router
+app.include_router(ceo_briefing_router, dependencies=_ADMIN)
 
 # -- Pipeline hygiene (Orchestrator + Opportunity + Activity cooperation)
 from app.core.pipeline_hygiene import router as pipeline_hygiene_router
