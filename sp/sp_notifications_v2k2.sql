@@ -220,8 +220,19 @@ BEGIN
                                    WHERE r.notification_uuid = m.notification_uuid AND r.read_at IS NULL)
                     THEN 'unread' ELSE 'read' END AS status,
                m.channel, m.created_at,
-               NULL::timestamptz AS sent_at,
-               NULL::timestamptz AS read_at,
+               -- "Sent" = when delivered. Use the recipients' sent_at if recorded,
+               -- else the message creation time (in-app/agent-inbox are delivered
+               -- on creation), so the inspector shows a real time, not N/A.
+               COALESCE((SELECT MAX(r.sent_at) FROM notification_recipients r
+                          WHERE r.notification_uuid = m.notification_uuid),
+                        m.created_at) AS sent_at,
+               -- "Read" time once everyone has read it (N/A while any recipient is
+               -- still unread, matching the aggregated status).
+               CASE WHEN EXISTS (SELECT 1 FROM notification_recipients r
+                                  WHERE r.notification_uuid = m.notification_uuid AND r.read_at IS NULL)
+                    THEN NULL
+                    ELSE (SELECT MAX(r.read_at) FROM notification_recipients r
+                           WHERE r.notification_uuid = m.notification_uuid) END AS read_at,
                m.metadata
         INTO notif_row
         FROM notification_messages m
