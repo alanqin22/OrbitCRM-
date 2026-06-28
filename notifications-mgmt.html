@@ -4795,6 +4795,8 @@
             let employeeColumnIndex = -1;
             let inspectColumnIndex = -1;
             let toggleColumnIndex = -1;
+            let statusColumnIndex = -1;
+            let createdColumnIndex = -1;
 
             // Find special columns by header name
             headerCells.forEach((cell, idx) => {
@@ -4811,16 +4813,22 @@
                 if (lower === 'read / unread' || lower === 'read/unread' || lower === 'toggle') {
                     toggleColumnIndex = idx;
                 }
+                if (lower === 'status') {
+                    statusColumnIndex = idx;
+                }
+                if (lower === 'created' || lower === 'created at' || lower.includes('created')) {
+                    createdColumnIndex = idx;
+                }
             });
 
             // Render header (skip Icon column)
             html += '<thead><tr>';
             headerCells.forEach((cell, idx) => {
                 if (idx === iconColumnIndex) return;
-                const isEmp = idx === employeeColumnIndex;
-                const style = isEmp
-                    ? 'style="text-align:center; min-width:170px;"'
-                    : 'style="text-align:center;"';
+                const style = idx === employeeColumnIndex ? 'style="text-align:center; width:110px;"'
+                            : idx === statusColumnIndex   ? 'style="text-align:center; min-width:95px;"'
+                            : idx === createdColumnIndex  ? 'style="text-align:center; min-width:150px;"'
+                            : 'style="text-align:center;"';
                 html += `<th ${style}>${escapeHTML(cell)}</th>`;
             });
             html += '</tr></thead><tbody>';
@@ -4875,8 +4883,12 @@
                         return;
                     }
 
-                    // Regular cell content - escape and parse inline formatting
-                    html += `<td>${parseInline(content)}</td>`;
+                    // Regular cell content - escape and parse inline formatting.
+                    // Keep Created (date+time) and Status on one line; smaller time font.
+                    let tdStyle = '';
+                    if (idx === createdColumnIndex)      tdStyle = ' style="white-space:nowrap; font-size:0.78rem; text-align:center;"';
+                    else if (idx === statusColumnIndex)  tdStyle = ' style="white-space:nowrap; text-align:center;"';
+                    html += `<td${tdStyle}>${parseInline(content)}</td>`;
                 });
 
                 html += '</tr>';
