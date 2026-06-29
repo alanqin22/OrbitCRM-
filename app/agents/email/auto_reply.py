@@ -188,6 +188,48 @@ def compose_reply(email: Dict[str, Any], intent: str) -> Optional[Dict[str, str]
     }
 
 
+_SENT_POS = {"thanks", "thank", "great", "love", "excellent", "happy", "awesome",
+             "perfect", "appreciate", "good", "resolved", "wonderful", "fantastic",
+             "helpful", "pleased", "amazing", "smooth", "easy", "recommend"}
+_SENT_NEG = {"angry", "disappointed", "terrible", "awful", "cancel", "refund",
+             "broken", "bug", "error", "unacceptable", "frustrated", "poor", "worst",
+             "complaint", "delay", "slow", "fail", "failed", "issue", "problem",
+             "unhappy", "wrong", "useless", "disappointing", "ridiculous", "annoyed"}
+
+
+def score_sentiment(text: str):
+    """Lightweight lexicon sentiment → (score in [-1,1], label). No LLM/cost."""
+    import re
+    words = re.findall(r"[a-z']+", (text or "").lower())
+    p = sum(1 for w in words if w in _SENT_POS)
+    n = sum(1 for w in words if w in _SENT_NEG)
+    if p == 0 and n == 0:
+        return 0.0, "neutral"
+    score = round((p - n) / (p + n), 3)
+    label = "positive" if score > 0.2 else ("negative" if score < -0.2 else "neutral")
+    return score, label
+
+
+def store_inbound_sentiment(email: Dict[str, Any], intent: str = None) -> None:
+    """Score + persist an inbound email's sentiment (best-effort)."""
+    from app.core.database import get_connection
+    try:
+        text = (str(email.get("subject", "")) + " " +
+                str(email.get("body", "") or email.get("body_text", "") or "")).strip()
+        score, label = score_sentiment(text)
+        conn = get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO email_sentiment (from_addr, subject, score, label, intent) "
+                "VALUES (%s,%s,%s,%s,%s)",
+                (_extract_email_addr(email.get("from", "")), str(email.get("subject", ""))[:300],
+                 score, label, intent))
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        logger.warning(f"email sentiment store failed: {exc}")
+
+
 def process_inbound_email(email: Dict[str, Any], own_address: str) -> bool:
     """
     Classify, compose, and send an auto-reply for a single inbound email.
@@ -204,6 +246,10 @@ def process_inbound_email(email: Dict[str, Any], own_address: str) -> bool:
 
     intent = classify_intent(email)
     logger.info(f"Inbound email intent={intent!r} from={email.get('from','')!r} subject={email.get('subject','')!r}")
+
+    # Capture customer-voice sentiment for EVERY inbound email (feeds the
+    # executive snapshot) — independent of whether we auto-reply.
+    store_inbound_sentiment(email, intent)
 
     if intent not in ('general_inquiry', 'support_request'):
         logger.info(f"Intent '{intent}' does not trigger auto-reply.")
