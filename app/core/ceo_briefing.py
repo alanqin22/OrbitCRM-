@@ -62,21 +62,30 @@ _METRICS = [
     ("weighted_forecast", "Weighted forecast",   "usd",   True,  7),
     ("overdue_ar",        "Overdue AR",          "usd",   False, 8),
     ("slipped_value",     "Slipped deals",       "usd",   False, 7),
+    ("new_leads_7d",      "New leads (7d)",      "count", True,  5),
+    ("overdue_activities","Overdue activities",  "count", False, 6),
+    ("email_sentiment_7d","Email sentiment (7d)","score", True,  6),
 ]
 _HIB = {k: hib for (k, _l, _u, hib, _i) in _METRICS}
 
 
 def _metric_values(d: Dict[str, Any]) -> Dict[str, float]:
-    return {
-        "captured_7d":       float(d["rev_7d"] or 0),
-        "revenue_at_risk":   float(d["ar_amt"] or 0) + float(d["slipped_amt"] or 0),
-        "forecast_30d":      float(d["close_weighted"] or 0),
-        "advocates_7d":      float(d["advocates"] or 0),
-        "pipeline":          float(d["pipeline"] or 0),
-        "weighted_forecast": float(d["weighted"] or 0),
-        "overdue_ar":        float(d["ar_amt"] or 0),
-        "slipped_value":     float(d["slipped_amt"] or 0),
+    vals = {
+        "captured_7d":        float(d["rev_7d"] or 0),
+        "revenue_at_risk":    float(d["ar_amt"] or 0) + float(d["slipped_amt"] or 0),
+        "forecast_30d":       float(d["close_weighted"] or 0),
+        "advocates_7d":       float(d["advocates"] or 0),
+        "pipeline":           float(d["pipeline"] or 0),
+        "weighted_forecast":  float(d["weighted"] or 0),
+        "overdue_ar":         float(d["ar_amt"] or 0),
+        "slipped_value":      float(d["slipped_amt"] or 0),
+        "new_leads_7d":       float(d.get("new_leads_7d") or 0),
+        "overdue_activities": float(d.get("overdue_acts") or 0),
     }
+    # Only record sentiment once there's real inbound mail to score.
+    if d.get("sentiment_7d") is not None:
+        vals["email_sentiment_7d"] = float(d["sentiment_7d"])
+    return vals
 
 
 def _previous_metrics(cur) -> Dict[str, float]:
@@ -181,6 +190,15 @@ def gather() -> Dict[str, Any]:
                 "SELECT COUNT(DISTINCT account_id) FROM opportunities "
                 "WHERE status='closed_won' AND updated_at >= now() - interval '7 days'")[0]
 
+            new_leads_7d = _one(cur, "SELECT COUNT(*) FROM leads "
+                                     "WHERE created_at >= now() - interval '7 days'")[0]
+            overdue_acts = _one(cur, "SELECT COUNT(*) FROM activities "
+                                     "WHERE status='open' AND due_at < now()")[0]
+            _sent = _one(cur, "SELECT AVG(score), COUNT(*) FROM email_sentiment "
+                              "WHERE received_at >= now() - interval '7 days'")
+            sentiment_7d = float(_sent[0]) if _sent and _sent[0] is not None else None
+            sentiment_n  = int(_sent[1]) if _sent else 0
+
             won_amt = _one(cur,
                 "SELECT COALESCE(SUM(amount),0) FROM opportunities "
                 "WHERE status='closed_won' AND updated_at >= now() - interval '7 days'")[0]
@@ -219,6 +237,8 @@ def gather() -> Dict[str, Any]:
             "close_amt": close_amt, "close_weighted": close_weighted, "close_cnt": close_cnt,
             "ar_amt": ar_amt, "ar_cnt": ar_cnt, "slipped_amt": slipped_amt, "slipped_cnt": slipped_cnt,
             "advocates": advocates, "won_amt": won_amt,
+            "new_leads_7d": new_leads_7d, "overdue_acts": overdue_acts,
+            "sentiment_7d": sentiment_7d, "sentiment_n": sentiment_n,
             "closing": closing, "biggest": biggest, "atrisk": atrisk, "big_inv": big_inv,
         }
     finally:
@@ -387,9 +407,101 @@ def render(d: Dict[str, Any], deltas: Dict[str, Any] = None) -> Dict[str, str]:
     return {"subject": subject, "html": "".join(h), "text": text}
 
 
+# ── Role-specific briefings (CFO / CRO / COO) ───────────────────────────────────
+_META = {k: (lbl, unit, hib, imp) for (k, lbl, unit, hib, imp) in _METRICS}
+
+
+def _fmt_metric(key: str, val) -> str:
+    unit = _META.get(key, (key, "", True, 0))[1]
+    if val is None:
+        return "—"
+    if unit == "usd":
+        return _money(val)
+    if unit == "count":
+        return f"{int(val):,}"
+    if unit == "score":
+        return f"{val:+.2f}"
+    return str(val)
+
+
+# role -> (subtitle, four KPI metric keys, ordered detail sections)
+_ROLE_CFG = {
+    "CFO": ("Cash & collections focus",
+            ["captured_7d", "overdue_ar", "revenue_at_risk", "forecast_30d"],
+            ["overdue_invoices", "atrisk"]),
+    "CRO": ("Revenue engine focus",
+            ["pipeline", "forecast_30d", "slipped_value", "advocates_7d"],
+            ["closing", "biggest", "atrisk"]),
+    "COO": ("Execution & operations focus",
+            ["new_leads_7d", "overdue_activities", "advocates_7d", "captured_7d"],
+            ["atrisk", "overdue_invoices"]),
+}
+
+
+def render_role(d: Dict[str, Any], deltas: Dict[str, Any], role: str) -> Dict[str, str]:
+    today = datetime.now().strftime("%B %d, %Y")
+    subtitle, kpi_keys, sections = _ROLE_CFG[role]
+    vals = _metric_values(d)
+    NAVY, INK, MUTE, LINE, CARD, ACCENT = "#15233f", "#26304a", "#7b8497", "#e7ecf3", "#f7f9fc", "#b08a46"
+    SANS = "Arial,Helvetica,sans-serif"
+
+    def kpi(n, key):
+        return (f'<td width="25%" valign="top" style="background:{CARD};border:1px solid {LINE};border-radius:8px;padding:12px 13px;font-family:{SANS};">'
+                f'<div style="font-size:10px;color:{MUTE};text-transform:uppercase;letter-spacing:.06em;font-weight:700;">{n} &middot; {_META.get(key,(key,))[0]}</div>'
+                f'<div style="font-size:21px;font-weight:700;color:{NAVY};margin-top:7px;">{_fmt_metric(key, vals.get(key))}{_delta_html(deltas, key)}</div></td>')
+
+    def lis(rows, fmt):
+        body = "".join(f'<li style="margin:4px 0;">{fmt(r)}</li>' for r in rows) or f'<li style="color:{MUTE};">None.</li>'
+        return f'<ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.5;color:{INK};">{body}</ul>'
+
+    def section(title, inner):
+        return (f'<tr><td style="padding:16px 28px 0;font-family:{SANS};">'
+                f'<div style="font-size:12px;font-weight:700;color:{NAVY};text-transform:uppercase;letter-spacing:.06em;'
+                f'border-bottom:2px solid {LINE};padding-bottom:6px;margin-bottom:9px;">{title}</div>{inner}</td></tr>')
+
+    sec_html = {
+        "overdue_invoices": ("Overdue Invoices", lis(d["big_inv"], lambda r: f'{r[0]} <span style="color:{MUTE}">({r[1]})</span> — <b>{_money(r[2])}</b>, {r[3]}d overdue')),
+        "atrisk":           ("Slipped / At-risk Deals", lis(d["atrisk"], lambda r: f'{r[0]} <span style="color:{MUTE}">({r[1]})</span> — <b>{_money(r[2])}</b>, {r[3]}d past close')),
+        "closing":          ("Likely to Close — Next 30 Days", lis(d["closing"], lambda r: f'{r[0]} <span style="color:{MUTE}">({r[1]})</span> — <b>{_money(r[2])}</b> at {int(r[3])}%')),
+        "biggest":          ("Biggest Deals in Play", lis(d["biggest"], lambda r: f'{r[0]} <span style="color:{MUTE}">({r[1]})</span> — <b>{_money(r[2])}</b> &middot; {r[3]}')),
+    }
+
+    h = [f'<div style="background:#eef1f6;padding:26px 12px;">'
+         '<table role="presentation" align="center" width="640" cellpadding="0" cellspacing="0" style="width:640px;max-width:640px;margin:0 auto;background:#fff;border:1px solid #e1e6ef;border-radius:4px;">']
+    h.append(f'<tr><td style="height:6px;background:{NAVY};border-top:3px solid {ACCENT};font-size:0;line-height:0;">&nbsp;</td></tr>')
+    h.append(f'<tr><td style="padding:24px 28px 8px;">'
+             f'<div style="font-family:Georgia,serif;font-size:12px;letter-spacing:.24em;color:{ACCENT};font-weight:700;text-transform:uppercase;">Conscestra CRM</div>'
+             f'<div style="font-family:Georgia,serif;font-size:25px;font-weight:700;color:{NAVY};margin-top:5px;">{role} Morning Briefing</div>'
+             f'<div style="font-family:{SANS};font-size:12.5px;color:{MUTE};margin-top:5px;">{today} &nbsp;&middot;&nbsp; {subtitle}</div></td></tr>')
+    h.append(f'<tr><td style="padding:10px 20px 2px;font-family:{SANS};"><table role="presentation" width="100%" cellpadding="0" cellspacing="8" style="border-collapse:separate;"><tr>')
+    for i, key in enumerate(kpi_keys, 1):
+        h.append(kpi(i, key))
+    h.append('</tr></table></td></tr>')
+    for s in sections:
+        title, inner = sec_html[s]
+        h.append(section(title, inner))
+    h.append(f'<tr><td style="padding:20px 28px 24px;font-family:{SANS};">'
+             f'<div style="border-top:1px solid {LINE};padding-top:13px;font-size:11px;color:{MUTE};">'
+             f'Generated by <b style="color:{NAVY};">Conscestra CRM</b> for the {role}. Reply to ask the Orchestrator a follow-up.</div></td></tr>')
+    h.append('</table></div>')
+
+    text = (f"{role} MORNING BRIEFING — {today}  ({subtitle})\n\n"
+            + "\n".join(f"  {_META.get(k,(k,))[0]}: {_fmt_metric(k, vals.get(k))}{_delta_text(deltas,k)}" for k in kpi_keys))
+    return {"subject": f"{role} Morning Briefing - {today}", "html": "".join(h), "text": text}
+
+
+# category -> (role label, builder). CEO uses the flagship render(); others the role view.
+_BRIEFINGS = {
+    "ceo_briefing": ("CEO", lambda d, dl: render(d, dl)),
+    "cfo_briefing": ("CFO", lambda d, dl: render_role(d, dl, "CFO")),
+    "cro_briefing": ("CRO", lambda d, dl: render_role(d, dl, "CRO")),
+    "coo_briefing": ("COO", lambda d, dl: render_role(d, dl, "COO")),
+}
+
+
 def build_briefing(persist: bool = False) -> Dict[str, str]:
-    """Render the briefing with deltas vs the previous snapshot. When persist=True
-    (the real daily send), also store today's snapshot so tomorrow has a baseline."""
+    """Render the CEO briefing with deltas vs the previous snapshot. When
+    persist=True (the real daily send), also store today's snapshot."""
     d = gather()
     values = _metric_values(d)
     conn = get_connection()
@@ -432,31 +544,64 @@ def recipients() -> List[tuple]:
     return [(RECIPIENT, "CEO")] if RECIPIENT else []
 
 
+def _subscribers(cur, category: str) -> List[tuple]:
+    cur.execute(
+        "SELECT email, full_name FROM executives "
+        "WHERE is_active AND auto_email_enabled AND email IS NOT NULL "
+        "  AND %s = ANY(notification_categories) ORDER BY role_code", (category,))
+    return [(r[0], r[1]) for r in cur.fetchall() if r[0]]
+
+
 def send_briefing(force: bool = False) -> Dict[str, Any]:
-    """Compose + email the CEO briefing to every executive subscribed to it.
-    Gated by CEO_BRIEFING_ENABLED unless force. Internal email — bypasses the
-    customer verification gate by design."""
-    # Always capture today's snapshot (builds trend history + tomorrow's deltas),
-    # even while emails are still disabled.
-    msg = build_briefing(persist=True)
+    """Capture today's snapshot (always), then deliver each role briefing
+    (CEO/CFO/CRO/COO) to its subscribers — execs whose notification_categories
+    include that briefing's category. Internal email; bypasses the customer gate."""
+    d = gather()
+    values = _metric_values(d)
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            deltas = _compute_deltas(values, _previous_metrics(cur))
+            ceo_msg = render(d, deltas)
+            _persist_snapshot(cur, values, deltas, ceo_msg.get("text", "")[:4000])  # history
+            conn.commit()
+            subs = {cat: _subscribers(cur, cat) for cat in _BRIEFINGS}
+    finally:
+        conn.close()
+
     if not ENABLED and not force:
         return {"enabled": False, "skipped": True, "snapshot_captured": True}
-    rcpts = recipients()
-    if not rcpts:
-        return {"error": "no recipients — add an executive with 'ceo_briefing' or set CEO_BRIEFING_EMAIL"}
-    sent, failed = [], []
+
     from app.agents.email.smtp_imap import send_email
-    for email, name in rcpts:
-        try:
-            res = send_email(email, msg["subject"], msg["html"], msg["text"], from_name="Conscestra CRM")
-            ok = bool(res.get("success", True)) if isinstance(res, dict) else True
-            (sent if ok else failed).append(email)
-        except Exception as exc:
-            logger.error(f"[ceo_briefing] send to {email} failed: {exc}", exc_info=True)
-            failed.append(email)
-    logger.info(f"[ceo_briefing] sent={len(sent)} failed={len(failed)} subject={msg['subject']}")
-    return {"sent_count": len(sent), "failed_count": len(failed),
-            "recipients": len(rcpts), "subject": msg["subject"]}
+    results: Dict[str, Any] = {}
+    total = 0
+    any_sub = False
+    for cat, (role, builder) in _BRIEFINGS.items():
+        rc = subs.get(cat) or []
+        if not rc:
+            continue
+        any_sub = True
+        msg = ceo_msg if cat == "ceo_briefing" else builder(d, deltas)
+        s = f = 0
+        for email, _name in rc:
+            try:
+                res = send_email(email, msg["subject"], msg["html"], msg["text"], from_name="Conscestra CRM")
+                ok = bool(res.get("success", True)) if isinstance(res, dict) else True
+                s += 1 if ok else 0; f += 0 if ok else 1; total += 1 if ok else 0
+            except Exception as exc:
+                logger.error(f"[ceo_briefing] {role} send to {email} failed: {exc}", exc_info=True)
+                f += 1
+        results[cat] = {"role": role, "sent": s, "failed": f}
+
+    # Fallback: no executive subscribers at all → send CEO briefing to env address.
+    if not any_sub and RECIPIENT:
+        res = send_email(RECIPIENT, ceo_msg["subject"], ceo_msg["html"], ceo_msg["text"], from_name="Conscestra CRM")
+        ok = bool(res.get("success", True)) if isinstance(res, dict) else True
+        results["env_fallback"] = {"role": "CEO", "sent": 1 if ok else 0, "failed": 0 if ok else 1}
+        total += 1 if ok else 0
+
+    logger.info(f"[ceo_briefing] delivered total={total} by_briefing={results}")
+    return {"sent_count": total, "by_briefing": results, "subject": ceo_msg["subject"]}
 
 
 # ── Admin endpoints ───────────────────────────────────────────────────────────────
@@ -482,3 +627,39 @@ async def ceo_briefing_send_now():
     """Send the briefing now (force, regardless of the enabled flag). Admin-gated."""
     import asyncio
     return await asyncio.to_thread(send_briefing, True)
+
+
+@router.get("/executive-snapshot/history")
+def executive_snapshot_history(days: int = 30):
+    """Snapshot history shaped for the Executive Dashboard: one series per metric
+    (latest value + delta + a value-per-date series for sparklines)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT s.snapshot_date::text, m.metric_key, m.value, m.delta_pct "
+                "FROM executive_snapshot s JOIN executive_metric m ON m.snapshot_id = s.snapshot_id "
+                "WHERE s.period_type='daily' AND s.snapshot_date >= CURRENT_DATE - %s "
+                "ORDER BY s.snapshot_date, m.metric_key", (int(days),))
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    dates = sorted({r[0] for r in rows})
+    meta = {k: (lbl, unit, hib, imp) for (k, lbl, unit, hib, imp) in _METRICS}
+    by_key: Dict[str, Dict[str, Any]] = {}
+    for sdate, key, value, dpct in rows:
+        m = meta.get(key, (key, "", True, 0))
+        e = by_key.setdefault(key, {
+            "key": key, "label": m[0], "unit": m[1], "higher_is_better": m[2],
+            "importance": m[3], "series": {}, "latest": None, "delta_pct": None})
+        e["series"][sdate] = float(value) if value is not None else None
+        e["latest"] = float(value) if value is not None else e["latest"]
+        e["delta_pct"] = float(dpct) if dpct is not None else e["delta_pct"]
+
+    metrics = []
+    for e in by_key.values():
+        e["series"] = [{"date": d, "value": e["series"].get(d)} for d in dates]
+        metrics.append(e)
+    metrics.sort(key=lambda x: (-x["importance"], x["label"]))
+    return {"dates": dates, "metrics": metrics}
