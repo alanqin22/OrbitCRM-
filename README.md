@@ -1,4 +1,4 @@
-# Conscestra CRM — AI-Powered CRM with Conversational Agents
+# Conscestra CRM — The Conscious Orchestration of Customer Intelligence
 
 > ### 🚀 **Live Demo → [agentorc.ca](https://agentorc.ca/)**
 >
