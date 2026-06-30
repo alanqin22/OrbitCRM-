@@ -14,6 +14,7 @@ Orchestrator — continuously responds to your business in real time.
 - Orders automatically notify buyers.
 - Overdue invoices compose and send their own reminders.
 - Alert storms resolve themselves before they become crises.
+- Leadership wakes to a daily briefing — and a live dashboard tracking every trend.
 
 Simply ask in natural language, and every answer is delivered with a transparent,
 verifiable audit trail.
