@@ -5,6 +5,78 @@
 > No signup required. Drop into any module and talk to the AI agents
 > directly, or use the inline forms — same experience either way.
 
+> **Where traditional CRMs record the past, Conscestra orchestrates what happens next.**
+
+An AI-native CRM where a symphony of specialized agents — guided by an intelligent
+Orchestrator — continuously responds to your business in real time.
+
+- New sign-ups become verified customers.
+- Orders automatically notify buyers.
+- Overdue invoices compose and send their own reminders.
+- Alert storms resolve themselves before they become crises.
+
+Simply ask in natural language, and every answer is delivered with a transparent,
+verifiable audit trail.
+
+**[Explore the Live Demo →](https://agentorc.ca/)** &nbsp;·&nbsp; See How the Agents Cooperate
+
+_Safe by default · Opt-in outreach · Fully audited · No sign-up to explore_
+
+### Conscestra CRM — The Conscious Orchestration of Customer Intelligence
+
+The name itself reveals the philosophy. **Conscestra** combines *conscious* and
+*orchestra* — an AI-native CRM that does not simply collect customer data; it
+**conducts** an intelligent symphony of business knowledge, relationships, and
+decisions.
+
+Traditional CRM systems are digital filing cabinets. Conscestra is the conductor. A
+network of specialized AI Agents — each an expert in its own domain yet continuously
+aware of the larger business context — performs in harmony, transforming isolated
+records into coordinated intelligence.
+
+At the center stands the **Orchestrator**, a master AI Agent that directs the Lead,
+Contact, Account, Opportunity, Activity, Order, Product, Accounting, Analytics,
+Notification, and Email Agents. These agents do not operate as independent silos;
+they collaborate over a live **event bus** as one responsive system. When a visitor
+signs up and verifies their email, the Lead, Account, and Contact Agents turn them
+into a customer in the same motion. When an order is placed — and again when it
+ships — the Order and Email Agents greet the buyer with confirmation and dispatch
+notices. When an invoice falls overdue, the Accounting Agent drafts a tiered reminder
+for the Email Agent to deliver; when the payment settles, the Activity Agent quietly
+closes the loop. Every interaction flows through a governed memory architecture that
+is transparent, traceable, and replayable — ensuring powerful AI collaboration never
+becomes an invisible black box.
+
+**Simply ask, and Conscestra responds.**
+
+Executives can engage the Orchestrator in natural language and receive
+**decision-grade insights** about sales pipelines, revenue forecasts, customer
+relationships, outstanding invoices, operational performance, and team productivity —
+the system fields hundreds of executive questions a day. No searching through
+dashboards. No waiting for reports. Every answer is grounded in real-time business
+events, structured knowledge, and a verifiable audit trail. When uncertainty exists,
+the system acknowledges it — because trustworthy AI begins with intellectual honesty.
+
+*This is the essence of conscious orchestration.*
+
+As pioneers such as Nobel laureate Geoffrey Hinton continue to reshape our
+understanding of artificial intelligence and machine awareness, Conscestra embraces a
+practical vision: AI should understand the context, relationships, and evolving state
+of a business — not merely execute isolated commands. **Intelligence without awareness
+is automation; awareness without accountability is risk.** Conscestra unites both.
+
+With role-based governance, OTP-verified identities, encrypted credentials, recorded
+consent, immutable audit histories, and fully explainable agent interactions, every
+action can be understood, verified, and trusted. Autonomous outreach is opt-in and
+safe by default — agents draft before they send, and reach only customers who have
+verified their address and chosen to hear from you.
+
+Conscestra CRM is not merely a system of record.
+It is a **system of understanding**.
+A symphony of AI Agents conducting your business in perfect **resonance**.
+
+---
+
 Conscestra CRM is a full-stack AI CRM where every module is a **conversational
 agent**: ask in plain English, get the answer (and the chart), no menus
 to hunt through.

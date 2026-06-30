@@ -64,6 +64,8 @@ _METRICS = [
     ("slipped_value",     "Slipped deals",       "usd",   False, 7),
     ("new_leads_7d",      "New leads (7d)",      "count", True,  5),
     ("overdue_activities","Overdue activities",  "count", False, 6),
+    ("open_opps",         "Open opportunities",  "count", True,  7),
+    ("won_7d",            "Won deals (7d)",      "usd",   True,  8),
     ("email_sentiment_7d","Email sentiment (7d)","score", True,  6),
 ]
 _HIB = {k: hib for (k, _l, _u, hib, _i) in _METRICS}
@@ -81,6 +83,8 @@ def _metric_values(d: Dict[str, Any]) -> Dict[str, float]:
         "slipped_value":      float(d["slipped_amt"] or 0),
         "new_leads_7d":       float(d.get("new_leads_7d") or 0),
         "overdue_activities": float(d.get("overdue_acts") or 0),
+        "open_opps":          float(d.get("open_cnt") or 0),
+        "won_7d":             float(d.get("won_amt") or 0),
     }
     # Only record sentiment once there's real inbound mail to score.
     if d.get("sentiment_7d") is not None:
@@ -329,8 +333,8 @@ def render(d: Dict[str, Any], deltas: Dict[str, Any] = None) -> Dict[str, str]:
 
     def kpi(num, label, val, sub="", delta=""):
         return (f'<td width="25%" valign="top" style="background:{CARD};border:1px solid {LINE};'
-                f'border-radius:8px;padding:12px 13px;font-family:{SANS};">'
-                f'<div style="font-size:10px;color:{MUTE};text-transform:uppercase;letter-spacing:.06em;font-weight:700;">{num} &middot; {label}</div>'
+                f'border-radius:8px;padding:12px 9px;font-family:{SANS};">'
+                f'<div style="font-size:9px;color:{MUTE};text-transform:uppercase;letter-spacing:.01em;font-weight:700;white-space:nowrap;">{num} &middot; {label}</div>'
                 f'<div style="font-size:21px;line-height:1.05;font-weight:700;color:{NAVY};margin-top:7px;">{val}{delta}</div>'
                 f'<div style="font-size:11px;color:{MUTE};margin-top:5px;min-height:13px;">{sub}</div></td>')
 
@@ -446,9 +450,9 @@ def render_role(d: Dict[str, Any], deltas: Dict[str, Any], role: str) -> Dict[st
     SANS = "Arial,Helvetica,sans-serif"
 
     def kpi(n, key):
-        return (f'<td width="25%" valign="top" style="background:{CARD};border:1px solid {LINE};border-radius:8px;padding:12px 13px;font-family:{SANS};">'
-                f'<div style="font-size:10px;color:{MUTE};text-transform:uppercase;letter-spacing:.06em;font-weight:700;">{n} &middot; {_META.get(key,(key,))[0]}</div>'
-                f'<div style="font-size:21px;font-weight:700;color:{NAVY};margin-top:7px;">{_fmt_metric(key, vals.get(key))}{_delta_html(deltas, key)}</div></td>')
+        return (f'<td width="25%" valign="top" style="background:{CARD};border:1px solid {LINE};border-radius:8px;padding:12px 9px;font-family:{SANS};">'
+                f'<div style="font-size:9px;color:{MUTE};text-transform:uppercase;letter-spacing:.01em;font-weight:700;white-space:nowrap;">{n} &middot; {_META.get(key,(key,))[0]}</div>'
+                f'<div style="font-size:21px;line-height:1.05;font-weight:700;color:{NAVY};margin-top:7px;">{_fmt_metric(key, vals.get(key))}{_delta_html(deltas, key)}</div></td>')
 
     def lis(rows, fmt):
         body = "".join(f'<li style="margin:4px 0;">{fmt(r)}</li>' for r in rows) or f'<li style="color:{MUTE};">None.</li>'
